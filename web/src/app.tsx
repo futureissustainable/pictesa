@@ -1,0 +1,271 @@
+import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { connection, startEvents, stopEvents } from "./lib/events";
+import { isActive, jobs, loadActiveJobs } from "./lib/jobs";
+import { Link, navigate, useLocation } from "./lib/router";
+import { loadSession, useSession } from "./lib/session";
+import { useStore } from "./lib/store";
+import type { Me } from "./lib/types";
+import { Brand, PixelMark } from "./ui/brand";
+import { Icon, Spinner, type IconName } from "./ui/icon";
+import { Notices } from "./ui/notices";
+
+const CreatePage = lazy(() => import("./pages/create/create-page"));
+const LibraryPage = lazy(() => import("./pages/library/library-page"));
+const SettingsPage = lazy(() => import("./pages/settings/settings-page"));
+const AuthPage = lazy(() => import("./pages/auth/auth-page"));
+const Viewer = lazy(() => import("./pages/viewer/viewer"));
+
+type Section = "create" | "library" | "favorites" | "uploads" | "trash" | "settings" | "none";
+
+interface NavItem {
+  id: Section;
+  label: string;
+  icon: IconName;
+  to: string;
+}
+
+const primary: NavItem[] = [
+  { id: "create", label: "Create", icon: "add_circle", to: "/" },
+  { id: "library", label: "Library", icon: "grid_view", to: "/library" },
+];
+const collections: NavItem[] = [
+  { id: "favorites", label: "Favorites", icon: "favorite", to: "/library?favorite=true" },
+  { id: "uploads", label: "Uploads", icon: "upload", to: "/library?source=upload" },
+  { id: "trash", label: "Trash", icon: "delete", to: "/library?trash=true" },
+];
+const settingsItem: NavItem = { id: "settings", label: "Settings", icon: "tune", to: "/settings" };
+const mobileItems = [primary[0]!, primary[1]!, collections[0]!, settingsItem];
+
+function sectionOf(url: URL): Section {
+  if (url.pathname === "/") return "create";
+  if (url.pathname.startsWith("/settings")) return "settings";
+  if (url.pathname === "/library") {
+    if (url.searchParams.get("trash") === "true") return "trash";
+    if (url.searchParams.get("favorite") === "true") return "favorites";
+    if (url.searchParams.get("source") === "upload") return "uploads";
+    return "library";
+  }
+  return "none";
+}
+
+const titles: Record<Section, string> = {
+  create: "Create",
+  library: "Library",
+  favorites: "Favorites",
+  uploads: "Uploads",
+  trash: "Trash",
+  settings: "Settings",
+  none: "Not found",
+};
+
+export function App() {
+  const state = useSession();
+  useEffect(() => {
+    void loadSession();
+  }, []);
+
+  if (state.status === "loading") return <Splash />;
+  if (state.status === "offline") return <Offline message={state.message} />;
+  if (state.me.mode === "hosted" && !state.me.user) {
+    return (
+      <Suspense fallback={<Splash />}>
+        <AuthPage />
+      </Suspense>
+    );
+  }
+  return <Shell me={state.me} />;
+}
+
+function Splash() {
+  return (
+    <div className="splash" role="status" aria-label="Loading Pictesa">
+      <PixelMark />
+    </div>
+  );
+}
+
+function Offline({ message }: { message: string }) {
+  useEffect(() => {
+    const timer = setInterval(() => void loadSession(), 4000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <main className="splash splash-message">
+      <PixelMark />
+      <h1>Pictesa is offline.</h1>
+      <p>{message} This page reconnects on its own.</p>
+      <button type="button" className="primary-button" onClick={() => void loadSession()}>
+        Try again
+        <Icon name="refresh" />
+      </button>
+    </main>
+  );
+}
+
+function Shell({ me }: { me: Me }) {
+  const url = useLocation();
+  const section = sectionOf(url);
+  const running = useStore(jobs).filter(isActive).length;
+  const assetId = url.searchParams.get("asset");
+
+  useEffect(() => {
+    startEvents();
+    void loadActiveJobs();
+    return () => stopEvents();
+  }, []);
+
+  useEffect(() => {
+    if (url.pathname === "/login" || url.pathname === "/signup") navigate("/", { replace: true });
+  }, [url.pathname]);
+
+  useEffect(() => {
+    document.title = `${titles[section]} | Pictesa`;
+  }, [section]);
+
+  const navButton = (item: NavItem) => (
+    <Link
+      key={item.id}
+      to={item.to}
+      className={`nav-button ${section === item.id ? "active" : ""}`}
+      aria-current={section === item.id ? "page" : undefined}
+      title={item.label}
+    >
+      <Icon name={item.icon} filled={section === item.id && item.id === "favorites"} />
+      <span>{item.label}</span>
+      {item.id === "create" && running > 0 && (
+        <span className="nav-count" aria-label={`${running} running`}>
+          {running}
+        </span>
+      )}
+    </Link>
+  );
+
+  return (
+    <div className={`app ${section === "create" ? "creating" : ""}`}>
+      <a className="skip-link" href="#workspace">
+        Skip to workspace
+      </a>
+      <aside className="sidebar" aria-label="Main navigation">
+        <Brand />
+        <nav className="nav-group" aria-label="Studio">
+          {primary.map(navButton)}
+        </nav>
+        <nav className="nav-group" aria-label="Collections">
+          {collections.map(navButton)}
+        </nav>
+        <div className="sidebar-bottom">{navButton(settingsItem)}</div>
+      </aside>
+      <main className="main" id="workspace">
+        <Topbar title={titles[section]} me={me} />
+        <ErrorBoundary key={section}>
+          <Suspense
+            fallback={
+              <div className="page-loading" role="status">
+                <Spinner />
+                Loading
+              </div>
+            }
+          >
+            {section === "create" ? (
+              <CreatePage />
+            ) : section === "settings" ? (
+              <SettingsPage />
+            ) : section === "none" ? (
+              <NotFound />
+            ) : (
+              <LibraryPage />
+            )}
+          </Suspense>
+        </ErrorBoundary>
+      </main>
+      <nav className="mobile-nav" aria-label="Mobile navigation">
+        {mobileItems.map((item) => (
+          <Link
+            key={item.id}
+            to={item.to}
+            className={section === item.id ? "active" : ""}
+            aria-current={section === item.id ? "page" : undefined}
+          >
+            <Icon name={item.icon} filled={section === item.id && item.id === "favorites"} />
+            {item.label}
+            {item.id === "create" && running > 0 && <span className="nav-dot" aria-label={`${running} running`} />}
+          </Link>
+        ))}
+      </nav>
+      <Notices />
+      {assetId && (
+        <Suspense fallback={null}>
+          <Viewer id={assetId} />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+
+function Topbar({ title, me }: { title: string; me: Me }) {
+  const state = useStore(connection);
+  return (
+    <header className="topbar">
+      <Brand className="mobile-brand" />
+      <p className="breadcrumb">
+        <strong>{title}</strong>
+      </p>
+      <div className="topbar-right">
+        {state === "reconnecting" && (
+          <span className="connection" role="status">
+            <Icon name="cloud_off" />
+            Reconnecting
+          </span>
+        )}
+        {me.mode === "hosted" && me.user && (
+          <Link to="/settings/account" className="account-button" aria-label="Account settings">
+            <span className="account-label">{me.user.name || me.user.email}</span>
+            <span className="avatar">{(me.user.name || me.user.email).slice(0, 1).toUpperCase()}</span>
+          </Link>
+        )}
+      </div>
+    </header>
+  );
+}
+
+function NotFound() {
+  return (
+    <div className="workspace">
+      <div className="empty">
+        <Icon name="search_off" />
+        <h2>This page does not exist.</h2>
+        <p>The link may be old. Your work is still in the library.</p>
+        <Link className="primary-button" to="/">
+          Go to Create
+          <Icon name="arrow_forward" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(error, info.componentStack);
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="workspace">
+        <div className="empty">
+          <Icon name="error" />
+          <h2>This view stopped working.</h2>
+          <p>{this.state.error.message}</p>
+          <button type="button" className="primary-button" onClick={() => location.reload()}>
+            Reload
+            <Icon name="refresh" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+}

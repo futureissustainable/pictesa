@@ -1,0 +1,214 @@
+{
+  "schema": 1,
+  "name": "LTX-2.5 Image to Video",
+  "description": "Lightricks LTX-2.5 22B distilled (int8): animates a start image into video with synchronized audio, rendered at half size and upscaled 2x in latent space. About 41 GB of weights; ComfyUI streams them on 12 GB GPUs.",
+  "vendor": "Lightricks",
+  "output": "video",
+  "tasks": ["image_to_video"],
+  "open_weights": true,
+  "license": "LTX-2 Community License (gated on Hugging Face: request access before downloading)",
+  "prompt": [["23", "text"]],
+  "negative_prompt": [["32", "text"]],
+  "inputs": [
+    {
+      "role": "start_frame",
+      "kind": "image",
+      "nodes": ["2"],
+      "input": "image",
+      "min": 1,
+      "label": "Start frame"
+    }
+  ],
+  "params": [
+    {
+      "key": "aspect_ratio",
+      "label": "Aspect ratio",
+      "type": "enum",
+      "options": [
+        {
+          "value": "auto",
+          "label": "Match input"
+        },
+        {
+          "value": "16:9",
+          "label": "16:9"
+        },
+        {
+          "value": "9:16",
+          "label": "9:16"
+        },
+        {
+          "value": "1:1",
+          "label": "1:1"
+        }
+      ],
+      "default": "auto"
+    },
+    {
+      "key": "resolution",
+      "label": "Resolution",
+      "type": "enum",
+      "options": [
+        {
+          "value": "540p",
+          "label": "540p"
+        },
+        {
+          "value": "720p",
+          "label": "720p"
+        },
+        {
+          "value": "1080p",
+          "label": "1080p"
+        }
+      ],
+      "default": "720p"
+    },
+    {
+      "key": "duration",
+      "label": "Duration",
+      "type": "enum",
+      "options": [
+        {
+          "value": 3,
+          "label": "3s"
+        },
+        {
+          "value": 5,
+          "label": "5s"
+        },
+        {
+          "value": 8,
+          "label": "8s"
+        },
+        {
+          "value": 10,
+          "label": "10s"
+        }
+      ],
+      "default": 5,
+      "bind": [["21", "value"]]
+    },
+    {
+      "key": "fps",
+      "label": "Frame rate",
+      "type": "enum",
+      "options": [
+        {
+          "value": 24,
+          "label": "24 fps"
+        },
+        {
+          "value": 25,
+          "label": "25 fps"
+        },
+        {
+          "value": 48,
+          "label": "48 fps"
+        },
+        {
+          "value": 50,
+          "label": "50 fps"
+        }
+      ],
+      "default": 24,
+      "advanced": true,
+      "bind": [["20", "value"]]
+    },
+    {
+      "key": "seed",
+      "label": "Seed",
+      "type": "seed",
+      "advanced": true,
+      "bind": [["4", "noise_seed"], ["3", "noise_seed"]]
+    }
+  ],
+  "size": {
+    "width": [["31", "value"]],
+    "height": [["19", "value"]],
+    "megapixels": 0.9,
+    "multiple": 64,
+    "resolutions": {
+      "540p": 0.5,
+      "720p": 0.9,
+      "1080p": 2.07
+    },
+    "match_input": "start_frame"
+  },
+  "max_outputs": 1,
+  "outputs": ["1"],
+  "requires": {
+    "nodes": [
+      "CLIPLoader",
+      "CLIPTextEncode",
+      "ComfyMathExpression",
+      "CreateVideo",
+      "EmptyLTXVLatentVideo",
+      "KSamplerSelect",
+      "LTXVAudioVAEDecode",
+      "LTXVConcatAVLatent",
+      "LTXVConditioning",
+      "LTXVDualCFGGuider",
+      "LTXVEmptyLatentAudio",
+      "LTXVImgToVideoInplace",
+      "LTXVLatentUpsampler",
+      "LTXVPreprocess",
+      "LTXVSeparateAVLatent",
+      "LatentUpscaleModelLoader",
+      "LoadImage",
+      "ManualSigmas",
+      "PrimitiveBoolean",
+      "PrimitiveInt",
+      "RandomNoise",
+      "ResizeImageMaskNode",
+      "SamplerCustomAdvanced",
+      "SaveVideo",
+      "UNETLoader",
+      "VAEDecodeTiled",
+      "VAELoader"
+    ],
+    "models": [
+      {
+        "name": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+        "directory": "text_encoders",
+        "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+        "size": 15372969374,
+        "sha256": "****************************************************************"
+      },
+      {
+        "name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+        "directory": "diffusion_models",
+        "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+        "size": 21504034224,
+        "sha256": "****************************************************************"
+      },
+      {
+        "name": "ltx-2.5-audio-vae-bf16.safetensors",
+        "directory": "vae",
+        "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-audio-vae-bf16.safetensors",
+        "size": 364866540,
+        "sha256": "****************************************************************"
+      },
+      {
+        "name": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+        "directory": "latent_upscale_models",
+        "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+        "size": 995778752,
+        "sha256": "****************************************************************"
+      },
+      {
+        "name": "ltx-2.5-video-vae-bf16.safetensors",
+        "directory": "vae",
+        "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-video-vae-bf16.safetensors",
+        "size": 1472223346,
+        "sha256": "****************************************************************"
+      }
+    ]
+  },
+  "sources": [
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_ltx2_5_i2v.json",
+    "https://docs.comfy.org/tutorials/video/ltx/ltx-2-5",
+    "https://huggingface.co/Lightricks/LTX-2.5"
+  ],
+  "tags": ["audio"]
+}

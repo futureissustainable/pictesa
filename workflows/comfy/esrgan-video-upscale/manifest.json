@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "name": "Real-ESRGAN Video Upscale",
+  "description": "Upscales every frame of a video 4x with Real-ESRGAN x4plus and keeps the original audio and frame rate.",
+  "vendor": "Tencent ARC",
+  "output": "video",
+  "tasks": ["upscale"],
+  "open_weights": true,
+  "license": "BSD-3-Clause",
+  "inputs": [
+    {
+      "role": "video",
+      "kind": "video",
+      "nodes": ["3"],
+      "input": "file",
+      "min": 1,
+      "label": "Video"
+    }
+  ],
+  "params": [],
+  "max_outputs": 1,
+  "outputs": ["6"],
+  "requires": {
+    "nodes": [
+      "CreateVideo",
+      "GetVideoComponents",
+      "ImageUpscaleWithModel",
+      "LoadVideo",
+      "SaveVideo",
+      "UpscaleModelLoader"
+    ],
+    "models": [
+      {
+        "name": "RealESRGAN_x4plus.safetensors",
+        "directory": "upscale_models",
+        "url": "https://huggingface.co/Comfy-Org/Real-ESRGAN_repackaged/resolve/main/RealESRGAN_x4plus.safetensors",
+        "size": 66857836,
+        "sha256": "37f9a931c215f040aa6d50f711f2cb115f713c46df1d0d6469a8bd7bfe9a60bb"
+      }
+    ]
+  },
+  "sources": [
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/utility-gan_upscaler.json",
+    "https://docs.comfy.org/tutorials/utility/image-upscale",
+    "https://huggingface.co/Comfy-Org/Real-ESRGAN_repackaged"
+  ]
+}

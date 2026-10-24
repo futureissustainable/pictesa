@@ -1,0 +1,169 @@
+import type {
+  ApiToken,
+  Asset,
+  AssetDetail,
+  AssetQuery,
+  GenerationRequest,
+  Health,
+  Job,
+  MediaKind,
+  Me,
+  ModelSpec,
+  Preset,
+  ProviderState,
+  User,
+} from "./types";
+
+/** A failed API call. `field` points at the offending input ("params.duration", "prompt"). */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly kind?: string;
+  readonly field?: string;
+  constructor(message: string, status: number, kind?: string, field?: string) {
+    super(message);
+    this.status = status;
+    this.kind = kind;
+    this.field = field;
+  }
+}
+
+export const OFFLINE_MESSAGE = "Pictesa is not answering. Check that the server is running.";
+
+type QueryValue = string | number | boolean | null | undefined;
+
+export function withQuery(path: string, query: Record<string, QueryValue> = {}): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
+  }
+  const text = params.toString();
+  if (!text) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}${text}`;
+}
+
+const unauthorized = new Set<() => void>();
+/** Called when any request answers 401, so the app can show the login screen. */
+export function onUnauthorized(listener: () => void): () => void {
+  unauthorized.add(listener);
+  return () => unauthorized.delete(listener);
+}
+
+function errorFrom(status: number, data: unknown): ApiError {
+  const body = (data && typeof data === "object" ? data : {}) as { error?: unknown; kind?: unknown; field?: unknown };
+  const message = typeof body.error === "string" && body.error ? body.error : `The request failed (${status}).`;
+  return new ApiError(message, status, typeof body.kind === "string" ? body.kind : undefined, typeof body.field === "string" ? body.field : undefined);
+}
+
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      signal,
+      credentials: "same-origin",
+      headers: body === undefined ? { Accept: "application/json" } : { Accept: "application/json", "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ApiError(OFFLINE_MESSAGE, 0, "network");
+  }
+  if (response.status === 401) unauthorized.forEach((listener) => listener());
+  if (response.status === 204) return undefined as T;
+  const text = await response.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+  }
+  if (!response.ok) throw errorFrom(response.status, data);
+  return data as T;
+}
+
+const id = (value: string) => encodeURIComponent(value);
+
+export const api = {
+  me: () => request<Me>("GET", "/api/auth/me"),
+  login: (body: { email: string; password: string }) => request<User>("POST", "/api/auth/login", body),
+  signup: (body: { email: string; password: string; name?: string }) => request<User>("POST", "/api/auth/signup", body),
+  logout: () => request<void>("POST", "/api/auth/logout"),
+  tokens: () => request<{ tokens: ApiToken[] }>("GET", "/api/tokens"),
+  createToken: (name: string) => request<{ id: string; name: string; token: string }>("POST", "/api/tokens", { name }),
+  deleteToken: (tokenId: string) => request<void>("DELETE", `/api/tokens/${id(tokenId)}`),
+
+  health: () => request<Health>("GET", "/api/health"),
+
+  providers: () => request<{ providers: ProviderState[] }>("GET", "/api/providers"),
+  saveProvider: (providerId: string, values: Record<string, string>) =>
+    request<ProviderState>("PUT", `/api/providers/${id(providerId)}`, { values }),
+  forgetProvider: (providerId: string) => request<void>("DELETE", `/api/providers/${id(providerId)}`),
+  checkProvider: (providerId: string) => request<{ ok: boolean; error?: string }>("POST", `/api/providers/${id(providerId)}/check`),
+
+  models: (query: { output?: MediaKind; task?: string; provider?: string; q?: string; configured?: boolean } = {}) =>
+    request<{ models: ModelSpec[] }>("GET", withQuery("/api/models", query)),
+  refreshModels: () => request<{ models: number }>("POST", "/api/models/refresh"),
+  presets: (output: MediaKind) => request<{ presets: Preset[] }>("GET", withQuery("/api/presets", { output })),
+
+  generate: (body: GenerationRequest) => request<{ batch_id: string; jobs: Job[] }>("POST", "/api/generations", body),
+  jobs: (query: { status?: string; output?: MediaKind; limit?: number; before?: string } = {}) =>
+    request<{ jobs: Job[]; next: string | null }>("GET", withQuery("/api/generations", query)),
+  job: (jobId: string) => request<Job>("GET", `/api/generations/${id(jobId)}`),
+  cancelJob: (jobId: string) => request<Job>("POST", `/api/generations/${id(jobId)}/cancel`),
+  retryJob: (jobId: string) => request<{ batch_id: string; jobs: Job[] }>("POST", `/api/generations/${id(jobId)}/retry`),
+
+  assets: (query: AssetQuery & { limit?: number; before?: string | null }, signal?: AbortSignal) =>
+    request<{ assets: Asset[]; next: string | null }>("GET", withQuery("/api/assets", { ...query }), undefined, signal),
+  asset: (assetId: string, signal?: AbortSignal) => request<AssetDetail>("GET", `/api/assets/${id(assetId)}`, undefined, signal),
+  patchAsset: (assetId: string, patch: { favorite?: boolean }) => request<Asset>("PATCH", `/api/assets/${id(assetId)}`, patch),
+  deleteAsset: (assetId: string, permanent = false) =>
+    request<void>("DELETE", withQuery(`/api/assets/${id(assetId)}`, { permanent })),
+  restoreAsset: (assetId: string) => request<Asset>("POST", `/api/assets/${id(assetId)}/restore`),
+  importAsset: (url: string) => request<{ assets: Asset[] }>("POST", "/api/assets/import", { url }),
+};
+
+/**
+ * Uploads files as multipart `file` fields. Uses XHR because fetch has no upload progress,
+ * and the UI shows real progress rather than a guess.
+ */
+export function uploadFiles(files: File[], onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<Asset[]> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    for (const file of files) form.append("file", file, file.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/assets");
+    xhr.responseType = "text";
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      let data: unknown = null;
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        data = null;
+      }
+      if (xhr.status === 401) unauthorized.forEach((listener) => listener());
+      if (xhr.status >= 200 && xhr.status < 300) resolve((data as { assets: Asset[] }).assets ?? []);
+      else reject(errorFrom(xhr.status, data));
+    };
+    xhr.onerror = () => reject(new ApiError(OFFLINE_MESSAGE, 0, "network"));
+    xhr.onabort = () => reject(new DOMException("Upload canceled", "AbortError"));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(form);
+  });
+}
+
+export function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof DOMException && error.name === "AbortError") return "Canceled.";
+  if (error instanceof Error && error.message) return error.message;
+  return "Something went wrong. Please try again.";
+}
+
+export function isAbort(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}

@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "name": "FLUX 3 Klein",
+  "description": "Black Forest Labs' open-weights FLUX.3 [klein] image model, step-distilled int8 build: text to image in 16 steps without CFG. About 11 GB of weights; fits a 12 GB GPU.",
+  "vendor": "Black Forest Labs",
+  "output": "image",
+  "tasks": ["text_to_image"],
+  "open_weights": true,
+  "license": "FLUX Kommunity License (gated on Hugging Face: accept the license before downloading)",
+  "prompt": [["5", "text"]],
+  "params": [
+    {
+      "key": "aspect_ratio",
+      "label": "Aspect ratio",
+      "type": "enum",
+      "options": [
+        {
+          "value": "1:1",
+          "label": "1:1"
+        },
+        {
+          "value": "4:5",
+          "label": "4:5"
+        },
+        {
+          "value": "3:4",
+          "label": "3:4"
+        },
+        {
+          "value": "2:3",
+          "label": "2:3"
+        },
+        {
+          "value": "9:16",
+          "label": "9:16"
+        },
+        {
+          "value": "16:9",
+          "label": "16:9"
+        },
+        {
+          "value": "3:2",
+          "label": "3:2"
+        },
+        {
+          "value": "4:3",
+          "label": "4:3"
+        },
+        {
+          "value": "5:4",
+          "label": "5:4"
+        },
+        {
+          "value": "21:9",
+          "label": "21:9"
+        }
+      ],
+      "default": "1:1"
+    },
+    {
+      "key": "steps",
+      "label": "Steps",
+      "type": "int",
+      "min": 1,
+      "max": 50,
+      "default": 16,
+      "advanced": true,
+      "bind": [["8", "steps"]]
+    },
+    {
+      "key": "seed",
+      "label": "Seed",
+      "type": "seed",
+      "advanced": true,
+      "bind": [["8", "seed"]]
+    }
+  ],
+  "size": {
+    "width": [["7", "width"]],
+    "height": [["7", "height"]],
+    "megapixels": 1.0,
+    "multiple": 16
+  },
+  "batch": [["7", "batch_size"]],
+  "max_outputs": 4,
+  "outputs": ["1"],
+  "requires": {
+    "nodes": [
+      "CLIPLoader",
+      "CLIPTextEncode",
+      "EmptyFlux2LatentImage",
+      "KSampler",
+      "SaveImage",
+      "UNETLoader",
+      "VAEDecode",
+      "VAELoader"
+    ],
+    "models": [
+      {
+        "name": "flux2-vae.safetensors",
+        "directory": "vae",
+        "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/vae/flux2-vae.safetensors",
+        "size": 336211292,
+        "sha256": "****************************************************************"
+      },
+      {
+        "name": "flux3-image-klein-int8-convrot.safetensors",
+        "directory": "diffusion_models",
+        "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-int8-convrot.safetensors",
+        "size": 5827874779,
+        "sha256": "****************************************************************"
+      },
+      {
+        "name": "qwen3vl_4b_int8_convrot.safetensors",
+        "directory": "text_encoders",
+        "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/text_encoders/qwen3vl_4b_int8_convrot.safetensors",
+        "size": 4858559240,
+        "sha256": "****************************************************************"
+      }
+    ]
+  },
+  "sources": [
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_flux3_klein_distilled_t2i.json",
+    "https://docs.comfy.org/tutorials/flux/flux-3-klein",
+    "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy"
+  ]
+}

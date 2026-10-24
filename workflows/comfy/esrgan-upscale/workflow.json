@@ -1,0 +1,51 @@
+{
+  "1": {
+    "inputs": {
+      "model_name": "RealESRGAN_x4plus.safetensors"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "input.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "upscale_model": ["1", 0],
+      "image": ["2", 0]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Upscale Image (using Model)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "image": ["3", 0],
+      "upscale_method": "lanczos",
+      "scale_by": 1.0
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Final scale"
+    }
+  },
+  "5": {
+    "inputs": {
+      "images": ["4", 0],
+      "filename_prefix": "pictesa/upscale"
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

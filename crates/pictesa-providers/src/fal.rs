@@ -28,6 +28,13 @@ const FAMILIES: &[&str] = &[
     "imagen", "ideogram", "recraft", "qwen-image", "hunyuan", "luma", "ray", "pika", "grok", "z-image", "runway", "topaz",
 ];
 
+/// Endpoint words that mark specialised variants, never shown as featured.
+const NICHE: &[&str] = &[
+    "lora", "train", "styles/", "deblur", "clean-plate", "action", "so101", "vector", "layerize", "inpaint", "tiling",
+    "foley", "tts", "speech", "music", "lip-sync", "lipsync", "reframe", "extend", "upscale", "draft", "outpaint", "remove",
+    "relight", "mask", "depth", "pose", "canny", "control", "sketch", "redux", "fill", "erase", "segment", "face",
+];
+
 fn auth(ctx: &Ctx) -> Option<String> {
     ctx.get("api_key").map(|k| format!("Key {k}"))
 }
@@ -164,7 +171,9 @@ impl Provider for Fal {
                 });
                 let date = md.get("date").and_then(Value::as_str).unwrap_or("").to_string();
                 let lower = endpoint.to_ascii_lowercase();
-                if let Some(family) = FAMILIES.iter().find(|f| lower.contains(*f)) {
+                let core = matches!(category, "text-to-image" | "image-to-image" | "text-to-video" | "image-to-video");
+                let niche = NICHE.iter().any(|w| lower.contains(w));
+                if let Some(family) = FAMILIES.iter().find(|f| lower.contains(*f)).filter(|_| core && !niche) {
                     let group = format!("{family}:{category}");
                     let idx = out.len();
                     match newest.get(&group) {

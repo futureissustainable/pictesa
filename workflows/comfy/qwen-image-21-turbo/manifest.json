@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "name": "Qwen Image 2.1 Turbo",
+  "description": "Alibaba Qwen-Image 2.1 Turbo, 8 steps: text to image with strong multilingual typography. About 17 GB of weights; ComfyUI offloads the text encoder on 12 GB GPUs.",
+  "vendor": "Alibaba",
+  "output": "image",
+  "tasks": ["text_to_image"],
+  "open_weights": true,
+  "license": "Apache-2.0",
+  "prompt": [["2", "prompt"]],
+  "negative_prompt": [["2", "negative_prompt"]],
+  "params": [
+    {
+      "key": "aspect_ratio",
+      "label": "Aspect ratio",
+      "type": "enum",
+      "options": [
+        {
+          "value": "1:1",
+          "label": "1:1"
+        },
+        {
+          "value": "4:5",
+          "label": "4:5"
+        },
+        {
+          "value": "3:4",
+          "label": "3:4"
+        },
+        {
+          "value": "2:3",
+          "label": "2:3"
+        },
+        {
+          "value": "9:16",
+          "label": "9:16"
+        },
+        {
+          "value": "16:9",
+          "label": "16:9"
+        },
+        {
+          "value": "3:2",
+          "label": "3:2"
+        },
+        {
+          "value": "4:3",
+          "label": "4:3"
+        },
+        {
+          "value": "5:4",
+          "label": "5:4"
+        },
+        {
+          "value": "21:9",
+          "label": "21:9"
+        }
+      ],
+      "default": "1:1"
+    },
+    {
+      "key": "seed",
+      "label": "Seed",
+      "type": "seed",
+      "advanced": true,
+      "bind": [["10", "noise_seed"]]
+    }
+  ],
+  "size": {
+    "width": [["5", "width"]],
+    "height": [["5", "height"]],
+    "megapixels": 1.0,
+    "multiple": 16
+  },
+  "batch": [["5", "batch_size"]],
+  "max_outputs": 4,
+  "outputs": ["13"],
+  "requires": {
+    "nodes": [
+      "CFGGuider",
+      "CLIPLoader",
+      "EmptyLatentImage",
+      "KSamplerSelect",
+      "ManualSigmas",
+      "QwenImage21Cache",
+      "RandomNoise",
+      "SamplerCustomAdvanced",
+      "SaveImageAdvanced",
+      "TextEncodeQwenImage21",
+      "UNETLoader",
+      "VAEDecode",
+      "VAELoader"
+    ],
+    "models": [
+      {
+        "name": "qwen3vl_8b_int8_convrot.safetensors",
+        "directory": "text_encoders",
+        "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+        "size": 9350798360,
+        "sha256": "8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f"
+      },
+      {
+        "name": "qwen_image_2.1_turbo_int8_convrot.safetensors",
+        "directory": "diffusion_models",
+        "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+        "size": 7256787829,
+        "sha256": "8144a0182964aa8403ad6dbc011db837304167d235161b9aabaa8532e967314c"
+      },
+      {
+        "name": "qwen_image_2.1_vae_bf16.safetensors",
+        "directory": "vae",
+        "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+        "size": 675509688,
+        "sha256": "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"
+      }
+    ]
+  },
+  "sources": [
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_qwen_image_2_1_turbo_t2i.json",
+    "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2-1",
+    "https://huggingface.co/Comfy-Org/Qwen-Image-2.1"
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "name": "FLUX 3 Klein Edit",
+  "description": "Instruction-driven image editing with the step-distilled FLUX.3 [klein] int8 build. Up to four reference images; the output follows the first one at about 1 megapixel.",
+  "vendor": "Black Forest Labs",
+  "output": "image",
+  "tasks": ["image_edit"],
+  "open_weights": true,
+  "license": "FLUX Kommunity License (gated on Hugging Face: accept the license before downloading)",
+  "prompt": [["4", "text"]],
+  "inputs": [
+    {
+      "role": "reference",
+      "kind": "image",
+      "nodes": ["8", "11", "12", "13"],
+      "input": "image",
+      "min": 1,
+      "label": "Images to edit"
+    }
+  ],
+  "params": [
+    {
+      "key": "steps",
+      "label": "Steps",
+      "type": "int",
+      "min": 1,
+      "max": 50,
+      "default": 16,
+      "advanced": true,
+      "bind": [["5", "steps"]]
+    },
+    {
+      "key": "seed",
+      "label": "Seed",
+      "type": "seed",
+      "advanced": true,
+      "bind": [["5", "seed"]]
+    }
+  ],
+  "max_outputs": 1,
+  "outputs": ["7"],
+  "requires": {
+    "nodes": [
+      "CLIPLoader",
+      "CLIPTextEncode",
+      "ConditioningZeroOut",
+      "KSampler",
+      "LoadImage",
+      "ReferenceMultiLatent",
+      "SaveImage",
+      "UNETLoader",
+      "VAEDecode",
+      "VAELoader"
+    ],
+    "models": [
+      {
+        "name": "flux2-vae.safetensors",
+        "directory": "vae",
+        "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/vae/flux2-vae.safetensors",
+        "size": 336211292,
+        "sha256": "****************************************************************"
+      },
+      {
+        "name": "flux3-image-klein-int8-convrot.safetensors",
+        "directory": "diffusion_models",
+        "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-int8-convrot.safetensors",
+        "size": 5827874779,
+        "sha256": "****************************************************************"
+      },
+      {
+        "name": "qwen3vl_4b_int8_convrot.safetensors",
+        "directory": "text_encoders",
+        "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/text_encoders/qwen3vl_4b_int8_convrot.safetensors",
+        "size": 4858559240,
+        "sha256": "****************************************************************"
+      }
+    ]
+  },
+  "sources": [
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_flux3_klein_distilled_image_edit.json",
+    "https://docs.comfy.org/tutorials/flux/flux-3-klein",
+    "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy"
+  ]
+}

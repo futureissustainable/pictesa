@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "name": "Real-ESRGAN Upscale",
+  "description": "Upscales an image 2x or 4x with Real-ESRGAN x4plus (67 MB). Runs on any GPU, and on CPU for small images.",
+  "vendor": "Tencent ARC",
+  "output": "image",
+  "tasks": ["upscale"],
+  "open_weights": true,
+  "license": "BSD-3-Clause",
+  "inputs": [
+    {
+      "role": "reference",
+      "kind": "image",
+      "nodes": ["2"],
+      "input": "image",
+      "min": 1,
+      "label": "Image"
+    }
+  ],
+  "params": [
+    {
+      "key": "scale",
+      "label": "Scale",
+      "type": "enum",
+      "options": [
+        {
+          "value": 2,
+          "label": "2x"
+        },
+        {
+          "value": 4,
+          "label": "4x"
+        }
+      ],
+      "default": 4,
+      "bind": [
+        {
+          "node": "4",
+          "input": "scale_by",
+          "map": {
+            "2": 0.5,
+            "4": 1.0
+          }
+        }
+      ]
+    }
+  ],
+  "max_outputs": 1,
+  "outputs": ["5"],
+  "requires": {
+    "nodes": ["ImageScaleBy", "ImageUpscaleWithModel", "LoadImage", "SaveImage", "UpscaleModelLoader"],
+    "models": [
+      {
+        "name": "RealESRGAN_x4plus.safetensors",
+        "directory": "upscale_models",
+        "url": "https://huggingface.co/Comfy-Org/Real-ESRGAN_repackaged/resolve/main/RealESRGAN_x4plus.safetensors",
+        "size": 66857836,
+        "sha256": "37f9a931c215f040aa6d50f711f2cb115f713c46df1d0d6469a8bd7bfe9a60bb"
+      }
+    ]
+  },
+  "sources": [
+    "https://docs.comfy.org/tutorials/basic/upscale",
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/utility-gan_upscaler.json",
+    "https://huggingface.co/Comfy-Org/Real-ESRGAN_repackaged"
+  ]
+}

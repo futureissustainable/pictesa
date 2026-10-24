@@ -1,7 +1,32 @@
 [package]
 name = "pictesa-engine"
+description = "Pictesa engine: storage, job queue, files, catalog and events"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pictesa-core.workspace = true
+pictesa-providers.workspace = true
+anyhow.workspace = true
+argon2.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+chacha20poly1305.workspace = true
+dirs.workspace = true
+futures.workspace = true
+image.workspace = true
+mime_guess.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+ulid.workspace = true
+url.workspace = true

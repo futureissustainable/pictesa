@@ -1,0 +1,416 @@
+[
+ {
+  "id": "camera/dolly-in",
+  "name": "Dolly in",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "slow dolly-in toward the subject, smooth forward camera glide",
+  "params": {},
+  "description": "The camera glides forward toward the subject."
+ },
+ {
+  "id": "camera/dolly-out",
+  "name": "Dolly out",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "slow dolly-out away from the subject, revealing the surroundings",
+  "params": {},
+  "description": "The camera pulls back to reveal the scene."
+ },
+ {
+  "id": "camera/push-in-fast",
+  "name": "Crash zoom",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "sudden fast push-in on the subject, energetic crash zoom",
+  "params": {},
+  "description": "A quick, punchy zoom into the subject."
+ },
+ {
+  "id": "camera/orbit-left",
+  "name": "Orbit left",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera orbits around the subject to the left in a smooth arc",
+  "params": {},
+  "description": "The camera circles the subject counterclockwise."
+ },
+ {
+  "id": "camera/orbit-right",
+  "name": "Orbit right",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera orbits around the subject to the right in a smooth arc",
+  "params": {},
+  "description": "The camera circles the subject clockwise."
+ },
+ {
+  "id": "camera/crane-up",
+  "name": "Crane up",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera cranes upward, rising above the subject to a high angle",
+  "params": {},
+  "description": "The camera rises vertically for a lifting reveal."
+ },
+ {
+  "id": "camera/crane-down",
+  "name": "Crane down",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera cranes down from a high angle to eye level",
+  "params": {},
+  "description": "The camera descends into the scene."
+ },
+ {
+  "id": "camera/pan-left",
+  "name": "Pan left",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "slow horizontal pan to the left",
+  "params": {},
+  "description": "The camera turns left from a fixed position."
+ },
+ {
+  "id": "camera/pan-right",
+  "name": "Pan right",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "slow horizontal pan to the right",
+  "params": {},
+  "description": "The camera turns right from a fixed position."
+ },
+ {
+  "id": "camera/tilt-up",
+  "name": "Tilt up",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera tilts upward from the ground to the sky",
+  "params": {},
+  "description": "The camera angles up from a fixed point."
+ },
+ {
+  "id": "camera/tilt-down",
+  "name": "Tilt down",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera tilts downward revealing the ground",
+  "params": {},
+  "description": "The camera angles down from a fixed point."
+ },
+ {
+  "id": "camera/truck-left",
+  "name": "Truck left",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera tracks sideways to the left, parallel to the subject",
+  "params": {},
+  "description": "The camera slides left alongside the subject."
+ },
+ {
+  "id": "camera/truck-right",
+  "name": "Truck right",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera tracks sideways to the right, parallel to the subject",
+  "params": {},
+  "description": "The camera slides right alongside the subject."
+ },
+ {
+  "id": "camera/handheld",
+  "name": "Handheld",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "handheld camera with natural subtle shake, documentary feel",
+  "params": {},
+  "description": "Natural, slightly shaky documentary motion."
+ },
+ {
+  "id": "camera/static",
+  "name": "Locked off",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "static locked-off camera on a tripod, no camera movement",
+  "params": {},
+  "description": "The camera stays still; only the scene moves."
+ },
+ {
+  "id": "camera/fpv-drone",
+  "name": "FPV drone",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "fast FPV drone flight swooping through the scene with banking turns",
+  "params": {},
+  "description": "An agile drone flies through the scene."
+ },
+ {
+  "id": "camera/aerial-reveal",
+  "name": "Aerial reveal",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "high aerial drone shot slowly moving forward to reveal the landscape",
+  "params": {},
+  "description": "A wide aerial establishing move."
+ },
+ {
+  "id": "camera/follow",
+  "name": "Follow",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera follows behind the moving subject at a steady distance",
+  "params": {},
+  "description": "The camera tracks the subject from behind."
+ },
+ {
+  "id": "camera/lead",
+  "name": "Lead",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera moves backward in front of the subject as it walks toward the lens",
+  "params": {},
+  "description": "The camera leads the subject, facing it."
+ },
+ {
+  "id": "camera/bullet-time",
+  "name": "Bullet time",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "frozen moment while the camera sweeps around the subject, bullet time",
+  "params": {},
+  "description": "Time freezes while the camera arcs around."
+ },
+ {
+  "id": "camera/dolly-zoom",
+  "name": "Dolly zoom",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "dolly zoom vertigo effect, background stretches while the subject stays the same size",
+  "params": {},
+  "description": "The classic vertigo push-pull."
+ },
+ {
+  "id": "camera/rack-focus",
+  "name": "Rack focus",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "focus shifts from the foreground to the background subject",
+  "params": {},
+  "description": "Focus pulls between two depths."
+ },
+ {
+  "id": "camera/snorricam",
+  "name": "Body mount",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera fixed to the subject's body, subject steady while the world moves",
+  "params": {},
+  "description": "Subject locked in frame, the world swings."
+ },
+ {
+  "id": "camera/whip-pan",
+  "name": "Whip pan",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "very fast whip pan with motion blur",
+  "params": {},
+  "description": "A blurred, very fast sideways swing."
+ },
+ {
+  "id": "camera/slow-motion",
+  "name": "Slow motion",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "slow motion, high frame rate, graceful movement",
+  "params": {},
+  "description": "Everything moves in graceful slow motion."
+ },
+ {
+  "id": "camera/timelapse",
+  "name": "Timelapse",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "timelapse, clouds and light move quickly across the scene",
+  "params": {},
+  "description": "Hours pass in seconds."
+ },
+ {
+  "id": "style/cinematic",
+  "name": "Cinematic",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "cinematic still, anamorphic lens, shallow depth of field, film grain, dramatic lighting",
+  "params": {},
+  "description": "Film-like frame with shallow focus and grain."
+ },
+ {
+  "id": "style/editorial",
+  "name": "Editorial",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "editorial photograph, natural light, magazine quality, true colors",
+  "params": {},
+  "description": "Clean magazine photography."
+ },
+ {
+  "id": "style/product",
+  "name": "Product",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "studio product photograph, seamless background, softbox lighting, crisp detail",
+  "params": {},
+  "description": "Commercial product shot."
+ },
+ {
+  "id": "style/architectural",
+  "name": "Architecture",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "architectural photography, straight verticals, wide lens, soft daylight",
+  "params": {},
+  "description": "Architecture with corrected perspective."
+ },
+ {
+  "id": "style/golden-hour",
+  "name": "Golden hour",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "golden hour sunlight, warm low sun, long soft shadows",
+  "params": {},
+  "description": "Warm low-sun light."
+ },
+ {
+  "id": "style/blue-hour",
+  "name": "Blue hour",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "blue hour twilight, cool ambient light, warm interior lights",
+  "params": {},
+  "description": "Dusk with glowing windows."
+ },
+ {
+  "id": "style/film-35mm",
+  "name": "35mm film",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "shot on 35mm film, Kodak Portra colors, natural grain",
+  "params": {},
+  "description": "Analog film colors and grain."
+ },
+ {
+  "id": "style/noir",
+  "name": "Noir",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "black and white film noir, hard light, deep shadows",
+  "params": {},
+  "description": "High-contrast black and white."
+ },
+ {
+  "id": "style/isometric",
+  "name": "Isometric 3D",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "isometric 3D render, soft studio lighting, clean materials",
+  "params": {},
+  "description": "Clean isometric 3D illustration."
+ },
+ {
+  "id": "style/watercolor",
+  "name": "Watercolor",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "watercolor painting, soft washes, paper texture",
+  "params": {},
+  "description": "Soft painted look."
+ },
+ {
+  "id": "style/anime",
+  "name": "Anime",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "anime illustration, clean line art, cel shading",
+  "params": {},
+  "description": "Cel-shaded illustration."
+ },
+ {
+  "id": "style/ugc-phone",
+  "name": "Phone photo",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "casual smartphone photo, natural imperfect framing, realistic",
+  "params": {},
+  "description": "Everyday phone-camera realism."
+ },
+ {
+  "id": "video-style/cinematic",
+  "name": "Cinematic",
+  "category": "style",
+  "output": "video",
+  "prompt_suffix": "cinematic anamorphic lens, shallow depth of field, film grain, dramatic lighting",
+  "params": {},
+  "description": "Film-like frame with shallow focus and grain."
+ },
+ {
+  "id": "video-style/editorial",
+  "name": "Editorial",
+  "category": "style",
+  "output": "video",
+  "prompt_suffix": "editorial footage, natural light, magazine quality, true colors",
+  "params": {},
+  "description": "Clean magazine photography."
+ },
+ {
+  "id": "video-style/product",
+  "name": "Product",
+  "category": "style",
+  "output": "video",
+  "prompt_suffix": "studio product footage, seamless background, softbox lighting, crisp detail",
+  "params": {},
+  "description": "Commercial product shot."
+ },
+ {
+  "id": "video-style/architectural",
+  "name": "Architecture",
+  "category": "style",
+  "output": "video",
+  "prompt_suffix": "architectural footagey, straight verticals, wide lens, soft daylight",
+  "params": {},
+  "description": "Architecture with corrected perspective."
+ },
+ {
+  "id": "video-style/golden-hour",
+  "name": "Golden hour",
+  "category": "style",
+  "output": "video",
+  "prompt_suffix": "golden hour sunlight, warm low sun, long soft shadows",
+  "params": {},
+  "description": "Warm low-sun light."
+ },
+ {
+  "id": "video-style/blue-hour",
+  "name": "Blue hour",
+  "category": "style",
+  "output": "video",
+  "prompt_suffix": "blue hour twilight, cool ambient light, warm interior lights",
+  "params": {},
+  "description": "Dusk with glowing windows."
+ },
+ {
+  "id": "video-style/film-35mm",
+  "name": "35mm film",
+  "category": "style",
+  "output": "video",
+  "prompt_suffix": "shot on 35mm film, Kodak Portra colors, natural grain",
+  "params": {},
+  "description": "Analog film colors and grain."
+ },
+ {
+  "id": "video-style/noir",
+  "name": "Noir",
+  "category": "style",
+  "output": "video",
+  "prompt_suffix": "black and white film noir, hard light, deep shadows",
+  "params": {},
+  "description": "High-contrast black and white."
+ }
+]

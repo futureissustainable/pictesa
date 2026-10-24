@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "name": "Wan 2.2 Image to Video",
+  "description": "Alibaba Wan 2.2 14B image to video (fp8 high-noise and low-noise experts) at 16 fps. The 4-step lightx2v LoRAs are on by default; turn them off for the full 20-step run. About 38 GB of weights; ComfyUI offloads them on 12 GB GPUs.",
+  "vendor": "Alibaba",
+  "output": "video",
+  "tasks": ["image_to_video"],
+  "open_weights": true,
+  "license": "Apache-2.0",
+  "prompt": [["9", "text"]],
+  "negative_prompt": [["7", "text"]],
+  "inputs": [
+    {
+      "role": "start_frame",
+      "kind": "image",
+      "nodes": ["1"],
+      "input": "image",
+      "min": 1,
+      "label": "Start frame"
+    }
+  ],
+  "params": [
+    {
+      "key": "aspect_ratio",
+      "label": "Aspect ratio",
+      "type": "enum",
+      "options": [
+        {
+          "value": "auto",
+          "label": "Match input"
+        },
+        {
+          "value": "16:9",
+          "label": "16:9"
+        },
+        {
+          "value": "9:16",
+          "label": "9:16"
+        },
+        {
+          "value": "1:1",
+          "label": "1:1"
+        }
+      ],
+      "default": "auto"
+    },
+    {
+      "key": "resolution",
+      "label": "Resolution",
+      "type": "enum",
+      "options": [
+        {
+          "value": "480p",
+          "label": "480p"
+        },
+        {
+          "value": "720p",
+          "label": "720p"
+        }
+      ],
+      "default": "480p"
+    },
+    {
+      "key": "duration",
+      "label": "Duration",
+      "type": "enum",
+      "options": [
+        {
+          "value": 2,
+          "label": "2s"
+        },
+        {
+          "value": 3,
+          "label": "3s"
+        },
+        {
+          "value": 4,
+          "label": "4s"
+        },
+        {
+          "value": 5,
+          "label": "5s"
+        }
+      ],
+      "default": 5,
+      "bind": [["30", "value"]]
+    },
+    {
+      "key": "lightning",
+      "label": "Fast 4-step LoRA",
+      "type": "bool",
+      "default": true,
+      "advanced": true,
+      "help": "Runs 4 steps with the lightx2v LoRAs instead of 20 full steps.",
+      "bind": [["29", "value"]]
+    },
+    {
+      "key": "seed",
+      "label": "Seed",
+      "type": "seed",
+      "advanced": true,
+      "bind": [["5", "noise_seed"]]
+    }
+  ],
+  "size": {
+    "width": [["13", "width"]],
+    "height": [["13", "height"]],
+    "megapixels": 0.4,
+    "multiple": 16,
+    "resolutions": {
+      "480p": 0.4,
+      "720p": 0.92
+    },
+    "match_input": "start_frame"
+  },
+  "max_outputs": 1,
+  "outputs": ["2"],
+  "requires": {
+    "nodes": [
+      "CLIPLoader",
+      "CLIPTextEncode",
+      "ComfyMathExpression",
+      "ComfySwitchNode",
+      "CreateVideo",
+      "KSamplerAdvanced",
+      "LoadImage",
+      "LoraLoaderModelOnly",
+      "ModelSamplingSD3",
+      "PrimitiveBoolean",
+      "PrimitiveFloat",
+      "PrimitiveInt",
+      "SaveVideo",
+      "UNETLoader",
+      "VAEDecode",
+      "VAELoader",
+      "WanImageToVideo"
+    ],
+    "models": [
+      {
+        "name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "directory": "text_encoders",
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "size": 6735906897,
+        "sha256": "c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68"
+      },
+      {
+        "name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        "directory": "diffusion_models",
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        "size": 14294742832,
+        "sha256": "6122e79d55e0f235698d11d657f3b196c5273c830da00b2b013c5a048d5e6a42"
+      },
+      {
+        "name": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "directory": "loras",
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "size": 1226977424,
+        "sha256": "d176c808d6fc461999b68e321efcb7501b20b8c3797523ed0df14f7d1deff11e"
+      },
+      {
+        "name": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "directory": "loras",
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "size": 1226977424,
+        "sha256": "024f21de095bc8fad9809ded3e9e49a2e170dcf27075da8145ba7d60d8aab7f9"
+      },
+      {
+        "name": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        "directory": "diffusion_models",
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        "size": 14294742832,
+        "sha256": "5471a457b6ac404202a5fbe6c11595a3d5641fc766b00f38763f72303fffc21e"
+      },
+      {
+        "name": "wan_2.1_vae.safetensors",
+        "directory": "vae",
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+        "size": 253815318,
+        "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
+      }
+    ]
+  },
+  "sources": [
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_wan2_2_14B_i2v.json",
+    "https://docs.comfy.org/tutorials/video/wan/wan2_2",
+    "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged"
+  ]
+}
