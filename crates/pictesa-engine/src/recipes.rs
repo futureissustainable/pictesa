@@ -333,7 +333,7 @@ impl Engine {
             let preset = step.preset.as_ref().and_then(|p| render_value(&json!(p), &values)).and_then(|v| v.as_str().map(String::from)).filter(|p| !p.is_empty());
             let prompt = render(&step.prompt, &values);
             let created = self
-                .create_generation(user, CreateGeneration { model: models[i].clone(), prompt, negative_prompt: None, params, inputs, count: Some(1), preset, compare: Vec::new() })
+                .create_generation(user, CreateGeneration { model: models[i].clone(), prompt, negative_prompt: None, params, inputs, count: Some(1), preset, compare: Vec::new(), character: None })
                 .await?;
             let job_id = created.jobs[0].id.clone();
             job_ids.push(job_id.clone());

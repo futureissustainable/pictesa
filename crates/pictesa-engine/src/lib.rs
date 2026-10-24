@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod billing;
 pub mod catalog;
+pub mod characters;
 pub mod creds;
 pub mod crypto;
 pub mod enhance;

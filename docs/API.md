@@ -212,3 +212,16 @@ Show the balance and top-up only when `enabled` is true. A generation the wallet
 - Uploads stream to disk (up to 4 GB per file); every other request body is limited to 2 MB. Files must be real images, videos or audio (recognised from their content); SVG and other active formats are refused.
 - The CLI takes library items as inputs with `-i role=asset:<id>`.
 - `POST /api/assets` with several files stores every valid one and lists the others in `errors: [{ name, error }]`; it answers 400 only when no file could be stored.
+
+### Characters
+Named sets of reference images (a person, a product, a style) that any run can attach.
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| GET | `/api/characters` | | `{ characters: [Character] }` |
+| POST | `/api/characters` | `{ name, description?, asset_ids: [1..14 image ids] }` | `201 Character` |
+| GET | `/api/characters/{id}` | | `Character` |
+| PATCH | `/api/characters/{id}` | any of `{ name, description, asset_ids }` | `Character` |
+| DELETE | `/api/characters/{id}` | | 204 |
+
+`Character`: `{ id, name, description, assets: [Asset], created_at, updated_at }`. `POST /api/generations` takes `"character": "<id>"`: its images are added as `reference` inputs, up to what the model accepts (a model without image references refuses it). Changes fire `event: character`.

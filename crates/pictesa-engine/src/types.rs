@@ -118,6 +118,9 @@ pub struct CreateGeneration {
     /// Also run the same request on these models (compare). Params and inputs are adapted to each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compare: Vec<String>,
+    /// Attach a saved character's images as reference inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

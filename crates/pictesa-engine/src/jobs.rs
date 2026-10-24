@@ -182,6 +182,14 @@ impl Engine {
     /// Queues an already-validated request inside an existing batch (recipes use this through `create_generation`).
     async fn plan(&self, user: &str, mut req: CreateGeneration) -> Result<Planned> {
         let spec = self.model(user, &req.model).await?;
+        if let Some(cid) = req.character.clone().filter(|c| !c.is_empty()) {
+            let slot = spec.accepts(pictesa_core::InputRole::Reference).filter(|s| s.kind == pictesa_core::MediaKind::Image).ok_or_else(|| {
+                EngineError::invalid(format!("{} does not take reference images, so it cannot use a character.", spec.name), Some("character"))
+            })?;
+            let already = req.inputs.iter().filter(|i| i.role == pictesa_core::InputRole::Reference).count() as u32;
+            let room = slot.max.saturating_sub(already);
+            req.inputs.extend(self.character_inputs(user, &cid, room).await?);
+        }
         let provider = self.inner.catalog.provider(&spec.provider).ok_or_else(|| EngineError::not_found("provider"))?;
         let info = provider.info();
         let resolved = self.resolve_fields(user, provider.as_ref()).await?;
@@ -431,8 +439,9 @@ impl Engine {
                 params: row.params_map(),
                 inputs: row.inputs_list(),
                 count: Some(row.count as u32),
-                preset: None,
+                preset: row.preset.clone(),
                 compare: Vec::new(),
+                character: None,
             },
         )
         .await

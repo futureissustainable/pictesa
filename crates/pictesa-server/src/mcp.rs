@@ -112,11 +112,19 @@ fn tools() -> Value {
                 "count": { "type": "integer", "minimum": 1, "maximum": 16, "default": 1 },
                 "preset": { "type": "string", "description": "Preset id from list_presets" },
                 "compare": { "type": "array", "items": { "type": "string" }, "maxItems": 7, "description": "Also run the same request on these model ids, for a side-by-side comparison" },
+                "character": { "type": "string", "description": "Character id from list_characters: attaches its reference images" },
                 "wait": { "type": "boolean", "default": true },
                 "timeout_seconds": { "type": "integer", "default": 900, "maximum": 3600 },
                 "include_preview": { "type": "boolean", "default": false, "description": "Attach small JPEG previews of the results" }
             }, "required": ["model"] },
             "annotations": { "readOnlyHint": false, "openWorldHint": true }
+        },
+        {
+            "name": "list_characters",
+            "title": "List characters",
+            "description": "Saved characters (named sets of reference images for a person, product or style) that generate can attach with `character`.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "readOnlyHint": true }
         },
         {
             "name": "list_recipes",
@@ -319,6 +327,7 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 count: args.get("count").and_then(Value::as_u64).map(|c| c as u32),
                 preset: arg_str(args, "preset").map(String::from),
                 compare: args.get("compare").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default(),
+                character: arg_str(args, "character").map(String::from),
             };
             let created = e.create_generation(user, req).await.map_err(err)?;
             if args.get("wait").and_then(Value::as_bool) == Some(false) {
@@ -342,6 +351,16 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 content.extend(previews(ctx, &done).await);
             }
             Ok(content)
+        }
+        "list_characters" => {
+            let list: Vec<Value> = e
+                .characters(user)
+                .await
+                .map_err(err)?
+                .iter()
+                .map(|c| json!({ "id": c.id, "name": c.name, "description": c.description, "images": c.assets.len() }))
+                .collect();
+            Ok(text(&json!({ "characters": list })))
         }
         "list_recipes" => {
             let list: Vec<Value> = e

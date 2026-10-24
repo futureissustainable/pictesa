@@ -224,6 +224,8 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/assets/{id}", get(get_asset).patch(patch_asset).delete(delete_asset))
         .route("/assets/{id}/restore", post(restore_asset))
         .route("/events", get(events))
+        .route("/characters", get(characters).post(create_character))
+        .route("/characters/{id}", get(character).patch(update_character).delete(delete_character))
         .route("/recipes", get(recipes))
         .route("/recipes/runs", get(recipe_runs))
         .route("/recipes/runs/{id}", get(recipe_run))
@@ -570,6 +572,29 @@ async fn delete_asset(State(s): State<AppState>, c: Caller, Path(id): Path<Strin
 
 async fn restore_asset(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(s.engine.restore(&c.user_id, &id).await?)))
+}
+
+// ---------- characters ----------
+
+async fn characters(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "characters": s.engine.characters(&c.user_id).await? })))
+}
+
+async fn character(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(s.engine.character(&c.user_id, &id).await?)))
+}
+
+async fn create_character(State(s): State<AppState>, c: Caller, Json(b): Json<pictesa_engine::characters::CharacterInput>) -> ApiResult<Response> {
+    Ok((StatusCode::CREATED, Json(json!(s.engine.create_character(&c.user_id, b).await?))).into_response())
+}
+
+async fn update_character(State(s): State<AppState>, c: Caller, Path(id): Path<String>, Json(b): Json<pictesa_engine::characters::CharacterInput>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(s.engine.update_character(&c.user_id, &id, b).await?)))
+}
+
+async fn delete_character(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    s.engine.delete_character(&c.user_id, &id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------- recipes ----------
