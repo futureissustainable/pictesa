@@ -412,5 +412,275 @@
   "prompt_suffix": "black and white film noir, hard light, deep shadows",
   "params": {},
   "description": "High-contrast black and white."
+ },
+ {
+  "id": "camera/360-orbit",
+  "name": "360 orbit",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera makes a full 360-degree orbit around the subject",
+  "params": {},
+  "description": "A complete circle around the subject."
+ },
+ {
+  "id": "camera/arc-shot",
+  "name": "Arc shot",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera moves in a half-circle arc around the subject at eye level",
+  "params": {},
+  "description": "A half circle around the subject."
+ },
+ {
+  "id": "camera/push-through",
+  "name": "Push through",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera pushes forward through a gap or doorway into the scene",
+  "params": {},
+  "description": "Moves through an opening into the space."
+ },
+ {
+  "id": "camera/reveal-behind",
+  "name": "Reveal from behind",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera starts behind a foreground object and slides out to reveal the scene",
+  "params": {},
+  "description": "Slides out from behind an object."
+ },
+ {
+  "id": "camera/low-angle-hero",
+  "name": "Low angle hero",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "low angle shot looking up at the subject, slow upward drift, heroic",
+  "params": {},
+  "description": "Looks up at the subject for scale and power."
+ },
+ {
+  "id": "camera/top-down",
+  "name": "Top down",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "overhead top-down shot looking straight down, slow rotation",
+  "params": {},
+  "description": "A bird's-eye view from straight above."
+ },
+ {
+  "id": "camera/zoom-out-wide",
+  "name": "Zoom out wide",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "smooth optical zoom out from a close detail to a wide establishing view",
+  "params": {},
+  "description": "Starts on a detail, ends wide."
+ },
+ {
+  "id": "camera/hyperlapse",
+  "name": "Hyperlapse",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "hyperlapse moving forward through the scene, time accelerated",
+  "params": {},
+  "description": "Fast forward travel with time sped up."
+ },
+ {
+  "id": "camera/car-mount",
+  "name": "Car mount",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera mounted on a moving car, road rushing past, steady horizon",
+  "params": {},
+  "description": "Rides along with a vehicle."
+ },
+ {
+  "id": "camera/drone-flyover",
+  "name": "Drone flyover",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "drone flies over the scene from behind the subject toward the horizon",
+  "params": {},
+  "description": "Flies over and past the subject."
+ },
+ {
+  "id": "camera/boom-up",
+  "name": "Boom up",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera booms up vertically from ground level to above the subject",
+  "params": {},
+  "description": "Rises from the ground to above."
+ },
+ {
+  "id": "camera/tracking-side",
+  "name": "Side tracking",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera tracks alongside the moving subject from the side at the same speed",
+  "params": {},
+  "description": "Moves parallel with a walking or running subject."
+ },
+ {
+  "id": "camera/pull-back-reveal",
+  "name": "Pull back reveal",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera pulls back slowly to reveal the larger surroundings",
+  "params": {},
+  "description": "Pulls away to show the bigger picture."
+ },
+ {
+  "id": "camera/spiral-in",
+  "name": "Spiral in",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera spirals inward toward the subject, rotating while moving closer",
+  "params": {},
+  "description": "Circles inward toward the subject."
+ },
+ {
+  "id": "camera/dutch-tilt",
+  "name": "Dutch tilt",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "tilted dutch angle frame with a slow roll, uneasy tension",
+  "params": {},
+  "description": "A tilted, uneasy frame."
+ },
+ {
+  "id": "camera/shake",
+  "name": "Camera shake",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "strong camera shake as if from an impact or explosion",
+  "params": {},
+  "description": "Sudden violent shaking."
+ },
+ {
+  "id": "camera/rotation",
+  "name": "Barrel roll",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera rolls slowly around its own axis while moving forward",
+  "params": {},
+  "description": "Rolls around the lens axis."
+ },
+ {
+  "id": "camera/macro-slide",
+  "name": "Macro slide",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "extreme close-up macro shot sliding slowly across fine details",
+  "params": {},
+  "description": "Slides across tiny details."
+ },
+ {
+  "id": "camera/through-window",
+  "name": "Through the window",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "camera moves from outside through a window into the room",
+  "params": {},
+  "description": "Enters a building through a window."
+ },
+ {
+  "id": "camera/aerial-orbit",
+  "name": "Aerial orbit",
+  "category": "camera",
+  "output": "video",
+  "prompt_suffix": "high aerial drone shot orbiting a landmark at a wide radius",
+  "params": {},
+  "description": "A wide circle around a landmark from the air."
+ },
+ {
+  "id": "style/documentary",
+  "name": "Documentary",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "documentary photograph, available light, candid moment, true colors",
+  "params": {},
+  "description": "Candid, real-world look."
+ },
+ {
+  "id": "style/fashion",
+  "name": "Fashion",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "high fashion editorial photograph, bold styling, studio flash, crisp",
+  "params": {},
+  "description": "Glossy fashion editorial."
+ },
+ {
+  "id": "style/interior",
+  "name": "Interior design",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "interior design photograph, wide lens, soft window light, styled, magazine quality",
+  "params": {},
+  "description": "Magazine interiors."
+ },
+ {
+  "id": "style/food",
+  "name": "Food",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "food photograph, close-up, soft side light, shallow depth of field, appetizing",
+  "params": {},
+  "description": "Appetizing close-up food."
+ },
+ {
+  "id": "style/vintage",
+  "name": "Vintage",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "vintage 1970s photograph, faded warm colors, soft grain",
+  "params": {},
+  "description": "Faded seventies colors."
+ },
+ {
+  "id": "style/polaroid",
+  "name": "Instant film",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "instant film photograph, soft flash, slight color shift, white border",
+  "params": {},
+  "description": "Instant-camera snapshot."
+ },
+ {
+  "id": "style/night-city",
+  "name": "Night city",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "night city scene, neon reflections on wet streets, cinematic",
+  "params": {},
+  "description": "Neon lights on wet streets."
+ },
+ {
+  "id": "style/pastel",
+  "name": "Pastel",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "soft pastel color palette, airy light, minimal composition",
+  "params": {},
+  "description": "Light, airy and minimal."
+ },
+ {
+  "id": "style/clay",
+  "name": "Clay render",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "3D clay render, soft studio light, matte materials, playful",
+  "params": {},
+  "description": "Playful matte 3D clay."
+ },
+ {
+  "id": "style/blueprint",
+  "name": "Blueprint",
+  "category": "style",
+  "output": "image",
+  "prompt_suffix": "technical blueprint drawing, white lines on blue, precise annotations",
+  "params": {},
+  "description": "Technical drawing on blue."
  }
 ]
