@@ -122,6 +122,11 @@ enum Command {
     },
     /// Refresh model catalogs from gateways and local servers.
     Refresh,
+    /// Turn a ComfyUI workflow (API format) into a Pictesa model.
+    Workflow {
+        #[command(subcommand)]
+        action: WorkflowAction,
+    },
     /// List or run recipes (multi-step pipelines).
     Recipe {
         #[command(subcommand)]
@@ -134,6 +139,16 @@ enum Command {
     },
     /// Check the installation.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum WorkflowAction {
+    /// `pictesa workflow import my-flow.json --name "My flow"`
+    Import {
+        file: PathBuf,
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -262,7 +277,8 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
                 }
                 println!("output: {}   max outputs per run: {}", spec.output.as_str(), spec.max_outputs);
                 for i in &spec.inputs {
-                    println!("  input  {:<12} {} file(s) of {}{}", format!("{:?}", i.role).to_lowercase(), i.max, i.kind.as_str(), if i.min > 0 { ", required" } else { "" });
+                    let role = serde_json::to_value(i.role)?.as_str().unwrap_or("").to_string();
+                    println!("  input  {:<12} {} file(s) of {}{}", role, i.max, i.kind.as_str(), if i.min > 0 { ", required" } else { "" });
                 }
                 for p in &spec.params {
                     println!("  -p {}=<{}>{}", p.key, serde_json::to_value(&p.kind)?.get("type").and_then(Value::as_str).unwrap_or("value"), p.default.as_ref().map(|d| format!("  (default {d})")).unwrap_or_default());
@@ -334,6 +350,19 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
             let engine = open_engine(&cli, Mode::Local, None).await?;
             let n = engine.refresh_models(LOCAL_USER).await;
             println!("{n} models discovered");
+            Ok(())
+        }
+        Command::Workflow { action: WorkflowAction::Import { file, name } } => {
+            let engine = open_engine(&cli, Mode::Local, None).await?;
+            let text = tokio::fs::read_to_string(&file).await.with_context(|| format!("reading {}", file.display()))?;
+            let workflow: Value = serde_json::from_str(&text).with_context(|| format!("{} is not JSON", file.display()))?;
+            let name = name.unwrap_or_else(|| file.file_stem().map(|s| s.to_string_lossy().replace(['_', '-'], " ")).unwrap_or_else(|| "Workflow".into()));
+            let done = engine.import_comfy_workflow(LOCAL_USER, &name, workflow).await?;
+            println!("Added {} ({})", done.model, name);
+            for n in &done.notes {
+                println!("  note: {n}");
+            }
+            println!("Try it: pictesa model {}", done.model);
             Ok(())
         }
         Command::Recipe { action } => {

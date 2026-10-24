@@ -226,3 +226,6 @@ Named sets of reference images (a person, a product, a style) that any run can a
 
 `Character`: `{ id, name, description, assets: [Asset], created_at, updated_at }`. `POST /api/generations` takes `"character": "<id>"`: its images are added as `reference` inputs, up to what the model accepts (a model without image references refuses it). Changes fire `event: character`.
 - Events carry an `id`. After a reconnect (the browser sends `Last-Event-ID`), the stream starts with `event: resync`: refetch jobs, runs and lists, since missed events are not replayed.
+
+### Import a ComfyUI workflow
+`POST /api/workflows/import { name, workflow }` turns a ComfyUI workflow in API format into a model (hosted mode: administrators only). Pictesa reads the graph for the prompt and negative prompt (by following the samplers' conditioning), seed, steps, guidance, output size, batch size, video length and frame rate, and the image, video and audio loaders, writes a template into the ComfyUI workflows folder and refreshes the catalog. Answer: `201 { model: "comfyui:<id>", manifest, notes: [] }`. The editor format (with `nodes` and `links`) is refused with a hint to use Workflow > Export (API). Also: `pictesa workflow import file.json --name ...` and the MCP tool `import_workflow`.

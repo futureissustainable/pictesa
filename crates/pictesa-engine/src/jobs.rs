@@ -768,3 +768,32 @@ pub fn estimate_cost(spec: &ModelSpec, params: &Map<String, Value>, outputs: u32
     Some((usd * 10_000.0).round() / 10_000.0)
 }
 
+
+/// Result of turning a ComfyUI workflow into a model.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportedWorkflow {
+    pub model: String,
+    pub manifest: Value,
+    pub notes: Vec<String>,
+}
+
+impl Engine {
+    /// Saves any ComfyUI workflow (API format) as a template with an inferred manifest and returns
+    /// its model id. The model then appears in the picker, the CLI and the MCP tools.
+    pub async fn import_comfy_workflow(&self, user: &str, name: &str, workflow: Value) -> Result<ImportedWorkflow> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 80 {
+            return Err(EngineError::invalid("Give the workflow a short name.", Some("name")));
+        }
+        let provider = self.inner.catalog.provider("comfyui").ok_or_else(|| EngineError::not_found("ComfyUI provider"))?;
+        let ctx = self.catalog_ctx(user, provider.as_ref()).await?;
+        let dir = pictesa_providers::comfy_import::import_dir(&ctx).ok_or_else(|| EngineError::invalid("No folder for ComfyUI workflows is configured.", None))?;
+        let (n, wf) = (name.to_string(), workflow);
+        let (id, manifest, notes) = tokio::task::spawn_blocking(move || pictesa_providers::comfy_import::import(&dir, &n, &wf))
+            .await
+            .map_err(|e| EngineError::Internal(e.into()))?
+            .map_err(|e| EngineError::invalid(e, Some("workflow")))?;
+        let _ = self.refresh_models_for(user, "comfyui").await;
+        Ok(ImportedWorkflow { model: format!("comfyui:{id}"), manifest, notes })
+    }
+}

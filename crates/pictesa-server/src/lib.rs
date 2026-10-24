@@ -225,6 +225,7 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/assets/{id}", get(get_asset).patch(patch_asset).delete(delete_asset))
         .route("/assets/{id}/restore", post(restore_asset))
         .route("/events", get(events))
+        .route("/workflows/import", post(import_workflow))
         .route("/characters", get(characters).post(create_character))
         .route("/characters/{id}", get(character).patch(update_character).delete(delete_character))
         .route("/recipes", get(recipes))
@@ -588,6 +589,22 @@ async fn delete_asset(State(s): State<AppState>, c: Caller, Path(id): Path<Strin
 
 async fn restore_asset(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(s.engine.restore(&c.user_id, &id).await?)))
+}
+
+// ---------- ComfyUI workflow import ----------
+
+#[derive(Deserialize)]
+struct ImportWorkflowBody {
+    name: String,
+    workflow: Value,
+}
+
+async fn import_workflow(State(s): State<AppState>, c: Caller, Json(b): Json<ImportWorkflowBody>) -> ApiResult<Response> {
+    // Writes files on the server, so hosted instances keep it to the administrator.
+    if s.engine.mode() == Mode::Hosted && c.user.as_ref().is_none_or(|u| u.role != "admin") {
+        return Err(ApiError(EngineError::Forbidden("Only the administrator can add ComfyUI workflows.".into())));
+    }
+    Ok((StatusCode::CREATED, Json(json!(s.engine.import_comfy_workflow(&c.user_id, &b.name, b.workflow).await?))).into_response())
 }
 
 // ---------- characters ----------

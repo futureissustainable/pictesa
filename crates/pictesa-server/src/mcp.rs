@@ -120,6 +120,16 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": false, "openWorldHint": true }
         },
         {
+            "name": "import_workflow",
+            "title": "Import a ComfyUI workflow",
+            "description": "Turn a ComfyUI workflow (API format, exported with Workflow > Export (API)) into a Pictesa model. Pictesa finds its prompt, seed, steps, size and file inputs. Returns the new model id for generate.",
+            "inputSchema": { "type": "object", "properties": {
+                "name": { "type": "string" },
+                "path": { "type": "string", "description": "Path to the workflow JSON (local mode)" },
+                "workflow": { "type": "object", "description": "The workflow JSON itself" }
+            }, "required": ["name"] }
+        },
+        {
             "name": "list_characters",
             "title": "List characters",
             "description": "Saved characters (named sets of reference images for a person, product or style) that generate can attach with `character`.",
@@ -351,6 +361,19 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 content.extend(previews(ctx, &done).await);
             }
             Ok(content)
+        }
+        "import_workflow" => {
+            let name = arg_str(args, "name").ok_or("name is required")?;
+            let workflow = match (args.get("workflow").filter(|w| w.is_object()), arg_str(args, "path")) {
+                (Some(w), _) => w.clone(),
+                (None, Some(path)) if ctx.local_files => {
+                    let text = tokio::fs::read_to_string(path).await.map_err(|e| format!("cannot read {path}: {e}"))?;
+                    serde_json::from_str(&text).map_err(|e| format!("{path} is not JSON: {e}"))?
+                }
+                (None, Some(_)) => return Err("file paths only work in local mode; pass workflow instead".into()),
+                (None, None) => return Err("pass workflow or path".into()),
+            };
+            Ok(text(&json!(e.import_comfy_workflow(user, name, workflow).await.map_err(err)?)))
         }
         "list_characters" => {
             let list: Vec<Value> = e

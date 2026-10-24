@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use pictesa_core::Provider;
 
+pub mod comfy_import;
 pub mod mock;
 pub mod util;
 

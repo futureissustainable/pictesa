@@ -345,6 +345,16 @@ fn builtins() -> &'static [Template] {
     })
 }
 
+/// Where this configuration reads user templates from (and where imports are written).
+pub fn workflows_dir_for(ctx: &Ctx) -> Option<PathBuf> {
+    user_dir(ctx)
+}
+
+/// Checks a manifest and workflow the same way loading them would.
+pub(crate) fn check_template(id: &str, manifest: &str, workflow: &str) -> Result<(), String> {
+    parse_template(id, manifest, workflow, None).map(|_| ())
+}
+
 /// The user's workflows folder: the `workflows_dir` field (env `PICTESA_WORKFLOWS_DIR`), else
 /// `<Pictesa data dir>/workflows/comfy`, resolved the same way the engine finds its data dir.
 fn user_dir(ctx: &Ctx) -> Option<PathBuf> {
