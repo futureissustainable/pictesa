@@ -6,6 +6,7 @@ pub mod billing;
 pub mod catalog;
 pub mod creds;
 pub mod crypto;
+pub mod enhance;
 pub mod files;
 pub mod jobs;
 pub mod presets;

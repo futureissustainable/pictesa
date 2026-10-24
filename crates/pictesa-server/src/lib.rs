@@ -212,6 +212,7 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/models/refresh", post(refresh_models))
         .route("/models/{*id}", get(model))
         .route("/presets", get(presets))
+        .route("/prompt/enhance", post(enhance_prompt))
         .route("/generations", get(list_jobs).post(create_job))
         .route("/generations/{id}", get(get_job).delete(delete_job))
         .route("/generations/{id}/cancel", post(cancel_job))
@@ -427,6 +428,17 @@ struct PresetQuery {
 async fn presets(State(s): State<AppState>, _c: Caller, Query(q): Query<PresetQuery>) -> Json<Value> {
     let output: Option<MediaKind> = q.output.and_then(|o| serde_json::from_value(json!(o)).ok());
     Json(json!({ "presets": s.engine.presets(output) }))
+}
+
+#[derive(Deserialize)]
+struct EnhanceBody {
+    prompt: String,
+    output: Option<MediaKind>,
+}
+
+async fn enhance_prompt(State(s): State<AppState>, c: Caller, Json(b): Json<EnhanceBody>) -> ApiResult<Json<Value>> {
+    let prompt = s.engine.enhance_prompt(&c.user_id, &b.prompt, b.output.unwrap_or(MediaKind::Image)).await?;
+    Ok(Json(json!({ "prompt": prompt })))
 }
 
 // ---------- generations ----------
