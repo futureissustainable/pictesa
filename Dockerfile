@@ -25,3 +25,6 @@ EXPOSE 4747
 VOLUME /data
 ENTRYPOINT ["pictesa"]
 CMD ["serve"]
+LABEL org.opencontainers.image.source=https://github.com/futureissustainable/pictesa \
+      org.opencontainers.image.description="The open-source studio for AI images and video" \
+      org.opencontainers.image.licenses=AGPL-3.0-only
