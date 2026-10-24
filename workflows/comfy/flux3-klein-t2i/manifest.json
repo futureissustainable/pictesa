@@ -100,22 +100,19 @@
         "name": "flux2-vae.safetensors",
         "directory": "vae",
         "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/vae/flux2-vae.safetensors",
-        "size": 336211292,
-        "sha256": "****************************************************************"
+        "size": 336211292
       },
       {
         "name": "flux3-image-klein-int8-convrot.safetensors",
         "directory": "diffusion_models",
         "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-int8-convrot.safetensors",
-        "size": 5827874779,
-        "sha256": "****************************************************************"
+        "size": 5827874779
       },
       {
         "name": "qwen3vl_4b_int8_convrot.safetensors",
         "directory": "text_encoders",
         "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/text_encoders/qwen3vl_4b_int8_convrot.safetensors",
-        "size": 4858559240,
-        "sha256": "****************************************************************"
+        "size": 4858559240
       }
     ]
   },
