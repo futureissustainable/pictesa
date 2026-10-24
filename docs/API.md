@@ -202,3 +202,12 @@ Show the balance and top-up only when `enabled` is true. A generation the wallet
 
 ### Prompt help
 `POST /api/prompt/enhance { prompt, output: "image"|"video" }` → `{ prompt }`. Rewrites a short idea into a detailed prompt with a free OpenRouter text model (the person's OpenRouter key; `PICTESA_ENHANCE_MODEL` picks another). Errors come back as validation errors with a readable message (no key, models busy).
+
+### Notes for clients (v1.2)
+- `ModelSpec.prompt` means the model *accepts* a prompt. A prompt is required only for text-to-image, text-to-video and text-to-audio runs without input files.
+- `Job.prompt` is the person's own text. When `preset` is set, its words are added only when the request is sent, so reusing a job's settings never doubles them.
+- `Asset.name` holds the original file name of uploads and imports.
+- Recipe `enum` field `options` are plain strings. Validation errors use `field` values `values.<key>`, `inputs.<key>`, `models.<step>` or `models`.
+- Stripe returns to `/settings/billing?checkout=success` or `?checkout=canceled`.
+- Uploads stream to disk (up to 4 GB per file); every other request body is limited to 2 MB. Files must be real images, videos or audio (recognised from their content); SVG and other active formats are refused.
+- The CLI takes library items as inputs with `-i role=asset:<id>`.
