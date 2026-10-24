@@ -1,0 +1,8 @@
+/target
+web/node_modules
+web/dist
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+!.env.example
