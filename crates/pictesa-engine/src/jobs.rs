@@ -131,7 +131,42 @@ impl Engine {
 
     // ---------- generations ----------
 
-    pub async fn create_generation(&self, user: &str, mut req: CreateGeneration) -> Result<Created> {
+    pub async fn create_generation(&self, user: &str, req: CreateGeneration) -> Result<Created> {
+        if req.compare.is_empty() {
+            return self.create_one(user, req, None).await;
+        }
+        if req.compare.len() > 8 {
+            return Err(EngineError::invalid("Compare at most 8 models at once.", Some("compare")));
+        }
+        let batch = crate::new_id();
+        let mut models = vec![req.model.clone()];
+        for m in &req.compare {
+            if !models.contains(m) {
+                models.push(m.clone());
+            }
+        }
+        // Validate every model first so a typo does not leave half a comparison queued.
+        let mut specs = Vec::new();
+        for m in &models {
+            specs.push(self.model(user, m).await?);
+        }
+        let mut jobs = Vec::new();
+        for spec in specs {
+            let mut one = req.clone();
+            one.model = spec.id.clone();
+            one.compare.clear();
+            one.params = req
+                .params
+                .iter()
+                .filter_map(|(k, v)| spec.param_spec(k).and_then(|p| crate::recipes::fit_param(p, v)).map(|v| (k.clone(), v)))
+                .collect();
+            one.inputs = req.inputs.iter().filter(|i| spec.accepts(i.role).is_some()).cloned().collect();
+            jobs.extend(self.create_one(user, one, Some(batch.clone())).await?.jobs);
+        }
+        Ok(Created { batch_id: batch, jobs })
+    }
+
+    async fn create_one(&self, user: &str, mut req: CreateGeneration, batch: Option<String>) -> Result<Created> {
         let spec = self.model(user, &req.model).await?;
         let provider = self.inner.catalog.provider(&spec.provider).ok_or_else(|| EngineError::not_found("provider"))?;
         let info = provider.info();
@@ -195,7 +230,7 @@ impl Engine {
             }
         }
 
-        let batch_id = crate::new_id();
+        let batch_id = batch.unwrap_or_else(crate::new_id);
         self.inner.owned_batches.lock().unwrap().insert(batch_id.clone());
         let now = now_ms();
         let params_json = serde_json::to_string(&params).map_err(anyhow::Error::from)?;
@@ -356,6 +391,7 @@ impl Engine {
                 inputs: row.inputs_list(),
                 count: Some(row.count as u32),
                 preset: None,
+                compare: Vec::new(),
             },
         )
         .await

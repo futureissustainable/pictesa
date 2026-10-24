@@ -112,6 +112,9 @@ pub struct CreateGeneration {
     pub count: Option<u32>,
     #[serde(default)]
     pub preset: Option<String>,
+    /// Also run the same request on these models (compare). Params and inputs are adapted to each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compare: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

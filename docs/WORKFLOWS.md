@@ -137,13 +137,20 @@ to them, so only connect them to optional inputs (`start_image` of `Wan22ImageTo
 
 ## Availability tags
 
-On every model refresh Pictesa reads `GET /api/object_info` and compares it with each template:
+On every model refresh Pictesa asks `GET /api/object_info/{class}` for each node class the
+templates use (servers without that route get one `GET /api/object_info`) and compares the answers
+with each template. Templates with any of these tags are listed but not runnable:
 
 | Tag | Meaning |
 |---|---|
 | `needs-nodes` | The server lacks node classes (install the custom nodes or update ComfyUI). `meta.missing_nodes` lists them. |
 | `needs-models` | Model files are missing. `meta.missing_models` lists them; `meta.downloads` gives the folder and URL of each from `requires.models`. |
-| `unverified` | The server did not answer during the refresh. The template is listed but not checked. |
+| `unavailable` | The server did not answer during the refresh. `meta.unavailable` says why; refresh after starting ComfyUI. |
+
+Each template's description ends with the files it needs and their folders under ComfyUI's
+`models/` (`Needs models/vae/flux2-vae.safetensors, ...`). After a check that found missing files it
+names only those, with the download source (`Missing on the server: ... Download from
+huggingface.co/...`).
 
 A model file kept in a subfolder (`models/diffusion_models/wan/...`) is found and used: the
 template's file name is rewritten to the server's path when the job runs.

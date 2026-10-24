@@ -437,7 +437,7 @@ async fn generate_local(
         job_inputs.push(JobInput { asset_id: asset.id, role });
     }
     let created = engine
-        .create_generation(LOCAL_USER, CreateGeneration { model, prompt: prompt.unwrap_or_default(), negative_prompt: negative, params, inputs: job_inputs, count: Some(count), preset })
+        .create_generation(LOCAL_USER, CreateGeneration { model, prompt: prompt.unwrap_or_default(), negative_prompt: negative, params, inputs: job_inputs, count: Some(count), preset, compare: Vec::new() })
         .await?;
     if no_wait {
         eprintln!("No server is running, so the job would stop when this command exits. Waiting instead.");

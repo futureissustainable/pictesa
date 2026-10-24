@@ -112,6 +112,7 @@ fn tools() -> Value {
                 "inputs": { "type": "array", "items": input_item },
                 "count": { "type": "integer", "minimum": 1, "maximum": 16, "default": 1 },
                 "preset": { "type": "string", "description": "Preset id from list_presets" },
+                "compare": { "type": "array", "items": { "type": "string" }, "maxItems": 7, "description": "Also run the same request on these model ids, for a side-by-side comparison" },
                 "wait": { "type": "boolean", "default": true },
                 "timeout_seconds": { "type": "integer", "default": 900, "maximum": 3600 },
                 "include_preview": { "type": "boolean", "default": false, "description": "Attach small JPEG previews of the results" }
@@ -318,6 +319,7 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 inputs,
                 count: args.get("count").and_then(Value::as_u64).map(|c| c as u32),
                 preset: arg_str(args, "preset").map(String::from),
+                compare: args.get("compare").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default(),
             };
             let created = e.create_generation(user, req).await.map_err(err)?;
             if args.get("wait").and_then(Value::as_bool) == Some(false) {

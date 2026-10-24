@@ -5,8 +5,8 @@ use std::time::Duration;
 use pictesa_core::{json_response, MediaInput, ProviderError, ProviderResult};
 use serde_json::Value;
 
-/// Timeout for API calls that should answer quickly (submit, status). Downloads use the engine's client.
-pub const API_TIMEOUT: Duration = Duration::from_secs(90);
+/// Timeout for one API call. Synchronous image APIs (OpenRouter, OpenAI, Gemini) can take minutes at 4K.
+pub const API_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub async fn get_json(req: reqwest::RequestBuilder) -> ProviderResult<Value> {
     let resp = req.timeout(API_TIMEOUT).send().await.map_err(net_error)?;

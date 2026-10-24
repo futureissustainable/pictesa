@@ -196,3 +196,6 @@ A `preset` field offers presets of its `category` (GET /api/presets). Recipe ids
 | POST | `/api/billing/webhook` | Stripe event | `{ ok }` (Stripe only) |
 
 Show the balance and top-up only when `enabled` is true. A generation the wallet cannot cover fails validation with `field: "billing"`.
+
+### Compare models
+`POST /api/generations` accepts `"compare": ["model id", ...]` (up to 7 extra models). The same prompt, inputs and params run on every model in one batch; params are adapted to each model (unknown ones dropped, values snapped to the nearest allowed option) and inputs a model does not take are left out. Show the batch side by side.
