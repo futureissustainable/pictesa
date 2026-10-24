@@ -114,7 +114,7 @@ async fn set_progress(engine: &Engine, job: &JobRow, progress: Option<f32>, mess
 
 async fn fail(engine: &Engine, job: &JobRow, kind: &str, message: &str) {
     let now = now_ms();
-    let _ = sqlx::query("UPDATE jobs SET status = 'failed', error_kind = ?, error = ?, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')")
+    let changed = sqlx::query("UPDATE jobs SET status = 'failed', error_kind = ?, error = ?, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')")
         .bind(kind)
         .bind(pictesa_core::error::truncate(message, 2000))
         .bind(now)
@@ -122,6 +122,9 @@ async fn fail(engine: &Engine, job: &JobRow, kind: &str, message: &str) {
         .bind(&job.id)
         .execute(&engine.inner.db)
         .await;
+    if matches!(changed, Ok(r) if r.rows_affected() == 1) {
+        engine.refund_job(&job.id).await;
+    }
     publish(engine, &job.id).await;
 }
 

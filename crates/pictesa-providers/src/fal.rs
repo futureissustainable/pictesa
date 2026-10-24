@@ -72,7 +72,10 @@ pub fn vendor_for(endpoint: &str) -> Option<&'static str> {
 }
 
 fn pricing_from(v: &Value) -> Option<Pricing> {
-    let p = v.get("prices")?.as_array()?.first()?;
+    price_of(v.get("prices")?.as_array()?.first()?)
+}
+
+fn price_of(p: &Value) -> Option<Pricing> {
     let usd = p.get("unit_price")?.as_f64()?;
     let unit = p.get("unit").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
     Some(if unit.starts_with("second") {
@@ -196,6 +199,9 @@ impl Provider for Fal {
         for (_, idx) in newest.values() {
             out[*idx].tags.push("featured".into());
         }
+        if let Some(key) = auth(ctx) {
+            attach_prices(ctx, &key, &mut out).await;
+        }
         Ok(out)
     }
 
@@ -222,10 +228,12 @@ impl Provider for Fal {
         } else {
             spec.meta = json!({ "bindings": read.bindings });
         }
-        if let Some(key) = auth(ctx) {
-            let req = ctx.http.get(format!("{CATALOG}/pricing")).query(&[("endpoint_id", endpoint)]).header("Authorization", key);
-            if let Ok(p) = get_json(req).await {
-                spec.pricing = pricing_from(&p);
+        if spec.pricing.is_none() {
+            if let Some(key) = auth(ctx) {
+                let req = ctx.http.get(format!("{CATALOG}/pricing")).query(&[("endpoint_id", endpoint)]).header("Authorization", key);
+                if let Ok(p) = get_json(req).await {
+                    spec.pricing = pricing_from(&p);
+                }
             }
         }
         if spec.inputs.iter().any(|i| i.role == InputRole::StartFrame) && !spec.tasks.contains(&Task::ImageToVideo) {
@@ -313,6 +321,41 @@ impl Provider for Fal {
             let _ = ctx.http.put(url).header("Authorization", key).send().await;
         }
         Ok(())
+    }
+}
+
+/// Fetches prices for the whole catalog in batches (the pricing API accepts many ids per call
+/// and rate-limits per call, so one request per model would be throttled).
+async fn attach_prices(ctx: &Ctx, key: &str, models: &mut [ModelSpec]) {
+    let ids: Vec<String> = models.iter().map(|m| m.remote_id().to_string()).collect();
+    let mut prices: HashMap<String, Pricing> = HashMap::new();
+    for chunk in ids.chunks(100) {
+        let query: Vec<(&str, &str)> = chunk.iter().map(|id| ("endpoint_id", id.as_str())).collect();
+        let mut answer = None;
+        for attempt in 0..3 {
+            match get_json(ctx.http.get(format!("{CATALOG}/pricing")).query(&query).header("Authorization", key)).await {
+                Ok(v) => {
+                    answer = Some(v);
+                    break;
+                }
+                Err(ProviderError::RateLimited { retry_after_ms }) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(retry_after_ms.unwrap_or(1500 * (attempt + 1)))).await;
+                }
+                Err(_) => break,
+            }
+        }
+        let Some(v) = answer else { continue };
+        for p in v.get("prices").and_then(Value::as_array).into_iter().flatten() {
+            if let (Some(id), Some(price)) = (p.get("endpoint_id").and_then(Value::as_str), price_of(p)) {
+                prices.insert(id.to_string(), price);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    for m in models.iter_mut() {
+        if let Some(p) = prices.remove(m.remote_id()) {
+            m.pricing = Some(p);
+        }
     }
 }
 

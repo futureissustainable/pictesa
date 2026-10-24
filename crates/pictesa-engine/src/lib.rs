@@ -2,6 +2,7 @@
 //! [`Engine`], so a generation behaves the same however it was requested.
 
 pub mod auth;
+pub mod billing;
 pub mod catalog;
 pub mod creds;
 pub mod crypto;
@@ -112,6 +113,7 @@ pub(crate) struct Inner {
     pub catalog: catalog::Catalog,
     pub crypto: crypto::Crypto,
     pub presets: Vec<Preset>,
+    pub billing: billing::BillingConfig,
     /// Client for provider API calls.
     pub http: reqwest::Client,
     /// Client for downloading outputs (long timeouts, follows redirects).
@@ -159,6 +161,7 @@ impl Engine {
             catalog,
             crypto,
             presets,
+            billing: billing::BillingConfig::from_env(),
             http,
             download,
             events,

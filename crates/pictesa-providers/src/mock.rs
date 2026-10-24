@@ -112,7 +112,8 @@ impl Provider for Mock {
             id: "mock".into(),
             name: "Mock (development)".into(),
             kind: ProviderKind::Local,
-            fields: vec![CredentialField { optional: true, ..CredentialField::base_url("local", &[]) }],
+            // An optional fake key lets tests exercise hosted billing (platform keys are charged).
+            fields: vec![CredentialField { optional: true, ..CredentialField::api_key(&["PICTESA_MOCK_KEY"]) }],
             signup_url: None,
             docs_url: None,
             max_concurrency: 4,
@@ -126,15 +127,15 @@ impl Provider for Mock {
                 .param(common::aspect_ratio(common::IMAGE_RATIOS, "1:1"))
                 .param(pictesa_core::ParamSpec::seed())
                 .max_outputs(4)
-                .pricing(Pricing::Local)
-                .describe("Free fake model for trying Pictesa without keys. Returns a gradient.")
+                .pricing(Pricing::PerImage { usd: 0.01 })
+                .describe("Free fake model for trying Pictesa without keys. Returns a gradient. The price is fake and only used to test billing.")
                 .tag("featured"),
             ModelSpec::new("mock", "video", "Mock video", MediaKind::Video, &[Task::TextToVideo, Task::ImageToVideo])
                 .input(InputSlot::new(InputRole::StartFrame, MediaKind::Image, 1))
                 .input(InputSlot::new(InputRole::EndFrame, MediaKind::Image, 1))
                 .param(common::duration(&[2, 4, 6], 2))
                 .param(common::aspect_ratio(common::VIDEO_RATIOS, "16:9"))
-                .pricing(Pricing::Local)
+                .pricing(Pricing::PerVideo { usd: 0.05 })
                 .describe("Free fake video model (needs ffmpeg). Returns a test pattern clip.")
                 .tag("featured"),
         ]

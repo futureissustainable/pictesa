@@ -18,11 +18,14 @@ impl Engine {
 
     pub async fn models(&self, user: &str, f: &ModelFilter) -> Result<Vec<ModelView>> {
         let mut configured = HashMap::new();
+        let mut billed = HashMap::new();
         for p in self.inner.catalog.providers() {
             let info = p.info();
             let resolved = self.resolve_fields(user, p.as_ref()).await?;
             configured.insert(info.id.clone(), Self::is_configured(&info, &resolved));
+            billed.insert(info.id.clone(), Self::uses_platform(&info, &resolved));
         }
+        let markup = self.inner.billing.markup;
         let q = f.q.as_deref().map(str::to_lowercase).filter(|q| !q.is_empty());
         let task: Option<Task> = f.task.as_deref().and_then(|t| serde_json::from_value(json!(t)).ok());
         let mut out: Vec<ModelView> = self
@@ -39,9 +42,13 @@ impl Engine {
                     m.name.to_lowercase().contains(q) || m.id.to_lowercase().contains(q) || m.vendor.as_deref().is_some_and(|v| v.to_lowercase().contains(q))
                 })
             })
-            .map(|spec| {
+            .map(|mut spec| {
                 let ok = configured.get(&spec.provider).copied().unwrap_or(false);
-                ModelView { spec, configured: ok }
+                let is_billed = billed.get(&spec.provider).copied().unwrap_or(false);
+                if is_billed {
+                    spec.pricing = spec.pricing.map(|p| with_markup(p, markup));
+                }
+                ModelView { spec, configured: ok, billed: is_billed }
             })
             .filter(|v| f.configured != Some(true) || v.configured)
             .collect();
@@ -63,7 +70,35 @@ impl Engine {
     pub async fn refresh_models_for(&self, user: &str, provider_id: &str) -> Result<usize> {
         let provider = self.inner.catalog.provider(provider_id).ok_or_else(|| EngineError::not_found("provider"))?;
         let ctx = self.ctx_for(user, provider.as_ref()).await?;
-        self.inner.catalog.refresh(&self.inner.db, provider.as_ref(), &ctx).await.map_err(EngineError::Internal)
+        let n = self.inner.catalog.refresh(&self.inner.db, provider.as_ref(), &ctx).await.map_err(EngineError::Internal)?;
+        // Load full settings for featured models in the background so the picker shows inputs and prices at once.
+        let engine = self.clone();
+        let user = user.to_string();
+        let pid = provider_id.to_string();
+        tokio::spawn(async move {
+            let Some(provider) = engine.inner.catalog.provider(&pid) else { return };
+            let pending: Vec<String> = engine
+                .inner
+                .catalog
+                .provider_models(provider.as_ref())
+                .into_iter()
+                .filter(|m| !m.complete && m.tags.iter().any(|t| t == "featured"))
+                .map(|m| m.id)
+                .collect();
+            let Ok(ctx) = engine.ctx_for(&user, provider.as_ref()).await else { return };
+            use futures::StreamExt;
+            futures::stream::iter(pending)
+                .for_each_concurrent(4, |id| {
+                    let (engine, ctx) = (engine.clone(), ctx.clone());
+                    async move {
+                        if let Err(e) = engine.inner.catalog.resolve(&engine.inner.db, &ctx, &id).await {
+                            tracing::debug!("could not preload {id}: {e:#}");
+                        }
+                    }
+                })
+                .await;
+        });
+        Ok(n)
     }
 
     /// Re-runs discovery everywhere it can work. Failures (no key, server down) are skipped.
@@ -100,6 +135,7 @@ impl Engine {
         if !Self::is_configured(&info, &resolved) {
             return Err(EngineError::invalid(format!("{} is not set up yet. Add its key in Settings > Providers.", info.name), Some("model")));
         }
+        let platform = Self::uses_platform(&info, &resolved);
 
         if let Some(pid) = req.preset.clone().filter(|p| !p.is_empty()) {
             let preset = self.preset(&pid).ok_or_else(|| EngineError::invalid(format!("unknown preset {pid}"), Some("preset")))?;
@@ -126,21 +162,68 @@ impl Engine {
         let count = req.count.unwrap_or(1).clamp(1, MAX_COUNT);
         let negative = req.negative_prompt.filter(|n| spec.negative_prompt && !n.trim().is_empty());
 
+        // Split the count into provider requests and price each one.
+        let mut runs = Vec::new();
+        let mut remaining = count;
+        while remaining > 0 {
+            let n = remaining.min(spec.max_outputs.max(1));
+            remaining -= n;
+            runs.push((n, estimate_cost(&spec, &params, n)));
+        }
+        let mut charges = vec![0i64; runs.len()];
+        if platform {
+            let markup = self.inner.billing.markup;
+            for (i, (_, cost)) in runs.iter().enumerate() {
+                let usd = cost.ok_or_else(|| EngineError::invalid(format!("{} has no fixed price, so it can only run with your own {} key.", spec.name, info.name), Some("model")))?;
+                charges[i] = crate::billing::to_micros(usd * markup).max(1);
+            }
+            let total: i64 = charges.iter().sum();
+            let wallet: Option<(i64, bool)> = sqlx::query_as("SELECT balance_micros, locked FROM wallets WHERE user_id = ?").bind(user).fetch_optional(&self.inner.db).await?;
+            let (balance, locked) = wallet.unwrap_or((0, false));
+            if locked {
+                return Err(EngineError::Forbidden("Billing is paused on this account. Contact the operator.".into()));
+            }
+            if balance < total {
+                return Err(EngineError::invalid(
+                    format!("This run costs about ${:.2} and your balance is ${:.2}. Top up in Settings > Billing, or add your own key.", total as f64 / 1e6, balance as f64 / 1e6),
+                    Some("billing"),
+                ));
+            }
+        }
+
         let batch_id = crate::new_id();
         self.inner.owned_batches.lock().unwrap().insert(batch_id.clone());
         let now = now_ms();
         let params_json = serde_json::to_string(&params).map_err(anyhow::Error::from)?;
         let inputs_json = serde_json::to_string(&inputs).map_err(anyhow::Error::from)?;
         let mut jobs = Vec::new();
-        let mut remaining = count;
-        while remaining > 0 {
-            let n = remaining.min(spec.max_outputs.max(1));
-            remaining -= n;
+        for (i, (n, cost)) in runs.into_iter().enumerate() {
             let id = crate::new_id();
-            let cost = estimate_cost(&spec, &params, n);
+            let charge = charges[i];
+            let mut tx = self.inner.db.begin().await?;
+            if charge > 0 {
+                let paid = sqlx::query("UPDATE wallets SET balance_micros = balance_micros - ? WHERE user_id = ? AND locked = 0 AND balance_micros >= ?")
+                    .bind(charge)
+                    .bind(user)
+                    .bind(charge)
+                    .execute(&mut *tx)
+                    .await?;
+                if paid.rows_affected() != 1 {
+                    return Err(EngineError::invalid("Your balance ran out before every run could be queued.", Some("billing")));
+                }
+                sqlx::query("INSERT INTO ledger (id, user_id, amount_micros, reason, job_id, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+                    .bind(format!("charge:{id}"))
+                    .bind(user)
+                    .bind(-charge)
+                    .bind(format!("{} run", spec.name))
+                    .bind(&id)
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await?;
+            }
             sqlx::query(
-                "INSERT INTO jobs (id, user_id, batch_id, model, provider, model_name, output, status, prompt, negative_prompt, params, inputs, preset, count, cost_usd, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO jobs (id, user_id, batch_id, model, provider, model_name, output, status, prompt, negative_prompt, params, inputs, preset, count, cost_usd, charged_micros, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(user)
@@ -155,11 +238,13 @@ impl Engine {
             .bind(&inputs_json)
             .bind(&req.preset)
             .bind(n as i64)
-            .bind(cost)
+            .bind(if charge > 0 { Some(charge as f64 / 1e6) } else { cost })
+            .bind(charge)
             .bind(now)
             .bind(now)
-            .execute(&self.inner.db)
+            .execute(&mut *tx)
             .await?;
+            tx.commit().await?;
             let row = store::job_row(&self.inner.db, user, &id).await?;
             let job = row.to_job(Vec::new());
             self.emit(user, "job", json!(job));
@@ -235,7 +320,7 @@ impl Engine {
         let row = store::job_row(&self.inner.db, user, id).await.map_err(|_| EngineError::not_found("generation"))?;
         if !row.status().is_final() {
             let now = now_ms();
-            sqlx::query("UPDATE jobs SET status = 'canceled', message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')")
+            let done = sqlx::query("UPDATE jobs SET status = 'canceled', message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')")
                 .bind(now)
                 .bind(now)
                 .bind(id)
@@ -243,6 +328,10 @@ impl Engine {
                 .await?;
             if let Some(token) = self.inner.cancels.lock().unwrap().get(id) {
                 token.cancel();
+            }
+            // Refund only when the provider never got the job; a started run may already be billed upstream.
+            if done.rows_affected() == 1 && row.remote.is_none() {
+                self.refund_job(id).await;
             }
         }
         let job = self.job(user, id).await?;
@@ -516,6 +605,17 @@ fn coerce(p: &pictesa_core::ParamSpec, v: &Value) -> Value {
             .map(|o| o.value.clone())
             .unwrap_or(v.clone()),
         _ => v.clone(),
+    }
+}
+
+fn with_markup(p: Pricing, m: f64) -> Pricing {
+    let r = |usd: f64| (usd * m * 10_000.0).round() / 10_000.0;
+    match p {
+        Pricing::PerImage { usd } => Pricing::PerImage { usd: r(usd) },
+        Pricing::PerSecond { usd } => Pricing::PerSecond { usd: r(usd) },
+        Pricing::PerVideo { usd } => Pricing::PerVideo { usd: r(usd) },
+        Pricing::PerMegapixel { usd } => Pricing::PerMegapixel { usd: r(usd) },
+        other => other,
     }
 }
 

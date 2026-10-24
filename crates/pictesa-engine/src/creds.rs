@@ -40,7 +40,16 @@ impl Engine {
             if let Some(v) = stored.get(&f.key).filter(|v| !v.trim().is_empty()) {
                 values.insert(f.key.clone(), (v.clone(), "stored"));
             } else if let Some(v) = f.env.iter().find_map(|e| std::env::var(e).ok()).filter(|v| !v.trim().is_empty()) {
-                values.insert(f.key.clone(), (v, "env"));
+                // In hosted mode the operator's keys are platform keys: usable only with paid credits.
+                match self.mode() {
+                    crate::Mode::Local => {
+                        values.insert(f.key.clone(), (v, "env"));
+                    }
+                    crate::Mode::Hosted if self.platform_billing() => {
+                        values.insert(f.key.clone(), (v, "platform"));
+                    }
+                    crate::Mode::Hosted => {}
+                }
             } else if let Some(d) = &f.default {
                 values.insert(f.key.clone(), (d.clone(), "default"));
             }
@@ -56,6 +65,11 @@ impl Engine {
 
     pub(crate) fn is_configured(info: &pictesa_core::ProviderInfo, resolved: &Resolved) -> bool {
         info.fields.iter().all(|f| f.optional || resolved.values.contains_key(&f.key))
+    }
+
+    /// True when a run would use the operator's keys (and so be charged to the wallet).
+    pub(crate) fn uses_platform(info: &pictesa_core::ProviderInfo, resolved: &Resolved) -> bool {
+        info.fields.iter().any(|f| f.secret && resolved.values.get(&f.key).is_some_and(|(_, src)| *src == "platform"))
     }
 
     pub async fn provider_state(&self, user: &str, provider: &dyn Provider) -> Result<ProviderState> {

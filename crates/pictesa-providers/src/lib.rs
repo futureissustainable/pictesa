@@ -30,6 +30,7 @@ pub mod stability;
 pub mod ideogram;
 pub mod recraft;
 // BATCH-B-MODULES (runway, luma, kling, minimax, alibaba, stability, ideogram, recraft)
+pub mod comfyui;
 // LOCAL-MODULES (comfy_router, comfyui, sdcpp)
 
 /// Every built-in provider, in the order the Settings page shows them.
@@ -53,6 +54,7 @@ pub fn registry() -> Vec<Arc<dyn Provider>> {
         Arc::new(ideogram::Ideogram),
         Arc::new(recraft::Recraft),
         // BATCH-B-REGISTRY
+        Arc::new(comfyui::ComfyUi),
         // LOCAL-REGISTRY
     ];
     if std::env::var("PICTESA_MOCK").is_ok_and(|v| v == "1") {

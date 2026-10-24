@@ -122,8 +122,19 @@ enum Command {
     },
     /// Refresh model catalogs from gateways and local servers.
     Refresh,
+    /// Operator tools for hosted billing.
+    Billing {
+        #[command(subcommand)]
+        action: BillingAction,
+    },
     /// Check the installation.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum BillingAction {
+    /// Give an account an allowance: `pictesa billing grant user@example.com 20 welcome-credit`.
+    Grant { email: String, usd: f64, operation: String },
 }
 
 #[derive(Subcommand)]
@@ -294,6 +305,12 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
             let engine = open_engine(&cli, Mode::Local, None).await?;
             let n = engine.refresh_models(LOCAL_USER).await;
             println!("{n} models discovered");
+            Ok(())
+        }
+        Command::Billing { action: BillingAction::Grant { email, usd, operation } } => {
+            let engine = open_engine(&cli, Mode::Hosted, None).await?;
+            engine.grant(&email, usd, &operation).await?;
+            println!("granted ${usd:.2} to {email} ({operation})");
             Ok(())
         }
         Command::Doctor => {

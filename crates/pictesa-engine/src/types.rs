@@ -156,6 +156,9 @@ pub struct ModelView {
     #[serde(flatten)]
     pub spec: ModelSpec,
     pub configured: bool,
+    /// Runs are paid from the wallet (hosted mode on platform keys); `pricing` already includes the markup.
+    #[serde(default)]
+    pub billed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

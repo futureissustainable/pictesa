@@ -177,6 +177,9 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/assets/{id}", get(get_asset).patch(patch_asset).delete(delete_asset))
         .route("/assets/{id}/restore", post(restore_asset))
         .route("/events", get(events))
+        .route("/billing", get(billing))
+        .route("/billing/checkout", post(checkout))
+        .route("/billing/webhook", post(stripe_webhook))
         .fallback(|| async { ApiError(EngineError::NotFound("No such API route.".into())) });
 
     Router::new()
@@ -470,6 +473,34 @@ async fn delete_asset(State(s): State<AppState>, c: Caller, Path(id): Path<Strin
 
 async fn restore_asset(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(s.engine.restore(&c.user_id, &id).await?)))
+}
+
+// ---------- billing ----------
+
+async fn billing(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(s.engine.billing_view(&c.user_id).await?)))
+}
+
+#[derive(Deserialize)]
+struct CheckoutBody {
+    amount_cents: i64,
+    request_id: String,
+}
+
+async fn checkout(State(s): State<AppState>, c: Caller, Json(b): Json<CheckoutBody>) -> ApiResult<Json<Value>> {
+    let email = c.user.as_ref().and_then(|u| u.email.clone());
+    let url = s.engine.create_checkout(&c.user_id, email.as_deref(), &b.request_id, b.amount_cents).await?;
+    Ok(Json(json!({ "url": url })))
+}
+
+/// Stripe calls this without a session; the signature authenticates it.
+async fn stripe_webhook(State(s): State<AppState>, headers: HeaderMap, body: axum::body::Bytes) -> ApiResult<Json<Value>> {
+    if body.len() > 1_000_000 {
+        return Err(bad("Event too large.", None));
+    }
+    let sig = headers.get("stripe-signature").and_then(|v| v.to_str().ok()).unwrap_or("");
+    s.engine.apply_stripe_event(&body, sig).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 // ---------- events ----------

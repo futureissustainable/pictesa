@@ -1,0 +1,59 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, name: pictesa-linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: pictesa-linux-arm64 }
+          - { os: macos-14, target: aarch64-apple-darwin, name: pictesa-macos-arm64 }
+          - { os: macos-13, target: x86_64-apple-darwin, name: pictesa-macos-x86_64 }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc, name: pictesa-windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - name: Build web UI
+        run: pnpm --dir web install --frozen-lockfile && pnpm --dir web build
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}" }
+      - uses: Swatinem/rust-cache@v2
+      - name: Build binary
+        run: cargo build --release --locked -p pictesa-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          bin=pictesa; [[ "${{ matrix.target }}" == *windows* ]] && bin=pictesa.exe
+          cp target/${{ matrix.target }}/release/$bin dist/
+          cp README.md LICENSE dist/
+          cd dist
+          if [[ "${{ matrix.target }}" == *windows* ]]; then 7z a ../${{ matrix.name }}.zip *; else tar czf ../${{ matrix.name }}.tar.gz *; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.*
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
