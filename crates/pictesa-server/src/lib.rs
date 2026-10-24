@@ -654,21 +654,28 @@ async fn stripe_webhook(State(s): State<AppState>, headers: HeaderMap, body: axu
 
 // ---------- events ----------
 
-async fn events(State(s): State<AppState>, c: Caller) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+async fn events(State(s): State<AppState>, c: Caller, headers: HeaderMap) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let rx = s.engine.subscribe();
     let user = c.user_id.clone();
+    // A reconnecting browser sends Last-Event-ID; events are not replayed, so ask it to refetch.
+    let reconnect = headers.contains_key("last-event-id");
+    let first = futures::stream::iter(reconnect.then(|| Ok(SseEvent::default().event("resync").data("{}"))));
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |item| {
         let user = user.clone();
         async move {
             match item {
-                Ok(ev) if ev.user_id == user => Some(Ok(SseEvent::default().event(ev.kind).data(ev.data.to_string()))),
+                Ok(ev) if ev.user_id == user => {
+                    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    Some(Ok(SseEvent::default().id(id.to_string()).event(ev.kind).data(ev.data.to_string())))
+                }
                 Ok(_) => None,
                 // A slow client missed events; tell it to refetch.
                 Err(_) => Some(Ok(SseEvent::default().event("resync").data("{}"))),
             }
         }
     });
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(20)).event(SseEvent::default().event("ping").data("{}")))
+    Sse::new(first.chain(stream)).keep_alive(KeepAlive::new().interval(Duration::from_secs(20)).event(SseEvent::default().event("ping").data("{}")))
 }
 
 use futures::StreamExt;

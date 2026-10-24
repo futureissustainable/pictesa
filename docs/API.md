@@ -225,3 +225,4 @@ Named sets of reference images (a person, a product, a style) that any run can a
 | DELETE | `/api/characters/{id}` | | 204 |
 
 `Character`: `{ id, name, description, assets: [Asset], created_at, updated_at }`. `POST /api/generations` takes `"character": "<id>"`: its images are added as `reference` inputs, up to what the model accepts (a model without image references refuses it). Changes fire `event: character`.
+- Events carry an `id`. After a reconnect (the browser sends `Last-Event-ID`), the stream starts with `event: resync`: refetch jobs, runs and lists, since missed events are not replayed.
