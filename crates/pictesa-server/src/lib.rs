@@ -141,7 +141,8 @@ fn same(a: &str, b: &str) -> bool {
 
 /// Local mode: only answer to known host names, and refuse writes from other sites.
 fn foreign_request(state: &AppState, headers: &HeaderMap, method: &axum::http::Method) -> Option<&'static str> {
-    if state.engine.mode() != Mode::Local || state.opts.allowed_hosts.is_empty() {
+    // With an access token the token itself (and its SameSite=Strict cookie) stops foreign sites.
+    if state.engine.mode() != Mode::Local || state.opts.allowed_hosts.is_empty() || state.opts.token.is_some() {
         return None;
     }
     let allowed = &state.opts.allowed_hosts;

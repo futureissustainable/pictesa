@@ -1,0 +1,17 @@
+# Hosted Pictesa behind your HTTPS proxy (Caddy, Traefik, nginx).
+services:
+  pictesa:
+    image: ghcr.io/futureissustainable/pictesa:latest
+    command: ["serve", "--hosted", "--public-url", "https://studio.example.com"]
+    ports: ["127.0.0.1:4747:4747"]
+    volumes: ["pictesa:/data"]
+    environment:
+      # Optional: let users run on your provider keys and pay from a prepaid wallet.
+      PICTESA_BILLING: "0"
+      PICTESA_MARKUP: "1.25"
+      # STRIPE_SECRET_KEY: sk_live_...
+      # STRIPE_WEBHOOK_SECRET: whsec_...
+      # FAL_KEY: ...
+    restart: unless-stopped
+volumes:
+  pictesa: {}
