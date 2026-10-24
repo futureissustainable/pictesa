@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "name": "Qwen Image 2512",
+  "description": "Alibaba Qwen-Image 2512 (20B, fp8): text to image with realistic people, fine natural detail and accurate text layout. The 4-step Lightning LoRA is on by default; turn it off for the full 50-step run. About 32 GB of weights; ComfyUI offloads them on 12 GB GPUs.",
+  "vendor": "Alibaba",
+  "output": "image",
+  "tasks": ["text_to_image"],
+  "open_weights": true,
+  "license": "Apache-2.0",
+  "prompt": [["11", "text"]],
+  "negative_prompt": [["12", "text"]],
+  "params": [
+    {
+      "key": "aspect_ratio",
+      "label": "Aspect ratio",
+      "type": "enum",
+      "options": [
+        {
+          "value": "1:1",
+          "label": "1:1"
+        },
+        {
+          "value": "4:5",
+          "label": "4:5"
+        },
+        {
+          "value": "3:4",
+          "label": "3:4"
+        },
+        {
+          "value": "2:3",
+          "label": "2:3"
+        },
+        {
+          "value": "9:16",
+          "label": "9:16"
+        },
+        {
+          "value": "16:9",
+          "label": "16:9"
+        },
+        {
+          "value": "3:2",
+          "label": "3:2"
+        },
+        {
+          "value": "4:3",
+          "label": "4:3"
+        },
+        {
+          "value": "5:4",
+          "label": "5:4"
+        },
+        {
+          "value": "21:9",
+          "label": "21:9"
+        }
+      ],
+      "default": "1:1"
+    },
+    {
+      "key": "lightning",
+      "label": "Fast 4-step LoRA",
+      "type": "bool",
+      "default": true,
+      "advanced": true,
+      "help": "Runs 4 steps with the Lightning LoRA instead of 50 full steps.",
+      "bind": [["13", "value"]]
+    },
+    {
+      "key": "seed",
+      "label": "Seed",
+      "type": "seed",
+      "advanced": true,
+      "bind": [["14", "seed"]]
+    }
+  ],
+  "size": {
+    "width": [["16", "width"]],
+    "height": [["16", "height"]],
+    "megapixels": 1.68,
+    "multiple": 16
+  },
+  "batch": [["16", "batch_size"]],
+  "max_outputs": 4,
+  "outputs": ["1"],
+  "requires": {
+    "nodes": [
+      "CLIPLoader",
+      "CLIPTextEncode",
+      "ComfySwitchNode",
+      "EmptySD3LatentImage",
+      "KSampler",
+      "LoraLoaderModelOnly",
+      "ModelSamplingAuraFlow",
+      "PrimitiveBoolean",
+      "PrimitiveFloat",
+      "PrimitiveInt",
+      "SaveImage",
+      "UNETLoader",
+      "VAEDecode",
+      "VAELoader"
+    ],
+    "models": [
+      {
+        "name": "Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors",
+        "directory": "loras",
+        "url": "https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors",
+        "size": 1698951104,
+        "sha256": "ad12117461cb41e2ea637fec8df6392ce8e8550c47fbe2b829ed3deb98262066"
+      },
+      {
+        "name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "directory": "text_encoders",
+        "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "size": 9384670680,
+        "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4"
+      },
+      {
+        "name": "qwen_image_2512_fp8_e4m3fn.safetensors",
+        "directory": "diffusion_models",
+        "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors",
+        "size": 20430679144,
+        "sha256": "5dc80554d5d83390046a2f4a94ece06afb7700bf7b0aaf8bde9769793875876b"
+      },
+      {
+        "name": "qwen_image_vae.safetensors",
+        "directory": "vae",
+        "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+        "size": 253806246,
+        "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
+      }
+    ]
+  },
+  "sources": [
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_qwen_Image_2512.json",
+    "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2512",
+    "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI"
+  ]
+}

@@ -108,8 +108,8 @@
     "megapixels": 0.4,
     "multiple": 16,
     "resolutions": {
-      "480p": 0.4,
-      "720p": 0.92
+      "480p": 480,
+      "720p": 720
     },
     "match_input": "start_frame"
   },

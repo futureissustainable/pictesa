@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "name": "LTX-2.5",
-  "description": "Lightricks LTX-2.5 22B distilled (int8): text to video with synchronized audio, rendered at half size and upscaled 2x in latent space. About 41 GB of weights; ComfyUI streams them on 12 GB GPUs.",
+  "description": "Lightricks LTX-2.5 22B distilled (int8): text to video with synchronized audio, rendered at half size and upscaled 2x in latent space. About 40 GB of weights; ComfyUI streams them on 12 GB GPUs.",
   "vendor": "Lightricks",
   "output": "video",
   "tasks": ["text_to_video"],
   "open_weights": true,
-  "license": "LTX-2 Community License (gated on Hugging Face: request access before downloading)",
+  "license": "LTX-2.x Community License Agreement (gated on Hugging Face: request access before downloading)",
   "prompt": [["17", "text"]],
   "negative_prompt": [["26", "text"]],
   "params": [
@@ -115,9 +115,9 @@
     "megapixels": 0.9,
     "multiple": 64,
     "resolutions": {
-      "540p": 0.5,
-      "720p": 0.9,
-      "1080p": 2.07
+      "540p": 540,
+      "720p": 720,
+      "1080p": 1080
     }
   },
   "max_outputs": 1,

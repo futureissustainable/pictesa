@@ -6,7 +6,7 @@
   "output": "image",
   "tasks": ["text_to_image"],
   "open_weights": true,
-  "license": "Apache-2.0",
+  "license": "Qwen Research License (non-commercial terms; see huggingface.co/Qwen/Qwen-Image-2.1)",
   "prompt": [["2", "prompt"]],
   "negative_prompt": [["2", "negative_prompt"]],
   "params": [
