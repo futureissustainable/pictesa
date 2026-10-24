@@ -206,7 +206,7 @@
   "loras": [],
   "model": {
    "name": "sdxs.safetensors",
-   "path": "/opt/sd-models/checkpoints/sdxs.safetensors",
+   "path": "/models/checkpoints/sdxs.safetensors",
    "stem": "sdxs"
   },
   "output_formats": [
