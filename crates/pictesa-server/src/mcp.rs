@@ -119,6 +119,26 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": false, "openWorldHint": true }
         },
         {
+            "name": "list_recipes",
+            "title": "List recipes",
+            "description": "Multi-step pipelines (cinema shot, character shot, product hero, animate a photo, new angle, upscale) with their fields and which model each step would use.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "run_recipe",
+            "title": "Run a recipe",
+            "description": "Run a recipe and wait for it. values fills its fields; inputs maps each recipe input key to files as {path|url|asset_id}. This can cost money on paid providers.",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "string" },
+                "values": { "type": "object" },
+                "inputs": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "url": { "type": "string" }, "asset_id": { "type": "string" } } } } },
+                "models": { "type": "object", "description": "Optional model id per step id" },
+                "timeout_seconds": { "type": "integer", "default": 1800, "maximum": 7200 }
+            }, "required": ["id"] },
+            "annotations": { "readOnlyHint": false, "openWorldHint": true }
+        },
+        {
             "name": "get_job",
             "title": "Generation status",
             "description": "Status, progress and outputs of a generation.",
@@ -321,6 +341,52 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 content.extend(previews(ctx, &done).await);
             }
             Ok(content)
+        }
+        "list_recipes" => {
+            let list: Vec<Value> = e
+                .recipes(user)
+                .await
+                .map_err(err)?
+                .iter()
+                .map(|r| json!({
+                    "id": r.recipe.id, "name": r.recipe.name, "description": r.recipe.description, "output": r.recipe.output,
+                    "fields": r.recipe.fields, "inputs": r.recipe.inputs, "runnable": r.runnable,
+                    "steps": r.recipe.steps.iter().zip(&r.step_models).map(|(s, m)| json!({"id": s.id, "label": s.label, "model": m})).collect::<Vec<_>>(),
+                }))
+                .collect();
+            Ok(text(&json!({ "recipes": list })))
+        }
+        "run_recipe" => {
+            let id = arg_str(args, "id").ok_or("id is required (call list_recipes)")?;
+            let mut req = pictesa_engine::recipes::RunRecipe {
+                values: args.get("values").and_then(Value::as_object).cloned().unwrap_or_default(),
+                models: args.get("models").and_then(Value::as_object).map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()).unwrap_or_default(),
+                ..Default::default()
+            };
+            for (key, items) in args.get("inputs").and_then(Value::as_object).into_iter().flatten() {
+                let mut ids = Vec::new();
+                for item in items.as_array().into_iter().flatten() {
+                    let mut tagged = item.clone();
+                    tagged["role"] = json!("reference");
+                    ids.push(resolve_input(ctx, &tagged).await?.asset_id);
+                }
+                req.inputs.insert(key.clone(), ids);
+            }
+            let run = e.run_recipe(user, id, req).await.map_err(err)?;
+            let timeout = Duration::from_secs(args.get("timeout_seconds").and_then(Value::as_u64).unwrap_or(1800).clamp(10, 7200));
+            let deadline = tokio::time::Instant::now() + timeout;
+            let mut current = run;
+            while current.status == "running" && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                current = e.recipe_run(user, &current.id).await.map_err(err)?;
+            }
+            let mut jobs = Vec::new();
+            for j in &current.jobs {
+                if let Ok(job) = e.job(user, j).await {
+                    jobs.push(job_json(ctx, &job).await);
+                }
+            }
+            Ok(text(&json!({ "run": current, "steps": jobs })))
         }
         "get_job" => {
             let id = arg_str(args, "id").ok_or("id is required")?;

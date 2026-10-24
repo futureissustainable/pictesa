@@ -166,3 +166,33 @@ Tools: `list_models`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `ca
 ## Errors
 
 Non-2xx answers carry `{ "error": "human readable message", "kind"?: "auth"|"validation"|"not_found"|..., "field"?: "..." }`.
+
+## Additions (v1.1)
+
+### Model details are loaded on demand
+`GET /api/models` lists discovered gateway models with `"complete": false` (no params or inputs yet, to keep the list light). When a model is selected, call `GET /api/models/{id}` (the id contains slashes; send it as is, e.g. `/api/models/fal:kling/v4/image-to-video`). It returns the full spec and caches it. Models also carry `"billed": true` in hosted mode when runs are paid from the wallet; their `pricing` then already includes the markup.
+
+### Local access token
+`GET /api/auth/me` returns `"needs_token": true` when the local server requires a token and the browser has none. Show a single "Access token" field and `POST /api/auth/token { token }`; on 204 the cookie is set, reload `/api/auth/me`.
+
+### Recipes (multi-step pipelines)
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| GET | `/api/recipes` | | `{ recipes: [RecipeView] }` |
+| POST | `/api/recipes/run/{id}` | `{ values: {field: value}, inputs: {input_key: [asset_id]}, models?: {step_id: model_id} }` | `201 RecipeRun` |
+| GET | `/api/recipes/runs?limit=30` | | `{ runs: [RecipeRun] }` |
+| GET | `/api/recipes/runs/{id}` | | `RecipeRun` |
+| POST | `/api/recipes/runs/{id}/cancel` | | `RecipeRun` |
+
+`RecipeView`: `{ id, name, description, output, fields: [{ key, label, type: "text"|"enum"|"preset", options, category, default, required, multiline, help }], inputs: [{ key, label, kind, max, required }], steps: [{ id, label, output, models: [ids], prompt, params, preset, inputs }], step_models: [model id or null per step], runnable }`.
+A `preset` field offers presets of its `category` (GET /api/presets). Recipe ids contain a slash (`cinema/shot`).
+`RecipeRun`: `{ id, recipe_id, recipe_name, status: "running"|"succeeded"|"failed"|"canceled", step, steps, jobs: [job ids], error, created_at, updated_at }`. Its jobs are ordinary generations (they appear in `/api/generations` and fire `job` events); runs also fire `event: recipe`.
+
+### Billing (hosted mode)
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| GET | `/api/billing` | | `{ enabled, topups_available, balance_usd, debt_usd, locked, markup, topups_usd: [10, 25, 50], ledger: [{ id, amount_usd, reason, job_id, created_at }] }` |
+| POST | `/api/billing/checkout` | `{ amount_cents, request_id }` | `{ url }` (redirect the browser to Stripe) |
+| POST | `/api/billing/webhook` | Stripe event | `{ ok }` (Stripe only) |
+
+Show the balance and top-up only when `enabled` is true. A generation the wallet cannot cover fails validation with `field: "billing"`.

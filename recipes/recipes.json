@@ -1,0 +1,487 @@
+[
+ {
+  "id": "cinema/shot",
+  "name": "Cinema shot",
+  "output": "video",
+  "description": "Direct a shot like on a film set: Pictesa composes the still with your lens and light, then animates it with your camera move.",
+  "fields": [
+   {
+    "key": "scene",
+    "label": "Scene",
+    "type": "text",
+    "multiline": true,
+    "required": true,
+    "help": "Who or what is in frame, where, and what happens."
+   },
+   {
+    "key": "camera",
+    "label": "Camera move",
+    "type": "preset",
+    "category": "camera",
+    "default": "camera/dolly-in"
+   },
+   {
+    "key": "lens",
+    "label": "Lens",
+    "type": "enum",
+    "options": [
+     "24mm wide",
+     "35mm",
+     "50mm",
+     "85mm portrait",
+     "anamorphic"
+    ],
+    "default": "35mm"
+   },
+   {
+    "key": "light",
+    "label": "Light",
+    "type": "enum",
+    "options": [
+     "golden hour",
+     "blue hour",
+     "soft overcast light",
+     "hard midday sun",
+     "neon night",
+     "candlelight",
+     "studio softbox"
+    ],
+    "default": "golden hour"
+   },
+   {
+    "key": "duration",
+    "label": "Length",
+    "type": "enum",
+    "options": [
+     "5",
+     "10"
+    ],
+    "default": "5"
+   }
+  ],
+  "steps": [
+   {
+    "id": "still",
+    "label": "Compose the still",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1",
+     "fal:openai/gpt-image-2.5/sunburst/text-to-image",
+     "fal:bytedance/seedream/v5/flash/text-to-image",
+     "fal:blackforestlabs/flux-3/klein/text-to-image",
+     "comfyui:flux3-klein-t2i",
+     "comfyui:qwen-image-2512",
+     "mock:image"
+    ],
+    "prompt": "{{scene}}, cinematic film still, {{lens}} lens, {{light}}, shallow depth of field, natural film grain",
+    "params": {
+     "aspect_ratio": "16:9"
+    }
+   },
+   {
+    "id": "shot",
+    "label": "Shoot the move",
+    "output": "video",
+    "models": [
+     "fal:kling/v4/image-to-video",
+     "fal:lightricks/ltx-2.5/image-to-video/pro",
+     "fal:alibaba/wan-3.0-prime/image-to-video",
+     "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
+     "comfyui:ltx25-i2v",
+     "comfyui:wan22-i2v",
+     "mock:video"
+    ],
+    "prompt": "{{scene}}",
+    "preset": "{{camera}}",
+    "params": {
+     "duration": "{{duration}}",
+     "aspect_ratio": "16:9"
+    },
+    "inputs": [
+     {
+      "role": "start_frame",
+      "from": "step:still"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "cinema/character-shot",
+  "name": "Character shot",
+  "output": "video",
+  "description": "Put your own character or product into a directed shot. Your reference keeps the look consistent; the camera move brings it to life.",
+  "inputs": [
+   {
+    "key": "character",
+    "label": "Character or product photos",
+    "kind": "image",
+    "max": 3,
+    "required": true
+   }
+  ],
+  "fields": [
+   {
+    "key": "scene",
+    "label": "Scene",
+    "type": "text",
+    "multiline": true,
+    "required": true
+   },
+   {
+    "key": "camera",
+    "label": "Camera move",
+    "type": "preset",
+    "category": "camera",
+    "default": "camera/dolly-in"
+   },
+   {
+    "key": "lens",
+    "label": "Lens",
+    "type": "enum",
+    "options": [
+     "24mm wide",
+     "35mm",
+     "50mm",
+     "85mm portrait",
+     "anamorphic"
+    ],
+    "default": "50mm"
+   },
+   {
+    "key": "light",
+    "label": "Light",
+    "type": "enum",
+    "options": [
+     "golden hour",
+     "blue hour",
+     "soft overcast light",
+     "hard midday sun",
+     "neon night",
+     "candlelight",
+     "studio softbox"
+    ],
+    "default": "soft overcast light"
+   },
+   {
+    "key": "duration",
+    "label": "Length",
+    "type": "enum",
+    "options": [
+     "5",
+     "10"
+    ],
+    "default": "5"
+   }
+  ],
+  "steps": [
+   {
+    "id": "still",
+    "label": "Place the character",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "The same person or object from the reference images, {{scene}}, cinematic film still, {{lens}} lens, {{light}}, keep the face, clothing and proportions identical",
+    "params": {
+     "aspect_ratio": "16:9"
+    },
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:character"
+     }
+    ]
+   },
+   {
+    "id": "shot",
+    "label": "Shoot the move",
+    "output": "video",
+    "models": [
+     "fal:kling/v4/image-to-video",
+     "fal:lightricks/ltx-2.5/image-to-video/pro",
+     "fal:alibaba/wan-3.0-prime/image-to-video",
+     "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
+     "comfyui:ltx25-i2v",
+     "comfyui:wan22-i2v",
+     "mock:video"
+    ],
+    "prompt": "{{scene}}",
+    "preset": "{{camera}}",
+    "params": {
+     "duration": "{{duration}}",
+     "aspect_ratio": "16:9"
+    },
+    "inputs": [
+     {
+      "role": "start_frame",
+      "from": "step:still"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "product/hero",
+  "name": "Product hero",
+  "output": "video",
+  "description": "Turn a plain product photo into a studio hero shot, then a slow orbit for ads.",
+  "inputs": [
+   {
+    "key": "product",
+    "label": "Product photo",
+    "kind": "image",
+    "max": 2,
+    "required": true
+   }
+  ],
+  "fields": [
+   {
+    "key": "setting",
+    "label": "Setting",
+    "type": "enum",
+    "options": [
+     "seamless white studio",
+     "warm wooden table",
+     "concrete plinth",
+     "outdoor golden hour",
+     "marble kitchen counter"
+    ],
+    "default": "seamless white studio"
+   },
+   {
+    "key": "camera",
+    "label": "Camera move",
+    "type": "preset",
+    "category": "camera",
+    "default": "camera/orbit-right"
+   },
+   {
+    "key": "duration",
+    "label": "Length",
+    "type": "enum",
+    "options": [
+     "5",
+     "10"
+    ],
+    "default": "5"
+   }
+  ],
+  "steps": [
+   {
+    "id": "still",
+    "label": "Studio still",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "Professional product photograph of the exact product from the reference, on a {{setting}}, softbox lighting, crisp detail, unchanged shape, colors and logo",
+    "params": {
+     "aspect_ratio": "4:5"
+    },
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:product"
+     }
+    ]
+   },
+   {
+    "id": "shot",
+    "label": "Orbit",
+    "output": "video",
+    "models": [
+     "fal:kling/v4/image-to-video",
+     "fal:lightricks/ltx-2.5/image-to-video/pro",
+     "fal:alibaba/wan-3.0-prime/image-to-video",
+     "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
+     "comfyui:ltx25-i2v",
+     "comfyui:wan22-i2v",
+     "mock:video"
+    ],
+    "prompt": "the product stays still and unchanged while the camera moves",
+    "preset": "{{camera}}",
+    "params": {
+     "duration": "{{duration}}"
+    },
+    "inputs": [
+     {
+      "role": "start_frame",
+      "from": "step:still"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "photo/animate",
+  "name": "Animate a photo",
+  "output": "video",
+  "description": "Bring any photo to life with a camera move and a line about what should happen.",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [
+   {
+    "key": "action",
+    "label": "What happens",
+    "type": "text",
+    "help": "Optional. For example: the curtains move in the wind."
+   },
+   {
+    "key": "camera",
+    "label": "Camera move",
+    "type": "preset",
+    "category": "camera",
+    "default": "camera/dolly-in"
+   },
+   {
+    "key": "duration",
+    "label": "Length",
+    "type": "enum",
+    "options": [
+     "5",
+     "10"
+    ],
+    "default": "5"
+   }
+  ],
+  "steps": [
+   {
+    "id": "shot",
+    "label": "Animate",
+    "output": "video",
+    "models": [
+     "fal:kling/v4/image-to-video",
+     "fal:lightricks/ltx-2.5/image-to-video/pro",
+     "fal:alibaba/wan-3.0-prime/image-to-video",
+     "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
+     "comfyui:ltx25-i2v",
+     "comfyui:wan22-i2v",
+     "mock:video"
+    ],
+    "prompt": "{{action}}",
+    "preset": "{{camera}}",
+    "params": {
+     "duration": "{{duration}}"
+    },
+    "inputs": [
+     {
+      "role": "start_frame",
+      "from": "input:photo"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "photo/new-angle",
+  "name": "New angle",
+  "output": "image",
+  "description": "Re-shoot a photo from another camera position while keeping everything in it the same.",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [
+   {
+    "key": "angle",
+    "label": "New camera position",
+    "type": "enum",
+    "options": [
+     "a low angle",
+     "a high angle",
+     "the left side",
+     "the right side",
+     "behind the subject",
+     "a bird's-eye view",
+     "a close-up",
+     "a wide establishing view"
+    ],
+    "default": "a low angle"
+   }
+  ],
+  "steps": [
+   {
+    "id": "angle",
+    "label": "Re-shoot",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "Show exactly the same scene from {{angle}}. Keep every person, object, material, color and the lighting identical; only the camera position changes.",
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:photo"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "photo/upscale",
+  "name": "Upscale",
+  "output": "image",
+  "description": "Enlarge a photo with added detail for print or 4K screens.",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [],
+  "steps": [
+   {
+    "id": "upscale",
+    "label": "Upscale",
+    "output": "image",
+    "models": [
+     "fal:topaz/upscale/image/generative",
+     "fal:fal-ai/clarity-upscaler",
+     "fal:fal-ai/seedvr/upscale/image",
+     "comfyui:esrgan-upscale"
+    ],
+    "prompt": "",
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:photo"
+     }
+    ]
+   }
+  ]
+ }
+]

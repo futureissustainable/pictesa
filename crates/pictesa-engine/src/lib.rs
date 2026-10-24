@@ -10,6 +10,7 @@ pub mod files;
 pub mod jobs;
 pub mod presets;
 pub mod queue;
+pub mod recipes;
 pub mod store;
 pub mod types;
 
@@ -113,6 +114,7 @@ pub(crate) struct Inner {
     pub catalog: catalog::Catalog,
     pub crypto: crypto::Crypto,
     pub presets: Vec<Preset>,
+    pub recipes: Vec<recipes::Recipe>,
     pub billing: billing::BillingConfig,
     /// Client for provider API calls.
     pub http: reqwest::Client,
@@ -142,6 +144,7 @@ impl Engine {
         let files = files::FileStore::new(&cfg.data_dir)?;
         let catalog = catalog::Catalog::new(pictesa_providers::registry());
         let presets = presets::load(&cfg.preset_dirs);
+        let recipes = recipes::load(&[cfg.data_dir.join("recipes")]);
         let ua = format!("pictesa/{}", env!("CARGO_PKG_VERSION"));
         let http = reqwest::Client::builder()
             .user_agent(&ua)
@@ -161,6 +164,7 @@ impl Engine {
             catalog,
             crypto,
             presets,
+            recipes,
             billing: billing::BillingConfig::from_env(),
             http,
             download,
@@ -180,6 +184,7 @@ impl Engine {
     pub fn start(&self) {
         let engine = self.clone();
         tokio::spawn(async move {
+            engine.fail_orphan_runs().await;
             queue::run(engine).await;
         });
         let engine = self.clone();

@@ -177,6 +177,11 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/assets/{id}", get(get_asset).patch(patch_asset).delete(delete_asset))
         .route("/assets/{id}/restore", post(restore_asset))
         .route("/events", get(events))
+        .route("/recipes", get(recipes))
+        .route("/recipes/runs", get(recipe_runs))
+        .route("/recipes/runs/{id}", get(recipe_run))
+        .route("/recipes/runs/{id}/cancel", post(cancel_recipe_run))
+        .route("/recipes/run/{*id}", post(run_recipe))
         .route("/billing", get(billing))
         .route("/billing/checkout", post(checkout))
         .route("/billing/webhook", post(stripe_webhook))
@@ -473,6 +478,33 @@ async fn delete_asset(State(s): State<AppState>, c: Caller, Path(id): Path<Strin
 
 async fn restore_asset(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(s.engine.restore(&c.user_id, &id).await?)))
+}
+
+// ---------- recipes ----------
+
+async fn recipes(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "recipes": s.engine.recipes(&c.user_id).await? })))
+}
+
+async fn run_recipe(State(s): State<AppState>, c: Caller, Path(id): Path<String>, Json(b): Json<pictesa_engine::recipes::RunRecipe>) -> ApiResult<Response> {
+    Ok((StatusCode::CREATED, Json(json!(s.engine.run_recipe(&c.user_id, &id, b).await?))).into_response())
+}
+
+#[derive(Deserialize)]
+struct LimitQuery {
+    limit: Option<u32>,
+}
+
+async fn recipe_runs(State(s): State<AppState>, c: Caller, Query(q): Query<LimitQuery>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "runs": s.engine.recipe_runs(&c.user_id, q.limit.unwrap_or(30)).await? })))
+}
+
+async fn recipe_run(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(s.engine.recipe_run(&c.user_id, &id).await?)))
+}
+
+async fn cancel_recipe_run(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(s.engine.cancel_recipe_run(&c.user_id, &id).await?)))
 }
 
 // ---------- billing ----------

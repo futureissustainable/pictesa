@@ -122,6 +122,11 @@ enum Command {
     },
     /// Refresh model catalogs from gateways and local servers.
     Refresh,
+    /// List or run recipes (multi-step pipelines).
+    Recipe {
+        #[command(subcommand)]
+        action: RecipeAction,
+    },
     /// Operator tools for hosted billing.
     Billing {
         #[command(subcommand)]
@@ -129,6 +134,23 @@ enum Command {
     },
     /// Check the installation.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum RecipeAction {
+    List,
+    /// `pictesa recipe run cinema/shot -v scene="a cabin in fog" -v camera=camera/orbit-left`
+    Run {
+        id: String,
+        /// Field value as key=value (repeatable).
+        #[arg(short = 'v', long = "value", value_name = "KEY=VALUE")]
+        values: Vec<String>,
+        /// Input file as key=path (repeatable), for recipes that take photos.
+        #[arg(short, long = "input", value_name = "KEY=PATH")]
+        inputs: Vec<String>,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -305,6 +327,45 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
             let engine = open_engine(&cli, Mode::Local, None).await?;
             let n = engine.refresh_models(LOCAL_USER).await;
             println!("{n} models discovered");
+            Ok(())
+        }
+        Command::Recipe { action } => {
+            let engine = open_engine(&cli, Mode::Local, None).await?;
+            match action {
+                RecipeAction::List => {
+                    for r in engine.recipes(LOCAL_USER).await? {
+                        println!("{} {:<24} {}", if r.runnable { "ok" } else { " -" }, r.recipe.id, r.recipe.description);
+                    }
+                }
+                RecipeAction::Run { id, values, inputs, out } => {
+                    engine.start_scoped();
+                    let mut req = pictesa_engine::recipes::RunRecipe { values: parse_params(&values)?, ..Default::default() };
+                    for raw in &inputs {
+                        let (key, path) = raw.split_once('=').ok_or_else(|| anyhow!("input {raw} must look like key=path"))?;
+                        let bytes = tokio::fs::read(path).await.with_context(|| format!("reading {path}"))?;
+                        let asset = engine.upload(LOCAL_USER, &bytes, std::path::Path::new(path).file_name().and_then(|n| n.to_str()), None).await?;
+                        req.inputs.entry(key.to_string()).or_default().push(asset.id);
+                    }
+                    let mut run = engine.run_recipe(LOCAL_USER, &id, req).await?;
+                    let mut shown = 0;
+                    while run.status == "running" {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        run = engine.recipe_run(LOCAL_USER, &run.id).await?;
+                        if run.jobs.len() > shown {
+                            shown = run.jobs.len();
+                            eprintln!("step {}/{} running", shown, run.steps);
+                        }
+                    }
+                    if run.status != "succeeded" {
+                        bail!("recipe {}: {}", run.status, run.error.unwrap_or_default());
+                    }
+                    let mut jobs = Vec::new();
+                    for j in &run.jobs {
+                        jobs.push(engine.job(LOCAL_USER, j).await?);
+                    }
+                    report(&engine, jobs, out, false).await?;
+                }
+            }
             Ok(())
         }
         Command::Billing { action: BillingAction::Grant { email, usd, operation } } => {
