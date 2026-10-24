@@ -175,6 +175,13 @@ impl Engine {
             return Err(EngineError::invalid(format!("{} is not set up yet. Add its key in Settings > Providers.", info.name), Some("model")));
         }
         let platform = Self::uses_platform(&info, &resolved);
+        // Safety switch for demos and tests: refuse anything that can cost money.
+        if std::env::var("PICTESA_DENY_PAID").is_ok_and(|v| v == "1") {
+            let free = matches!(spec.pricing, Some(Pricing::Local)) || info.kind == pictesa_core::ProviderKind::Local;
+            if !free {
+                return Err(EngineError::invalid("Paid generations are turned off on this server (PICTESA_DENY_PAID=1). Use a local or mock model.", Some("model")));
+            }
+        }
 
         if let Some(pid) = req.preset.clone().filter(|p| !p.is_empty()) {
             let preset = self.preset(&pid).ok_or_else(|| EngineError::invalid(format!("unknown preset {pid}"), Some("preset")))?;
