@@ -46,6 +46,22 @@ pub struct ServerOptions {
     pub web_dir: Option<PathBuf>,
     /// Mark cookies Secure (hosted mode behind HTTPS).
     pub secure_cookies: bool,
+    /// Local mode: Host and Origin values accepted (blocks DNS rebinding and cross-site requests).
+    /// Empty means "derive from the listen address".
+    pub allowed_hosts: Vec<String>,
+}
+
+impl ServerOptions {
+    /// Hosts a local server answers to: the loopback names on its port plus any configured extras.
+    pub fn local_hosts(addr: SocketAddr, extra: &[String]) -> Vec<String> {
+        let port = addr.port();
+        let mut hosts = vec![format!("localhost:{port}"), format!("127.0.0.1:{port}"), format!("[::1]:{port}")];
+        if !addr.ip().is_loopback() && !addr.ip().is_unspecified() {
+            hosts.push(addr.to_string());
+        }
+        hosts.extend(extra.iter().map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty()));
+        hosts
+    }
 }
 
 #[derive(Clone)]
@@ -123,9 +139,36 @@ fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// Local mode: only answer to known host names, and refuse writes from other sites.
+fn foreign_request(state: &AppState, headers: &HeaderMap, method: &axum::http::Method) -> Option<&'static str> {
+    if state.engine.mode() != Mode::Local || state.opts.allowed_hosts.is_empty() {
+        return None;
+    }
+    let allowed = &state.opts.allowed_hosts;
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).map(str::to_lowercase);
+    if let Some(h) = &host {
+        if !allowed.iter().any(|a| a == h) {
+            return Some("unknown host");
+        }
+    }
+    if !matches!(*method, axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS) {
+        if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+            let origin_host = origin.split("://").nth(1).unwrap_or("").trim_end_matches('/').to_lowercase();
+            if !allowed.iter().any(|a| *a == origin_host) {
+                return Some("cross-site request");
+            }
+        }
+    }
+    None
+}
+
 /// Works out who is calling and stores a [`Caller`] in the request extensions.
 async fn authenticate(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let headers = req.headers().clone();
+    if let Some(reason) = foreign_request(&state, &headers, req.method()) {
+        tracing::warn!("refused {} {}: {reason}", req.method(), req.uri().path());
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": format!("Refused: {reason}. Open Pictesa at http://127.0.0.1 or set PICTESA_ALLOWED_HOSTS."), "kind": "forbidden" }))).into_response();
+    }
     let caller = match state.engine.mode() {
         Mode::Local => {
             let ok = match &state.opts.token {

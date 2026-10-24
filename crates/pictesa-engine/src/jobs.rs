@@ -12,6 +12,8 @@ use crate::{
 };
 
 pub const MAX_COUNT: u32 = 16;
+/// Tags a provider sets on models that cannot run right now (missing local nodes or files).
+pub const UNAVAILABLE_TAGS: &[&str] = &["unavailable", "needs-nodes", "needs-models"];
 
 impl Engine {
     // ---------- models ----------
@@ -43,7 +45,9 @@ impl Engine {
                 })
             })
             .map(|mut spec| {
-                let ok = configured.get(&spec.provider).copied().unwrap_or(false);
+                // A local template whose nodes or model files are missing is listed but not runnable.
+                let unavailable = spec.tags.iter().any(|t| UNAVAILABLE_TAGS.contains(&t.as_str()));
+                let ok = configured.get(&spec.provider).copied().unwrap_or(false) && !unavailable;
                 let is_billed = billed.get(&spec.provider).copied().unwrap_or(false);
                 if is_billed {
                     spec.pricing = spec.pricing.map(|p| with_markup(p, markup));

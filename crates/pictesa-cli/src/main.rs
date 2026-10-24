@@ -210,9 +210,16 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
                 open_browser(&url);
             }
             eprintln!("Pictesa {} on http://{addr}  (data: {})", env!("CARGO_PKG_VERSION"), engine.data_dir().display());
+            let extra: Vec<String> = std::env::var("PICTESA_ALLOWED_HOSTS").unwrap_or_default().split(',').map(String::from).collect();
             pictesa_server::serve(
                 engine,
-                ServerOptions { addr: Some(addr), token: cli.token.clone(), web_dir, secure_cookies: public_url.as_deref().is_some_and(|u| u.starts_with("https://")) },
+                ServerOptions {
+                    addr: Some(addr),
+                    token: cli.token.clone(),
+                    web_dir,
+                    secure_cookies: public_url.as_deref().is_some_and(|u| u.starts_with("https://")),
+                    allowed_hosts: ServerOptions::local_hosts(addr, &extra),
+                },
             )
             .await
         }

@@ -1,0 +1,92 @@
+# Pictesa
+
+**The open-source studio for AI images and video.** Every major model, your own keys or your own GPU, one fast binary, built for people and for agents.
+
+Pictesa is an open alternative to closed creative platforms like Higgsfield: the same models and the same one-prompt workflow, without credits that hide the real price, without a single company between you and the model, and with every recipe and preset open to read, change and share.
+
+---
+
+## What you get
+
+- **Every model in one place.** About 1,250 image and video models through fal, Replicate and Comfy Router, plus direct APIs: OpenAI, Google, OpenRouter, xAI, ByteDance (BytePlus), Black Forest Labs, Runway, Luma, Kling, MiniMax, Alibaba, Stability AI, Ideogram and Recraft. New gateway models appear without an update: Pictesa reads their catalogs and builds each model's controls from its published schema.
+- **Local models.** Run open-weight models on your own GPU through ComfyUI (LTX 2.5, FLUX 3 Klein, Wan 2.2, Qwen Image, upscalers) or stable-diffusion.cpp. Any ComfyUI workflow becomes a Pictesa model with a small manifest. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+- **Real prices.** You pay providers directly, at their price. Every model shows its published price and every run records its cost estimate. No credits, no markup.
+- **Recipes.** Open multi-step pipelines: *Cinema shot* (compose a still with your lens and light, then animate it with a camera move), *Character shot*, *Product hero*, *Animate a photo*, *New angle* and *Upscale*. Each step uses the first model you have set up, cloud or local, and recipes are plain JSON you can fork.
+- **Presets.** 46 camera moves and looks (dolly in, orbit, crane, FPV drone, bullet time, film stocks, light) as editable JSON.
+- **Built for agents.** An MCP server (stdio and HTTP), a CLI with `--json`, and a REST API with live events. Agents and people share one library, so an image you make can go straight to an agent and back. See [docs/AGENTS.md](docs/AGENTS.md).
+- **One fast binary.** Rust (Tokio, Axum, SQLite) with the web UI embedded. No Python, Docker or Node at runtime. Files are stored once by content hash, with thumbnails, range-streamed video and full-text prompt search.
+- **Yours or hosted.** Run it for yourself, or host it for others the way n8n works: accounts, API tokens, and optional prepaid wallets with Stripe top-ups so people can run on your provider keys.
+
+## Quick start
+
+1. Download the binary for your system from the releases page, or build it (below).
+2. Run `pictesa`. The studio opens at http://127.0.0.1:4747.
+3. Open **Settings > Providers**, paste a key (fal or OpenRouter cover the most models), or point Pictesa at your ComfyUI.
+4. Write a prompt, pick a model, generate.
+
+Try it without any key: `PICTESA_MOCK=1 pictesa` adds two free fake models that behave like real ones.
+
+### Build from source
+
+```bash
+pnpm --dir web install && pnpm --dir web build   # the web UI, embedded at compile time
+cargo build --release                            # target/release/pictesa
+```
+
+Needs Rust 1.85+ and Node 22+ to build. `ffmpeg` on the PATH enables video thumbnails and durations.
+
+## Command line
+
+```bash
+pictesa models --output video --featured
+pictesa model fal:kling/v4/image-to-video
+pictesa generate "a timber cabin on a misty lake at dawn" -m fal:google/nano-banana-2.1 -p aspect_ratio=16:9 -n 4 -o ./out
+pictesa generate "slow push in" -m fal:kling/v4/image-to-video -i start_frame=./out/cabin.png -p duration=5
+pictesa recipe run cinema/shot -v scene="a lighthouse in a storm" -v camera=camera/crane-up
+pictesa keys set fal api_key        # reads the key from stdin; stored encrypted
+```
+
+When the studio is running, CLI jobs run there and appear live in the UI.
+
+## Agents
+
+```bash
+claude mcp add pictesa -- pictesa mcp          # Claude Code
+```
+
+Tools: `list_models`, `get_model`, `list_presets`, `list_recipes`, `generate`, `run_recipe`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`. `generate` waits for the result and returns file paths. Setup for Codex, Cursor and HTTP clients is in [docs/AGENTS.md](docs/AGENTS.md); the HTTP API is in [docs/API.md](docs/API.md).
+
+## Hosting Pictesa for others
+
+```bash
+pictesa serve --hosted --host 0.0.0.0 --public-url https://studio.example.com
+```
+
+Hosted mode adds sign-up, sessions and personal API tokens. Users can bring their own keys (stored encrypted per user). To let them run on your keys instead, set `PICTESA_BILLING=1`, `PICTESA_MARKUP` (default 1.25), `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`: runs are charged from a prepaid wallet at provider price times the markup, failed runs are refunded automatically, and `pictesa billing grant` adds allowances. Your environment keys are never used for free in hosted mode.
+
+## How it fits together
+
+```
+ browser UI ─┐
+ CLI ────────┼── HTTP API + events ── engine ── job queue ── providers ── fal, OpenAI, Google, Runway, ...
+ MCP agents ─┘        (axum)          (tokio)    (SQLite)       │        ComfyUI, stable-diffusion.cpp
+                                         │                      │
+                                  library: files by hash, thumbnails, prompt search
+```
+
+- `crates/pictesa-core`: model specs, the provider contract, schema reading.
+- `crates/pictesa-providers`: one module per provider.
+- `crates/pictesa-engine`: storage, queue with retries and restart recovery, files, catalog, recipes, accounts, billing.
+- `crates/pictesa-server`: HTTP API, events, files, MCP, embedded UI.
+- `crates/pictesa-cli`: the `pictesa` binary.
+- `web/`: the studio UI (React, TypeScript, Tailwind).
+
+Adding a provider is one file: see [docs/PROVIDER-GUIDE.md](docs/PROVIDER-GUIDE.md).
+
+## Privacy
+
+Pictesa has no telemetry. Keys are encrypted at rest with a per-install key and never sent back to the browser. Your files stay in your data folder (`pictesa doctor` shows where); prompts and inputs go only to the provider that runs them.
+
+## License
+
+[AGPL-3.0](LICENSE). You can use, change and self-host Pictesa freely. If you offer a modified version to others over a network, you share your changes under the same license.

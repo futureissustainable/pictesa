@@ -137,7 +137,9 @@ async fn is_canceled(engine: &Engine, job: &JobRow, token: &CancellationToken) -
 
 async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
     publish(engine, &job.id).await;
-    let Some(provider) = engine.inner.catalog.provider(&job.provider) else { return };
+    let Some(provider) = engine.inner.catalog.provider(&job.provider) else {
+        return fail(engine, &job, "not_supported", &format!("The provider {} is not available in this build.", job.provider)).await;
+    };
     let ctx = match engine.ctx_for(&job.user_id, provider.as_ref()).await {
         Ok(c) => c,
         Err(e) => return fail(engine, &job, "auth", &e.to_string()).await,
