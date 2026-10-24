@@ -41,6 +41,7 @@ pub async fn run(engine: Engine) {
             if let Err(e) = engine.recover().await {
                 tracing::error!("job recovery failed: {e:#}");
             }
+            engine.fail_orphan_runs().await;
             last_recovery = Some(tokio::time::Instant::now());
         }
         if let Err(e) = dispatch_once(&engine).await {
@@ -84,9 +85,10 @@ async fn dispatch_once(engine: &Engine) -> anyhow::Result<()> {
                 continue;
             }
             let now = now_ms();
-            let claimed = sqlx::query("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ?, message = 'Starting' WHERE id = ? AND status = 'queued'")
+            let claimed = sqlx::query("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ?, message = 'Starting', owner = ? WHERE id = ? AND status = 'queued'")
                 .bind(now)
                 .bind(now)
+                .bind(&engine.inner.instance)
                 .bind(&job.id)
                 .execute(&engine.inner.db)
                 .await?;
@@ -112,7 +114,12 @@ pub(crate) fn spawn_job(engine: &Engine, job: JobRow) {
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(HEARTBEAT).await;
-                    let _ = sqlx::query("UPDATE jobs SET updated_at = ? WHERE id = ? AND status = 'running'").bind(now_ms()).bind(&id).execute(&engine.inner.db).await;
+                    let _ = sqlx::query("UPDATE jobs SET updated_at = ? WHERE id = ? AND status = 'running' AND owner = ?")
+                        .bind(now_ms())
+                        .bind(&id)
+                        .bind(&engine.inner.instance)
+                        .execute(&engine.inner.db)
+                        .await;
                 }
             })
         };
@@ -123,7 +130,7 @@ pub(crate) fn spawn_job(engine: &Engine, job: JobRow) {
         };
         if let Err(e) = work.await {
             tracing::error!("job {id} crashed: {e}");
-            let refund = matches!(store::job_row_any(&engine.inner.db, &id).await, Ok(r) if r.attempts == 0);
+            let refund = matches!(store::job_row_any(&engine.inner.db, &id).await, Ok(r) if never_sent(&r));
             fail(&engine, &job, "internal", "Pictesa hit an internal error while running this job. Retry it, and report it if it happens again.", refund).await;
         }
         beat.abort();
@@ -157,12 +164,13 @@ async fn set_progress(engine: &Engine, job: &JobRow, progress: Option<f32>, mess
 /// Marks a job failed. `refund` returns its wallet charge (only when the provider did not bill it).
 async fn fail(engine: &Engine, job: &JobRow, kind: &str, message: &str, refund: bool) {
     let now = now_ms();
-    let changed = sqlx::query("UPDATE jobs SET status = 'failed', error_kind = ?, error = ?, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')")
+    let changed = sqlx::query("UPDATE jobs SET status = 'failed', error_kind = ?, error = ?, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running') AND (owner IS NULL OR owner = ?)")
         .bind(kind)
         .bind(pictesa_core::error::truncate(message, 2000))
         .bind(now)
         .bind(now)
         .bind(&job.id)
+        .bind(&engine.inner.instance)
         .execute(&engine.inner.db)
         .await;
     if refund && matches!(changed, Ok(r) if r.rows_affected() == 1) {
@@ -171,13 +179,31 @@ async fn fail(engine: &Engine, job: &JobRow, kind: &str, message: &str, refund: 
     publish(engine, &job.id).await;
 }
 
-/// Whether a submit error means the provider did not take (and bill) the job.
-fn submit_refundable(e: &ProviderError) -> bool {
-    match e {
-        // A timeout may have reached the provider; everything else was refused or never sent.
-        ProviderError::Transient(m) => !m.starts_with("request timed out"),
-        _ => true,
+/// True when the provider never received this job (so a failure can be refunded).
+fn never_sent(job: &JobRow) -> bool {
+    job.remote.is_none() && job.submitting == 0
+}
+
+/// A timed-out request may have reached the provider: never retried, never refunded.
+fn is_timeout(e: &ProviderError) -> bool {
+    matches!(e, ProviderError::Transient(m) if m.starts_with("request timed out"))
+}
+
+/// Text stored for a failure. Hosted runs against a user-chosen endpoint keep only the kind, so a
+/// remote server's answer is never relayed.
+fn failure_text(e: &ProviderError, guarded: bool) -> String {
+    if !guarded {
+        return e.to_string();
     }
+    match e.kind() {
+        "auth" => "The provider rejected the key.",
+        "insufficient_credits" => "The provider account has no credits left.",
+        "content_policy" => "The provider refused the prompt or inputs.",
+        "invalid_input" => "The provider refused these settings.",
+        "rate_limited" => "The provider is rate limiting.",
+        _ => "The provider could not complete the run.",
+    }
+    .to_string()
 }
 
 async fn is_canceled(engine: &Engine, job: &JobRow, token: &CancellationToken) -> bool {
@@ -190,25 +216,31 @@ async fn is_canceled(engine: &Engine, job: &JobRow, token: &CancellationToken) -
 async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
     publish(engine, &job.id).await;
     let Some(provider) = engine.inner.catalog.provider(&job.provider) else {
-        return fail(engine, &job, "not_supported", &format!("The provider {} is not available in this build.", job.provider), job.attempts == 0).await;
+        return fail(engine, &job, "not_supported", &format!("The provider {} is not available in this build.", job.provider), never_sent(&job)).await;
     };
     // Use exactly the credential source the job was created (and paid) with.
-    let ctx = match engine.resolve_with(&job.user_id, provider.as_ref(), Sources::for_billing(&job.billing)).await {
-        Ok(r) if Engine::is_configured(&provider.info(), &r) => engine.ctx_from(r),
-        Ok(_) => return fail(engine, &job, "auth", "The key this job was created with is no longer available. Add it again in Settings > Providers and retry.", job.attempts == 0).await,
-        Err(e) => return fail(engine, &job, "auth", &e.to_string(), job.attempts == 0).await,
+    let (ctx, guarded) = match engine.resolve_with(&job.user_id, provider.as_ref(), Sources::for_billing(&job.billing)).await {
+        Ok(r) if Engine::is_configured(&provider.info(), &r) => {
+            let guarded = engine.guarded(&r);
+            (engine.ctx_from(r), guarded)
+        }
+        Ok(_) => return fail(engine, &job, "auth", "The key this job was created with is no longer available. Add it again in Settings > Providers and retry.", never_sent(&job)).await,
+        Err(e) => return fail(engine, &job, "auth", &e.to_string(), never_sent(&job)).await,
     };
     let spec = match engine.model(&job.user_id, &job.model).await {
         Ok(s) => s,
-        Err(e) => return fail(engine, &job, "not_supported", &e.to_string(), job.attempts == 0).await,
+        Err(e) => return fail(engine, &job, "not_supported", &e.to_string(), never_sent(&job)).await,
     };
 
     // Resume a job that was already submitted before a restart; otherwise submit it now.
+    if job.remote.as_deref() == Some(DONE) {
+        return fail(engine, &job, "interrupted", "Pictesa stopped while saving this job's results. Retry it to run it again.", false).await;
+    }
     let mut handle: Option<RemoteHandle> = job.remote.as_deref().and_then(|r| serde_json::from_str(r).ok());
     let mut outputs: Option<Vec<Output>> = None;
     if handle.is_none() {
-        if job.attempts > 0 {
-            // A submit was started by a process that died: the provider may have the job, so do not repeat it.
+        if job.submitting == 1 {
+            // A submit was in flight when its process died: the provider may have the job, so do not repeat it.
             return fail(engine, &job, "interrupted", "Pictesa stopped before the provider confirmed this job. Retry it to run it again.", false).await;
         }
         let req = match build_request(engine, &job, &spec).await {
@@ -218,36 +250,52 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            // Mark the submit as started; this fails when the job was canceled meanwhile.
-            let started = sqlx::query("UPDATE jobs SET attempts = attempts + 1, message = 'Submitting', updated_at = ? WHERE id = ? AND status = 'running'")
+            // Mark the submit in flight; this fails when the job was canceled or adopted meanwhile.
+            let started = sqlx::query("UPDATE jobs SET attempts = attempts + 1, submitting = 1, message = 'Submitting', updated_at = ? WHERE id = ? AND status = 'running' AND owner = ?")
                 .bind(now_ms())
                 .bind(&job.id)
+                .bind(&engine.inner.instance)
                 .execute(&engine.inner.db)
                 .await;
             if !matches!(started, Ok(r) if r.rows_affected() == 1) {
                 return publish(engine, &job.id).await;
             }
-            match provider.submit(&ctx, &spec, &req).await {
+            let result = provider.submit(&ctx, &spec, &req).await;
+            // Record the outcome before anything else, so a cancel or crash is judged correctly.
+            let (remote, still_in_flight) = match &result {
+                Ok(Submission::Done(_)) => (Some(DONE.to_string()), false),
+                Ok(Submission::Pending(h)) => (Some(serde_json::to_string(h).unwrap_or_default()), false),
+                Err(e) if is_timeout(e) => (None, true),
+                Err(_) => (None, false),
+            };
+            if !still_in_flight {
+                let _ = sqlx::query("UPDATE jobs SET submitting = 0, remote = coalesce(?, remote), updated_at = ? WHERE id = ?")
+                    .bind(remote)
+                    .bind(now_ms())
+                    .bind(&job.id)
+                    .execute(&engine.inner.db)
+                    .await;
+            }
+            match result {
                 Ok(Submission::Done(out)) => {
                     outputs = Some(out);
                     break;
                 }
                 Ok(Submission::Pending(h)) => {
-                    let _ = sqlx::query("UPDATE jobs SET remote = ?, message = 'Submitted', updated_at = ? WHERE id = ?")
-                        .bind(serde_json::to_string(&h).unwrap_or_default())
-                        .bind(now_ms())
-                        .bind(&job.id)
-                        .execute(&engine.inner.db)
-                        .await;
+                    let _ = sqlx::query("UPDATE jobs SET message = 'Submitted' WHERE id = ?").bind(&job.id).execute(&engine.inner.db).await;
                     handle = Some(h);
                     break;
+                }
+                // A timeout may have reached the provider: retrying could run (and bill) it twice.
+                Err(e) if is_timeout(&e) => {
+                    return fail(engine, &job, "interrupted", "The provider did not answer in time, and the job may have started there. Check its dashboard before retrying.", false).await
                 }
                 Err(e) if e.is_retryable() && attempt < MAX_SUBMIT_ATTEMPTS => {
                     let wait = e.retry_after().unwrap_or(Duration::from_millis(1500 * 2u64.pow(attempt)));
                     set_progress(engine, &job, None, Some(format!("Provider busy, retrying in {}s", wait.as_secs().max(1)))).await;
                     tokio::select! { _ = tokio::time::sleep(wait) => {}, _ = token.cancelled() => return publish(engine, &job.id).await }
                 }
-                Err(e) => return fail(engine, &job, e.kind(), &e.to_string(), submit_refundable(&e)).await,
+                Err(e) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded), true).await,
             }
         }
         publish(engine, &job.id).await;
@@ -283,7 +331,7 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                     break;
                 }
                 // The provider reports the job failed; providers do not bill failed generations.
-                Ok(PollStatus::Failed(e)) => return fail(engine, &job, e.kind(), &e.to_string(), true).await,
+                Ok(PollStatus::Failed(e)) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded), true).await,
                 Ok(PollStatus::Queued { position }) => {
                     errors = 0;
                     let msg = Some(match position {
@@ -306,13 +354,13 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                 Err(e) if e.is_retryable() || matches!(e, ProviderError::Failed(_)) && errors < 3 => {
                     errors += 1;
                     if errors > MAX_POLL_ERRORS {
-                        return fail(engine, &job, "lost_contact", &format!("Lost contact with the provider: {e}"), false).await;
+                        return fail(engine, &job, "lost_contact", &format!("Lost contact with the provider: {}", failure_text(&e, guarded)), false).await;
                     }
                     if let Some(wait) = e.retry_after() {
                         tokio::time::sleep(wait).await;
                     }
                 }
-                Err(e) => return fail(engine, &job, e.kind(), &e.to_string(), false).await,
+                Err(e) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded), false).await,
             }
         }
     }
@@ -326,7 +374,7 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
     let mut saved = 0;
     let mut last_error = None;
     for out in outputs {
-        match save_output(engine, &job, out).await {
+        match save_output(engine, &job, out, guarded).await {
             Ok(_) => saved += 1,
             Err(e) => {
                 tracing::warn!("saving output of {} failed: {e:#}", job.id);
@@ -339,10 +387,11 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
         return fail(engine, &job, "download_failed", &format!("Could not download the result: {:#}", last_error.unwrap()), false).await;
     }
     let now = now_ms();
-    let _ = sqlx::query("UPDATE jobs SET status = 'succeeded', progress = 1.0, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('running', 'canceled')")
+    let _ = sqlx::query("UPDATE jobs SET status = 'succeeded', progress = 1.0, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('running', 'canceled') AND owner = ?")
         .bind(now)
         .bind(now)
         .bind(&job.id)
+        .bind(&engine.inner.instance)
         .execute(&engine.inner.db)
         .await;
     publish(engine, &job.id).await;
@@ -399,7 +448,11 @@ pub fn file_key(engine: &Engine, asset_id: &str, exp: i64) -> String {
     engine.inner.crypto.sign(&format!("{asset_id}.{exp}"))
 }
 
-async fn save_output(engine: &Engine, job: &JobRow, out: Output) -> anyhow::Result<()> {
+/// Marker stored in `remote` once a synchronous provider has returned results.
+const DONE: &str = "done";
+
+async fn save_output(engine: &Engine, job: &JobRow, out: Output, guarded: bool) -> anyhow::Result<()> {
+    let client = if guarded { &engine.inner.download_guarded } else { &engine.inner.download };
     let stored = match out {
         Output::Bytes { data, mime } => engine.inner.files.store_bytes(&data, Some(&mime), None, true).await?,
         Output::Url { url, .. } if url.starts_with("data:") => {
@@ -411,8 +464,11 @@ async fn save_output(engine: &Engine, job: &JobRow, out: Output) -> anyhow::Resu
         Output::Url { url, headers } => {
             let mut last = None;
             let mut stored = None;
+            if guarded && url::Url::parse(&url).map(|u| crate::netguard::literal_private(&u)).unwrap_or(true) {
+                anyhow::bail!("the result link points to a private address");
+            }
             for attempt in 0..3 {
-                let mut req = engine.inner.download.get(&url);
+                let mut req = client.get(&url);
                 for (k, v) in &headers {
                     req = req.header(k, v);
                 }
@@ -440,10 +496,13 @@ impl Engine {
     /// Uploads a local file to fal's storage (with the user's fal key) and returns its public link.
     /// Cached per file hash for the life of the process.
     pub(crate) async fn temporary_link(&self, user: &str, path: &std::path::Path, mime: &str, hash: &str) -> Result<String, String> {
-        static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+        // fal keeps uploads for a limited time, so cached links are reused for a few hours only.
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (String, i64)>>> = std::sync::OnceLock::new();
         let cache = CACHE.get_or_init(Default::default);
-        if let Some(u) = cache.lock().unwrap().get(hash) {
-            return Ok(u.clone());
+        if let Some((u, at)) = cache.lock().unwrap().get(hash) {
+            if now_ms() - at < 3 * 3600 * 1000 {
+                return Ok(u.clone());
+            }
         }
         let fal = self.inner.catalog.provider("fal").ok_or("fal is not available")?;
         let ctx = self.ctx_for(user, fal.as_ref()).await.map_err(|e| e.to_string())?;
@@ -465,9 +524,22 @@ impl Engine {
         let (Some(put), Some(file_url)) = (init.get("upload_url").and_then(|v| v.as_str()), init.get("file_url").and_then(|v| v.as_str())) else {
             return Err("fal storage gave no upload link".into());
         };
-        let body = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
-        self.inner.download.put(put).header("Content-Type", mime).body(body).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
-        cache.lock().unwrap().insert(hash.to_string(), file_url.to_string());
+        // Streamed from disk: a large video never sits in memory.
+        let file = tokio::fs::File::open(path).await.map_err(|e| e.to_string())?;
+        let len = file.metadata().await.map_err(|e| e.to_string())?.len();
+        let body = reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(file));
+        self.inner
+            .download
+            .put(put)
+            .header("Content-Type", mime)
+            .header("Content-Length", len)
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
+        cache.lock().unwrap().insert(hash.to_string(), (file_url.to_string(), now_ms()));
         Ok(file_url.to_string())
     }
 
@@ -483,9 +555,11 @@ impl Engine {
             if self.inner.cancels.lock().unwrap().contains_key(&job.id) {
                 continue;
             }
-            // Take ownership atomically so two processes never adopt the same job.
-            let taken = sqlx::query("UPDATE jobs SET updated_at = ? WHERE id = ? AND status = 'running' AND updated_at = ?")
+            // Take ownership atomically so two processes never adopt the same job; the old owner's
+            // writes stop matching from here on.
+            let taken = sqlx::query("UPDATE jobs SET updated_at = ?, owner = ? WHERE id = ? AND status = 'running' AND updated_at = ?")
                 .bind(now_ms())
+                .bind(&self.inner.instance)
                 .bind(&job.id)
                 .bind(job.updated_at)
                 .execute(&self.inner.db)
@@ -493,11 +567,11 @@ impl Engine {
             if taken.rows_affected() != 1 {
                 continue;
             }
-            if job.remote.is_some() || job.attempts == 0 {
-                spawn_job(self, job);
-            } else {
-                fail(self, &job, "interrupted", "Pictesa stopped before the provider confirmed this job. Retry it to run it again.", false).await;
-            }
+            let mut job = job;
+            job.owner = Some(self.inner.instance.clone());
+            // Accepted jobs resume polling; jobs whose submits were all refused start over;
+            // `process` fails the ambiguous ones (a submit in flight, or results half saved).
+            spawn_job(self, job);
         }
         Ok(())
     }

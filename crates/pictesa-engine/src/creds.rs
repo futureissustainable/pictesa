@@ -77,8 +77,9 @@ impl Engine {
     pub(crate) async fn resolve_with(&self, user: &str, provider: &dyn Provider, sources: Sources) -> Result<Resolved> {
         let info = provider.info();
         let stored = if sources == Sources::Platform { HashMap::new() } else { self.stored_fields(user, &info.id).await? };
-        // In hosted mode a local backend's default address would be the operator's own machine.
-        let defaults_ok = !(self.mode() == crate::Mode::Hosted && info.kind == pictesa_core::ProviderKind::Local && sources != Sources::Platform);
+        // In hosted mode a local backend's default address is the operator's own machine: only an
+        // address the operator set explicitly counts.
+        let defaults_ok = !(self.mode() == crate::Mode::Hosted && info.kind == pictesa_core::ProviderKind::Local);
         let mut values = HashMap::new();
         for f in &info.fields {
             let env = || f.env.iter().find_map(|e| std::env::var(e).ok()).filter(|v| !v.trim().is_empty());
@@ -105,7 +106,14 @@ impl Engine {
     }
 
     pub(crate) fn ctx_from(&self, resolved: Resolved) -> Ctx {
-        Ctx { http: self.inner.http.clone(), creds: resolved.values.into_iter().map(|(k, (v, _))| (k, v)).collect() }
+        let guard = self.guarded(&resolved);
+        let http = if guard { self.inner.http_guarded.clone() } else { self.inner.http.clone() };
+        Ctx { http, creds: resolved.values.into_iter().map(|(k, (v, _))| (k, v)).collect() }
+    }
+
+    /// Hosted runs against an endpoint a user chose must not reach private addresses.
+    pub(crate) fn guarded(&self, resolved: &Resolved) -> bool {
+        self.mode() == crate::Mode::Hosted && resolved.values.iter().any(|(k, (v, src))| *src == "stored" && (k.contains("url") || v.contains("://")))
     }
 
     pub(crate) fn is_configured(info: &pictesa_core::ProviderInfo, resolved: &Resolved) -> bool {
@@ -182,6 +190,10 @@ impl Engine {
             }
             if text.len() > 8192 {
                 return Err(EngineError::invalid(format!("{} is too long", field.label), Some(key)));
+            }
+            // Hosted users may not point the server at its own files.
+            if self.mode() == crate::Mode::Hosted && !field.secret && (key.contains("dir") || key.contains("path")) {
+                return Err(EngineError::invalid(format!("{} is managed by the server operator.", field.label), Some(key)));
             }
             // Hosted users may only point providers at public HTTPS servers.
             if self.mode() == crate::Mode::Hosted && !field.secret && (text.contains("://") || key.contains("url")) {

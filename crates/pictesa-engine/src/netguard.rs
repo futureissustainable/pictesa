@@ -94,6 +94,60 @@ pub async fn fetch_public(mut url: Url, user_agent: &str) -> Result<reqwest::Res
     Err("too many redirects".into())
 }
 
+/// DNS resolver that only returns public addresses. Every connection of a client built with it,
+/// including each redirect hop, resolves through this check, and the checked address is the one used.
+struct PublicResolver;
+
+impl reqwest::dns::Resolve for PublicResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.filter(|a| ip_is_public(a.ip())).collect();
+            if addrs.is_empty() {
+                return Err(Box::<dyn std::error::Error + Send + Sync>::from(format!("{host} does not resolve to a public address")));
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// A client that never reaches private addresses: names resolve through [`PublicResolver`] and
+/// redirects to literal private IPs are refused (literal IPs skip DNS).
+pub fn guarded_client(ua: &str, connect: std::time::Duration, total: Option<std::time::Duration>) -> anyhow::Result<reqwest::Client> {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            return attempt.error("too many redirects");
+        }
+        let url = attempt.url();
+        let private_literal = match url.host() {
+            Some(url::Host::Ipv4(ip)) => !v4_is_public(ip),
+            Some(url::Host::Ipv6(ip)) => !ip_is_public(IpAddr::V6(ip)),
+            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+            None => true,
+        };
+        if private_literal || !matches!(url.scheme(), "http" | "https") {
+            attempt.stop()
+        } else {
+            attempt.follow()
+        }
+    });
+    let mut b = reqwest::Client::builder().user_agent(ua).connect_timeout(connect).redirect(policy).dns_resolver(std::sync::Arc::new(PublicResolver));
+    if let Some(t) = total {
+        b = b.timeout(t);
+    }
+    Ok(b.build()?)
+}
+
+/// True when a URL's host is a literal private address (literal IPs bypass the resolver).
+pub fn literal_private(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => !v4_is_public(ip),
+        Some(url::Host::Ipv6(ip)) => !ip_is_public(IpAddr::V6(ip)),
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        None => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -192,6 +192,9 @@ impl Provider for Mock {
         model: &ModelSpec,
         req: &GenerationRequest,
     ) -> ProviderResult<Submission> {
+        if req.prompt.to_lowercase().contains("busy please") {
+            return Err(ProviderError::RateLimited { retry_after_ms: Some(3000) });
+        }
         if req.prompt.to_lowercase().contains("fail please") {
             return Err(ProviderError::ContentPolicy(
                 "the mock refuses prompts containing 'fail please'".into(),

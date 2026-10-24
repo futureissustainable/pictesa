@@ -96,6 +96,26 @@ async fn hosted_platform_runs_are_charged_and_refunded_when_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn canceling_during_a_busy_retry_refunds() {
+    let e = engine("busy", Mode::Hosted).await;
+    let user = e.signup("busy@example.com", "correct horse battery", None).await.unwrap();
+    e.grant("busy@example.com", 1.0, "test").await.unwrap();
+    // The mock answers "rate limited" to this prompt, so the job waits between submit attempts.
+    let created = e.create_generation(&user.id, req("mock:image", "busy please")).await.unwrap();
+    let id = created.jobs[0].id.clone();
+    for _ in 0..40 {
+        if e.job(&user.id, &id).await.unwrap().message.as_deref().is_some_and(|m| m.contains("retrying")) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let job = e.cancel(&user.id, &id).await.unwrap();
+    assert_eq!(job.status, JobStatus::Canceled);
+    let wallet = e.billing_view(&user.id).await.unwrap();
+    assert!((wallet.balance_usd - 1.0).abs() < 1e-9, "nothing ran, so nothing is charged: balance {}", wallet.balance_usd);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn recipes_chain_steps_through_the_queue() {
     let e = engine("recipe", Mode::Local).await;
     let run = e

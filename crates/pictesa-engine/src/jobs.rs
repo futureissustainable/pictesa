@@ -406,9 +406,9 @@ impl Engine {
         let row = store::job_row(&self.inner.db, user, id).await.map_err(|_| EngineError::not_found("generation"))?;
         if !row.status().is_final() {
             let now = now_ms();
-            // `attempts` is read in the same statement, so a submit that starts right after is
-            // stopped by the queue (it re-checks the status before calling the provider).
-            let done: Option<(i64,)> = sqlx::query_as("UPDATE jobs SET status = 'canceled', message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running') RETURNING attempts")
+            // Judged in the same statement: refunded only when no submit is in flight and the
+            // provider never accepted the job. A submit starting right after sees the status and stops.
+            let done: Option<(bool,)> = sqlx::query_as("UPDATE jobs SET status = 'canceled', message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running') RETURNING (remote IS NULL AND submitting = 0)")
                 .bind(now)
                 .bind(now)
                 .bind(id)
@@ -418,7 +418,7 @@ impl Engine {
                 token.cancel();
             }
             // Refund only when the provider never got the job; a started run may already be billed upstream.
-            if matches!(done, Some((0,))) {
+            if matches!(done, Some((true,))) {
                 self.refund_job(id).await;
             }
         }

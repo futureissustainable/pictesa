@@ -95,6 +95,7 @@ impl IntoResponse for ApiError {
             EngineError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "auth", None),
             EngineError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden", None),
             EngineError::Conflict(_) => (StatusCode::CONFLICT, "conflict", None),
+            EngineError::TooMany(_) => (StatusCode::TOO_MANY_REQUESTS, "rate_limited", None),
             EngineError::Internal(e) => {
                 tracing::error!("internal error: {e:#}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal", None)
@@ -252,7 +253,7 @@ pub async fn serve(engine: Engine, opts: ServerOptions) -> anyhow::Result<()> {
     let addr = opts.addr.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 4747)));
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {e}"))?;
     tracing::info!("Pictesa is running at http://{addr}");
-    axum::serve(listener, router(engine, opts)).with_graceful_shutdown(shutdown()).await?;
+    axum::serve(listener, router(engine, opts).into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(shutdown()).await?;
     Ok(())
 }
 
@@ -319,35 +320,50 @@ fn hosted_only(s: &AppState) -> ApiResult<()> {
     Ok(())
 }
 
-/// Few sign-in attempts per address per minute (Argon2 is deliberately slow).
-fn throttle(headers: &HeaderMap) -> ApiResult<()> {
+/// The client's address: the TCP peer, or, when the peer is a trusted proxy
+/// (`PICTESA_TRUSTED_PROXIES`, comma separated), the last address that proxy appended.
+fn client_ip(peer: std::net::SocketAddr, headers: &HeaderMap) -> String {
+    let trusted: Vec<String> = std::env::var("PICTESA_TRUSTED_PROXIES").unwrap_or_default().split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let peer_ip = peer.ip().to_string();
+    if !trusted.contains(&peer_ip) {
+        return peer_ip;
+    }
+    let chain: Vec<String> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    // Walk from the proxy backwards; the first address that is not a trusted proxy is the client.
+    chain.into_iter().rev().find(|ip| !trusted.contains(ip)).unwrap_or(peer_ip)
+}
+
+/// Few sign-in attempts per address and per account each minute (Argon2 is deliberately slow).
+fn throttle(peer: std::net::SocketAddr, headers: &HeaderMap, email: &str) -> ApiResult<()> {
     use std::{collections::HashMap, sync::Mutex, time::Instant};
     static SEEN: std::sync::OnceLock<Mutex<HashMap<String, (Instant, u32)>>> = std::sync::OnceLock::new();
-    let who = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .unwrap_or("direct")
-        .trim()
-        .to_string();
     let mut seen = SEEN.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
     if seen.len() > 50_000 {
         seen.retain(|_, (t, _)| t.elapsed().as_secs() < 60);
     }
-    let entry = seen.entry(who).or_insert((Instant::now(), 0));
-    if entry.0.elapsed().as_secs() >= 60 {
-        *entry = (Instant::now(), 0);
-    }
-    entry.1 += 1;
-    if entry.1 > 10 {
-        return Err(ApiError(EngineError::Forbidden("Too many attempts. Wait a minute and try again.".into())));
+    for (key, limit) in [(format!("ip:{}", client_ip(peer, headers)), 20), (format!("acct:{}", email.trim().to_lowercase()), 10)] {
+        let entry = seen.entry(key).or_insert((Instant::now(), 0));
+        if entry.0.elapsed().as_secs() >= 60 {
+            *entry = (Instant::now(), 0);
+        }
+        entry.1 += 1;
+        if entry.1 > limit {
+            return Err(ApiError(EngineError::TooMany("Too many attempts. Wait a minute and try again.".into())));
+        }
     }
     Ok(())
 }
 
-async fn signup(State(s): State<AppState>, headers: HeaderMap, Json(b): Json<Credentials>) -> ApiResult<Response> {
+async fn signup(State(s): State<AppState>, axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>, headers: HeaderMap, Json(b): Json<Credentials>) -> ApiResult<Response> {
     hosted_only(&s)?;
-    throttle(&headers)?;
+    throttle(peer, &headers, &b.email)?;
     let user = s.engine.signup(&b.email, &b.password, b.name.as_deref()).await?;
     let session = s.engine.create_session(&user.id).await?;
     let mut resp = Json(json!(user)).into_response();
@@ -355,9 +371,9 @@ async fn signup(State(s): State<AppState>, headers: HeaderMap, Json(b): Json<Cre
     Ok(resp)
 }
 
-async fn login(State(s): State<AppState>, headers: HeaderMap, Json(b): Json<Credentials>) -> ApiResult<Response> {
+async fn login(State(s): State<AppState>, axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>, headers: HeaderMap, Json(b): Json<Credentials>) -> ApiResult<Response> {
     hosted_only(&s)?;
-    throttle(&headers)?;
+    throttle(peer, &headers, &b.email)?;
     let user = s.engine.login(&b.email, &b.password).await?;
     let session = s.engine.create_session(&user.id).await?;
     let mut resp = Json(json!(user)).into_response();

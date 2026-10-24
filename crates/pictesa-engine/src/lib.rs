@@ -78,6 +78,8 @@ pub enum EngineError {
     Forbidden(String),
     #[error("{0}")]
     Conflict(String),
+    #[error("{0}")]
+    TooMany(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -127,6 +129,12 @@ pub(crate) struct Inner {
     pub wake: Notify,
     pub cancels: Mutex<HashMap<String, CancellationToken>>,
     pub running: Mutex<HashMap<String, usize>>,
+    /// This process's id, written on the jobs it runs.
+    pub instance: String,
+    /// Same clients, but refusing private addresses and unchecked redirects: used in hosted mode
+    /// for providers whose endpoint a user chose.
+    pub http_guarded: reqwest::Client,
+    pub download_guarded: reqwest::Client,
     /// Scoped engines (a CLI run next to a server) only process batches they created themselves.
     pub scoped: std::sync::atomic::AtomicBool,
     pub owned_batches: Mutex<std::collections::HashSet<String>>,
@@ -159,6 +167,8 @@ impl Engine {
             .connect_timeout(Duration::from_secs(20))
             .timeout(Duration::from_secs(1800))
             .build()?;
+        let http_guarded = netguard::guarded_client(&ua, Duration::from_secs(15), None)?;
+        let download_guarded = netguard::guarded_client(&ua, Duration::from_secs(20), Some(Duration::from_secs(1800)))?;
         let (events, _) = broadcast::channel(1024);
         let inner = Inner {
             cfg,
@@ -171,6 +181,9 @@ impl Engine {
             billing: billing::BillingConfig::from_env(),
             http,
             download,
+            instance: new_id(),
+            http_guarded,
+            download_guarded,
             events,
             wake: Notify::new(),
             cancels: Mutex::new(HashMap::new()),
