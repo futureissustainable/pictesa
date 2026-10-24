@@ -120,6 +120,8 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
     try {
       const result = await api.checkProvider(provider.id);
       setStatus(result.ok ? { kind: "ok", text: "Connected." } : { kind: "error", text: result.error || "The check failed." });
+      // A local server's model list is refreshed by a successful check.
+      if (result.ok && provider.kind === "local") invalidateModels();
     } catch (reason) {
       setStatus({ kind: "error", text: errorMessage(reason) });
     }

@@ -32,6 +32,7 @@ impl Engine {
     // ---------- models ----------
 
     pub async fn models(&self, user: &str, f: &ModelFilter) -> Result<Vec<ModelView>> {
+        self.check_local_catalogs(user).await;
         let mut configured = HashMap::new();
         let mut billed = HashMap::new();
         for p in self.inner.catalog.providers() {
@@ -134,14 +135,37 @@ impl Engine {
 
     pub(crate) async fn refresh_stale_catalogs(&self, user: &str) {
         for p in self.inner.catalog.providers().to_vec() {
-            let id = p.info().id;
-            let stale = self.inner.catalog.catalog_age(&id).is_none_or(|age| age > crate::catalog::CATALOG_TTL_MS);
+            let info = p.info();
+            let id = info.id;
+            let ttl = if info.kind == pictesa_core::ProviderKind::Local { crate::catalog::LOCAL_CATALOG_TTL_MS } else { crate::catalog::CATALOG_TTL_MS };
+            let stale = self.inner.catalog.catalog_age(&id).is_none_or(|age| age > ttl);
             if stale {
                 if let Err(e) = self.refresh_models_for(user, &id).await {
                     tracing::debug!("discovery skipped for {id}: {e}");
                 }
             }
         }
+    }
+
+    /// Checks local servers whose model list is over a minute old, for at most a few seconds, so a
+    /// ComfyUI started (or given new model files) after Pictesa shows up in the next model list.
+    async fn check_local_catalogs(&self, user: &str) {
+        let mut checked = self.inner.local_checks.lock().await;
+        let now = pictesa_core::now_ms();
+        let due: Vec<String> = self
+            .inner
+            .catalog
+            .providers()
+            .iter()
+            .map(|p| p.info())
+            .filter(|info| info.kind == pictesa_core::ProviderKind::Local)
+            .map(|info| info.id)
+            .filter(|id| checked.get(id).is_none_or(|at| now - at > crate::catalog::LOCAL_CATALOG_TTL_MS))
+            .collect();
+        let runs = due.iter().map(|id| tokio::time::timeout(std::time::Duration::from_secs(3), self.refresh_models_for(user, id)));
+        futures::future::join_all(runs).await;
+        // A server that is down counts as checked too, so it is not asked again on every list.
+        checked.extend(due.into_iter().map(|id| (id, now)));
     }
 
     // ---------- generations ----------

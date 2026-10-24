@@ -140,6 +140,9 @@ pub(crate) struct Inner {
     /// Scoped engines (a CLI run next to a server) only process batches they created themselves.
     pub scoped: std::sync::atomic::AtomicBool,
     pub owned_batches: Mutex<std::collections::HashSet<String>>,
+    /// When each local server's model list was last checked; held while checking, so parallel
+    /// model lists wait for one check instead of repeating it.
+    pub local_checks: tokio::sync::Mutex<HashMap<String, i64>>,
 }
 
 /// Cheap to clone; all clones share the same state.
@@ -193,6 +196,7 @@ impl Engine {
             running: Mutex::new(HashMap::new()),
             scoped: std::sync::atomic::AtomicBool::new(false),
             owned_batches: Mutex::new(std::collections::HashSet::new()),
+            local_checks: tokio::sync::Mutex::new(HashMap::new()),
         };
         let engine = Self { inner: Arc::new(inner) };
         engine.inner.catalog.load_cache(&engine.inner.db).await;

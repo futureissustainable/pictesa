@@ -346,23 +346,35 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
             }
             Ok(())
         }
+        // Both go through a running server when there is one, so its model list changes at once.
         Command::Refresh => {
-            let engine = open_engine(&cli, Mode::Local, None).await?;
-            let n = engine.refresh_models(LOCAL_USER).await;
+            let n = match Remote::connect(&cli).await {
+                Some(remote) => remote.json(remote.req(reqwest::Method::POST, "/api/models/refresh")).await?["models"].as_u64().unwrap_or(0) as usize,
+                None => open_engine(&cli, Mode::Local, None).await?.refresh_models(LOCAL_USER).await,
+            };
             println!("{n} models discovered");
             Ok(())
         }
         Command::Workflow { action: WorkflowAction::Import { file, name } } => {
-            let engine = open_engine(&cli, Mode::Local, None).await?;
             let text = tokio::fs::read_to_string(&file).await.with_context(|| format!("reading {}", file.display()))?;
             let workflow: Value = serde_json::from_str(&text).with_context(|| format!("{} is not JSON", file.display()))?;
             let name = name.unwrap_or_else(|| file.file_stem().map(|s| s.to_string_lossy().replace(['_', '-'], " ")).unwrap_or_else(|| "Workflow".into()));
-            let done = engine.import_comfy_workflow(LOCAL_USER, &name, workflow).await?;
-            println!("Added {} ({})", done.model, name);
-            for n in &done.notes {
+            let (model, notes) = match Remote::connect(&cli).await {
+                Some(remote) => {
+                    let v = remote.json(remote.req(reqwest::Method::POST, "/api/workflows/import").json(&json!({ "name": name, "workflow": workflow }))).await?;
+                    let notes = v["notes"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect();
+                    (v["model"].as_str().unwrap_or_default().to_string(), notes)
+                }
+                None => {
+                    let done = open_engine(&cli, Mode::Local, None).await?.import_comfy_workflow(LOCAL_USER, &name, workflow).await?;
+                    (done.model, done.notes)
+                }
+            };
+            println!("Added {model} ({name})");
+            for n in &notes {
                 println!("  note: {n}");
             }
-            println!("Try it: pictesa model {}", done.model);
+            println!("Try it: pictesa model {model}");
             Ok(())
         }
         Command::Recipe { action } => {

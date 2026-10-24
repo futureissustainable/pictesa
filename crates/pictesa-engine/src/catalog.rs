@@ -11,6 +11,9 @@ use sqlx::SqlitePool;
 
 /// Discovered catalogs older than this are refreshed in the background.
 pub const CATALOG_TTL_MS: i64 = 24 * 3600 * 1000;
+/// Local servers (ComfyUI, stable-diffusion.cpp) start, stop and gain model files often, and
+/// asking them is cheap, so their lists are checked again after a minute.
+pub const LOCAL_CATALOG_TTL_MS: i64 = 60 * 1000;
 /// Resolved model schemas are refreshed after a week.
 pub const RESOLVED_TTL_MS: i64 = 7 * 24 * 3600 * 1000;
 

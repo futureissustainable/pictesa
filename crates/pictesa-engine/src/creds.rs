@@ -236,7 +236,12 @@ impl Engine {
     pub async fn check_provider(&self, user: &str, provider_id: &str) -> Result<std::result::Result<(), String>> {
         let provider = self.provider_or_404(provider_id)?;
         let ctx = self.ctx_for(user, provider.as_ref()).await?;
-        Ok(provider.check(&ctx).await.map_err(|e| match self.mode() {
+        let checked = provider.check(&ctx).await;
+        if checked.is_ok() && provider.info().kind == pictesa_core::ProviderKind::Local && self.refresh_models_for(user, provider_id).await.is_ok() {
+            // A local server that answers may have new templates or model files: list them now.
+            self.inner.local_checks.lock().await.insert(provider_id.to_string(), pictesa_core::now_ms());
+        }
+        Ok(checked.map_err(|e| match self.mode() {
             crate::Mode::Local => match &e {
                 pictesa_core::ProviderError::Auth(d) if d.starts_with("missing ") => "No key is set yet.".to_string(),
                 pictesa_core::ProviderError::Auth(d) => format!("The key was rejected: {d}"),
