@@ -9,9 +9,11 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 ## What you get
 
 - **Every model in one place.** About 1,250 image and video models through fal, Replicate and Comfy Router, plus direct APIs: OpenAI, Google, OpenRouter, xAI, ByteDance (BytePlus), Black Forest Labs, Runway, Luma, Kling, MiniMax, Alibaba, Stability AI, Ideogram and Recraft. New gateway models appear without an update: Pictesa reads their catalogs and builds each model's controls from its published schema.
-- **Local models.** Run open-weight models on your own GPU through ComfyUI (LTX 2.5, FLUX 3 Klein, Wan 2.2, Qwen Image, upscalers) or stable-diffusion.cpp. Any ComfyUI workflow becomes a Pictesa model with a small manifest. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+- **Any ComfyUI workflow becomes an app.** Drop in a workflow exported with *Export (API)*: Pictesa reads the graph, finds the prompt, seed, steps, guidance, size, video length and image inputs, and turns it into a model with proper controls in the studio, a CLI command and an MCP tool for agents. No glue code. Built-in templates cover LTX 2.5, FLUX 3 Klein, Wan 2.2, Qwen Image and upscalers, and stable-diffusion.cpp, Forge and Automatic1111 work too. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
 - **Real prices.** You pay providers directly, at their price. Every model shows its published price and every run records its cost estimate. No credits, no markup.
 - **Recipes.** Open multi-step pipelines: *Cinema shot* (compose a still with your lens and light, then animate it with a camera move), *Character shot*, *Product hero*, *Animate a photo*, *New angle* and *Upscale*. Each step uses the first model you have set up, cloud or local, and recipes are plain JSON you can fork.
+- **Characters.** Save a person, product or style as a named set of reference images and attach it to any run on any model that takes references.
+- **Compare.** Run one prompt on up to eight models side by side, with parameters adapted to each.
 - **Presets.** 76 camera moves and looks (dolly in, orbit, crane, FPV drone, bullet time, film stocks, light) as editable JSON.
 - **Built for agents.** An MCP server (stdio and HTTP), a CLI with `--json`, and a REST API with live events. Agents and people share one library, so an image you make can go straight to an agent and back. See [docs/AGENTS.md](docs/AGENTS.md).
 - **One fast binary.** Rust (Tokio, Axum, SQLite) with the web UI embedded. No Python, Docker or Node at runtime. Files are stored once by content hash, with thumbnails, range-streamed video and full-text prompt search.
@@ -43,6 +45,7 @@ pictesa model fal:kling/v4/image-to-video
 pictesa generate "a timber cabin on a misty lake at dawn" -m fal:google/nano-banana-2.1 -p aspect_ratio=16:9 -n 4 -o ./out
 pictesa generate "slow push in" -m fal:kling/v4/image-to-video -i start_frame=./out/cabin.png -p duration=5
 pictesa recipe run cinema/shot -v scene="a lighthouse in a storm" -v camera=camera/crane-up
+pictesa workflow import my-flow.json --name "My flow"   # any ComfyUI workflow becomes a model
 pictesa keys set fal api_key        # reads the key from stdin; stored encrypted
 ```
 
