@@ -510,21 +510,24 @@ async fn list_assets(State(s): State<AppState>, c: Caller, Query(f): Query<Asset
     Ok(Json(json!({ "assets": assets, "next": next })))
 }
 
+/// Stores every file it can; files that fail are reported in `errors` instead of failing the batch.
 async fn upload_assets(State(s): State<AppState>, c: Caller, mut form: Multipart) -> ApiResult<Json<Value>> {
     let mut out = Vec::new();
+    let mut errors = Vec::new();
     while let Some(field) = form.next_field().await.map_err(|e| bad(&format!("Upload failed: {e}"), Some("file")))? {
         let name = field.file_name().map(String::from);
         let stream = field.map(|chunk| chunk.map_err(|e| std::io::Error::other(e.to_string())));
         match s.engine.upload_stream(&c.user_id, Box::pin(stream), name.as_deref()).await {
             Ok(asset) => out.push(asset),
-            Err(EngineError::Validation { message, .. }) if message.contains("empty") => continue,
+            Err(EngineError::Validation { message, .. }) => errors.push(json!({ "name": name, "error": message })),
             Err(e) => return Err(e.into()),
         }
     }
     if out.is_empty() {
-        return Err(bad("Choose at least one file.", Some("file")));
+        let first = errors.first().and_then(|e| e["error"].as_str()).unwrap_or("Choose at least one file.").to_string();
+        return Err(bad(&first, Some("file")));
     }
-    Ok(Json(json!({ "assets": out })))
+    Ok(Json(json!({ "assets": out, "errors": errors })))
 }
 
 #[derive(Deserialize)]

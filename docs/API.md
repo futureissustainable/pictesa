@@ -211,3 +211,4 @@ Show the balance and top-up only when `enabled` is true. A generation the wallet
 - Stripe returns to `/settings/billing?checkout=success` or `?checkout=canceled`.
 - Uploads stream to disk (up to 4 GB per file); every other request body is limited to 2 MB. Files must be real images, videos or audio (recognised from their content); SVG and other active formats are refused.
 - The CLI takes library items as inputs with `-i role=asset:<id>`.
+- `POST /api/assets` with several files stores every valid one and lists the others in `errors: [{ name, error }]`; it answers 400 only when no file could be stored.
