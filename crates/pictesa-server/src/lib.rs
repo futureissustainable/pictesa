@@ -251,11 +251,27 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .with_state(state)
 }
 
+/// Cancelled when the server starts to stop. Endless responses (the event stream) end on it, or
+/// graceful shutdown would wait for them forever.
+static STOPPING: std::sync::LazyLock<tokio_util::sync::CancellationToken> = std::sync::LazyLock::new(Default::default);
+
 pub async fn serve(engine: Engine, opts: ServerOptions) -> anyhow::Result<()> {
     let addr = opts.addr.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 4747)));
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {e}"))?;
     tracing::info!("Pictesa is running at http://{addr}");
-    axum::serve(listener, router(engine, opts).into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(shutdown()).await?;
+    let server = axum::serve(listener, router(engine, opts).into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(async {
+        shutdown().await;
+        STOPPING.cancel();
+    });
+    // Open downloads and uploads get a few seconds to finish, then the process stops anyway.
+    let deadline = async {
+        STOPPING.cancelled().await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    };
+    tokio::select! {
+        done = server => done?,
+        _ = deadline => tracing::warn!("Stopped with requests still open."),
+    }
     Ok(())
 }
 
@@ -719,7 +735,7 @@ async fn events(State(s): State<AppState>, c: Caller, headers: HeaderMap) -> Sse
             }
         }
     });
-    Sse::new(first.chain(stream)).keep_alive(KeepAlive::new().interval(Duration::from_secs(20)).event(SseEvent::default().event("ping").data("{}")))
+    Sse::new(first.chain(stream).take_until(STOPPING.cancelled())).keep_alive(KeepAlive::new().interval(Duration::from_secs(20)).event(SseEvent::default().event("ping").data("{}")))
 }
 
 use futures::StreamExt;

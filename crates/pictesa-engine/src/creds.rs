@@ -237,7 +237,12 @@ impl Engine {
         let provider = self.provider_or_404(provider_id)?;
         let ctx = self.ctx_for(user, provider.as_ref()).await?;
         Ok(provider.check(&ctx).await.map_err(|e| match self.mode() {
-            crate::Mode::Local => e.to_string(),
+            crate::Mode::Local => match &e {
+                pictesa_core::ProviderError::Auth(d) if d.starts_with("missing ") => "No key is set yet.".to_string(),
+                pictesa_core::ProviderError::Auth(d) => format!("The key was rejected: {d}"),
+                pictesa_core::ProviderError::Transient(d) => format!("The provider could not be reached: {d}"),
+                other => other.to_string(),
+            },
             // Hosted: never echo a remote server's answer back to the user.
             crate::Mode::Hosted => match e.kind() {
                 "auth" => "The key was rejected.".to_string(),

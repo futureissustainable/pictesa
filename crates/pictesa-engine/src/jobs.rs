@@ -162,8 +162,13 @@ impl Engine {
                     models.push(m.clone());
                 }
             }
-            for m in &models {
-                let spec = self.model(user, m).await?;
+            for (i, m) in models.iter().enumerate() {
+                // Errors of the extra models point at their place in `compare`.
+                let blame = |e: EngineError| match e {
+                    EngineError::Validation { message, .. } if i > 0 => EngineError::Validation { message, field: Some(format!("compare.{}", i - 1)) },
+                    other => other,
+                };
+                let spec = self.model(user, m).await.map_err(blame)?;
                 let mut one = req.clone();
                 one.model = spec.id.clone();
                 one.compare.clear();
@@ -173,7 +178,7 @@ impl Engine {
                     .filter_map(|(k, v)| spec.param_spec(k).and_then(|p| crate::recipes::fit_param(p, v)).map(|v| (k.clone(), v)))
                     .collect();
                 one.inputs = req.inputs.iter().filter(|i| spec.accepts(i.role).is_some()).cloned().collect();
-                plans.push(self.plan(user, one).await?);
+                plans.push(self.plan(user, one).await.map_err(blame)?);
             }
         }
         self.commit(user, plans, None).await
@@ -197,7 +202,8 @@ impl Engine {
             return Err(EngineError::invalid(format!("{} is not set up yet. Add its key in Settings > Providers.", info.name), Some("model")));
         }
         if spec.tags.iter().any(|t| UNAVAILABLE_TAGS.contains(&t.as_str())) {
-            return Err(EngineError::invalid(format!("{} cannot run right now: {}", spec.name, spec.description.clone().unwrap_or_else(|| "its server is missing files or nodes".into())), Some("model")));
+            let why = if spec.tags.iter().any(|t| t == "unavailable") { "its server cannot be reached" } else { "its server is missing model files or nodes (see the model's details)" };
+            return Err(EngineError::invalid(format!("{} cannot run right now: {why}.", spec.name), Some("model")));
         }
         let platform = resolved.billing == "platform";
         // Safety switch for demos and tests: refuse anything that can cost money.

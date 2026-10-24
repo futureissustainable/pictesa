@@ -100,7 +100,7 @@ fn size_for(req: &GenerationRequest) -> (u32, u32) {
     crate::util::ratio_to_size(ratio, 768).unwrap_or((768, 768))
 }
 
-async fn video(prompt: &str, seconds: u32) -> ProviderResult<Vec<u8>> {
+async fn video(prompt: &str, seconds: u32, w: u32, h: u32) -> ProviderResult<Vec<u8>> {
     let dir = std::env::temp_dir().join(format!("pictesa-mock-{}", ulid::Ulid::new()));
     tokio::fs::create_dir_all(&dir)
         .await
@@ -115,7 +115,7 @@ async fn video(prompt: &str, seconds: u32) -> ProviderResult<Vec<u8>> {
             "-f",
             "lavfi",
             "-i",
-            &format!("testsrc2=size=640x360:rate=24:duration={seconds}"),
+            &format!("testsrc2=size={w}x{h}:rate=24:duration={seconds}"),
             "-vf",
             &format!("hue=h={hue}"),
             "-pix_fmt",
@@ -232,8 +232,11 @@ impl Provider for Mock {
                 .get("seconds")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(2) as u32;
+            // Half-size even dimensions keep the fake clip cheap to render.
+            let w = (handle.data.get("w").and_then(|v| v.as_u64()).unwrap_or(768) as u32 / 2) & !1;
+            let h = (handle.data.get("h").and_then(|v| v.as_u64()).unwrap_or(432) as u32 / 2) & !1;
             return Ok(PollStatus::Done(vec![Output::Bytes {
-                data: video(prompt, secs).await?,
+                data: video(prompt, secs, w.max(64), h.max(64)).await?,
                 mime: "video/mp4".into(),
             }]));
         }

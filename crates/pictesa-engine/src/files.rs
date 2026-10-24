@@ -140,7 +140,7 @@ impl FileStore {
         drop(file);
         if size == 0 {
             let _ = tokio::fs::remove_file(&tmp).await;
-            return Err(anyhow!("the file is empty"));
+            return Err(anyhow!("The file is empty."));
         }
         let mime = decide_mime(&head, mime_hint, name_hint, trusted);
         self.finalize(tmp, hasher.finalize().to_hex().to_string(), size, mime).await
@@ -149,7 +149,7 @@ impl FileStore {
     async fn finalize(&self, tmp: PathBuf, hash: String, size: u64, mime: Option<String>) -> anyhow::Result<Stored> {
         let Some(mime) = mime else {
             let _ = tokio::fs::remove_file(&tmp).await;
-            return Err(anyhow!("unrecognized or unsupported file type"));
+            return Err(anyhow!("Pictesa can only use image, video and audio files, and this file is something else."));
         };
         let kind = MediaKind::from_mime(&mime).ok_or_else(|| {
             let _ = std::fs::remove_file(&tmp);
