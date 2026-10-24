@@ -30,6 +30,8 @@ export interface ComposerState {
   paramsByModel: Record<string, ParamValues>;
   inputsByMode: Record<MediaKind, AttachedInput[]>;
   presetByMode: Partial<Record<MediaKind, string | null>>;
+  /** Extra models for a side-by-side compare run, per mode. */
+  compareByMode: Partial<Record<MediaKind, string[]>>;
   count: number;
   /** Bumped when settings arrive from elsewhere, so the prompt can take focus. */
   revision: number;
@@ -44,6 +46,7 @@ const initial: ComposerState = {
   paramsByModel: {},
   inputsByMode: { image: [], video: [], audio: [] },
   presetByMode: {},
+  compareByMode: {},
   count: 1,
   revision: 0,
 };
@@ -148,12 +151,14 @@ export const setPrompt = (prompt: string) => update(() => ({ prompt }));
 export const setNegativePrompt = (negativePrompt: string) => update(() => ({ negativePrompt }));
 export const setCount = (count: number) => update(() => ({ count }));
 export const setPreset = (mode: MediaKind, preset: string | null) => update((state) => ({ presetByMode: { ...state.presetByMode, [mode]: preset } }));
+export const setCompare = (mode: MediaKind, models: string[]) => update((state) => ({ compareByMode: { ...state.compareByMode, [mode]: models } }));
 
 /** Selects a model. A model used for the first time inherits fitting choices from the previous one. */
 export function selectModel(mode: MediaKind, next: ModelSpec, previous?: ModelSpec) {
   update((state) => {
     const paramsByModel = { ...state.paramsByModel };
-    if (!paramsByModel[next.id] && previous && previous.id !== next.id) {
+    // A listed-only spec has no params yet; the carry-over happens once its full spec loads.
+    if (!paramsByModel[next.id] && previous && previous.id !== next.id && next.complete !== false) {
       const carried: ParamValues = {};
       const old = paramsByModel[previous.id] ?? {};
       for (const spec of next.params) {

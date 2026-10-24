@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { api, errorMessage, isAbort, withQuery } from "../../lib/api";
 import { deleteForever, restoreAsset, toggleFavorite, trashAsset } from "../../lib/assets";
-import { fallbackModelName, useModels, usePresets } from "../../lib/catalog";
+import { fallbackModelName, useFullModel, useModels, usePresets } from "../../lib/catalog";
 import { subscribeEvents } from "../../lib/events";
 import { bytes, clock, dimensions, formatDate, formatDateTime, kindLabel, money, optionLabel, roleLabel } from "../../lib/format";
 import { prefersReducedMotion } from "../../lib/prefs";
@@ -106,7 +106,15 @@ export default function Viewer({ id }: { id: string }) {
         </div>
         <aside className="viewer-info" aria-label="Details">
           <header className="viewer-header">
-            <p className="viewer-title">{title}</p>
+            <p className="viewer-title">
+              {asset?.model ? (
+                <Link to={`/library?model=${encodeURIComponent(asset.model)}`} replace title="Show everything from this model">
+                  {title}
+                </Link>
+              ) : (
+                title
+              )}
+            </p>
             <button type="button" className="icon-button" aria-label="Close" onClick={closeViewer}>
               <Icon name="close" />
             </button>
@@ -150,7 +158,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
   const presets = usePresets(job?.output ?? asset.kind).data;
   const [working, setWorking] = useState(false);
   const models: ModelSpec[] = useMemo(() => [...(image.data ?? []), ...(video.data ?? []), ...(audio.data ?? [])], [image.data, video.data, audio.data]);
-  const spec = job ? models.find((model) => model.id === job.model) : undefined;
+  const spec = useFullModel(job ? models.find((model) => model.id === job.model) : undefined).spec;
   const uses = useMemo(() => inputUses(asset.kind), [asset.kind, models]);
   const trashed = Boolean(asset.deleted_at);
   const request = job ? requestFromJob(job) : null;
@@ -166,7 +174,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
   };
 
   const params = job
-    ? Object.entries(job.params ?? {}).filter(([, value]) => value !== null && value !== "")
+    ? Object.entries(job.params ?? {}).filter(([key, value]) => value !== null && value !== "" && key !== "width" && key !== "height")
     : [];
 
   return (
@@ -187,13 +195,6 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
         <a className="icon-button" href={withQuery(asset.url, { download: 1 })} download aria-label="Download original" title="Download original">
           <Icon name="download" />
         </a>
-        {request && (
-          <Control label="Copy for agents" icon="terminal" caret={false} size="large" panelClassName="agent-panel">
-            <p className="control-help">Run this generation again from a terminal or an agent.</p>
-            <CodeBlock code={cliCommand(request)} label="CLI command" caption="Pictesa CLI" />
-            <CodeBlock code={curlCommand(request, hosted)} label="curl command" caption="HTTP API" />
-          </Control>
-        )}
         {!trashed ? (
           <button type="button" className="icon-button" aria-label="Move to trash" title="Move to trash" onClick={() => void run(async () => (await trashAsset(asset)) && closeViewer())}>
             <Icon name="delete" />
@@ -245,6 +246,13 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
               ))}
             </Control>
           )}
+          {request && (
+            <Control label="Copy for agents" icon="terminal" value="Copy for agents" caret={false} size="large" className="text-control" panelClassName="agent-panel">
+              <p className="control-help">Run this generation again from a terminal or an agent.</p>
+              <CodeBlock code={cliCommand(request)} label="CLI command" caption={request.inputs.length ? "Pictesa CLI. It uploads inputs from disk, so replace the example paths." : "Pictesa CLI"} />
+              <CodeBlock code={curlCommand(request, hosted)} label="curl command" caption="HTTP API" />
+            </Control>
+          )}
         </div>
       )}
 
@@ -268,23 +276,13 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
       )}
 
       <dl className="detail-data">
-        {asset.model && (
-          <div>
-            <dt>Model</dt>
-            <dd>
-              <Link to={`/library?model=${encodeURIComponent(asset.model)}`} title="Show everything from this model">
-                {job?.model_name ?? spec?.name ?? fallbackModelName(asset.model)}
-              </Link>
-            </dd>
-          </div>
-        )}
         <div>
           <dt>Created</dt>
           <dd>{formatDateTime(asset.created_at)}</dd>
         </div>
         {dimensions(asset.width, asset.height) && (
           <div>
-            <dt>Size</dt>
+            <dt>Dimensions</dt>
             <dd>{dimensions(asset.width, asset.height)}</dd>
           </div>
         )}
@@ -316,7 +314,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
           const paramSpec = spec?.params.find((item) => item.key === key);
           return (
             <div key={key}>
-              <dt>{paramSpec?.label ?? key.replaceAll("_", " ")}</dt>
+              <dt>{paramSpec?.label ?? key.charAt(0).toUpperCase() + key.slice(1).replaceAll("_", " ")}</dt>
               <dd>{paramSpec ? optionLabel(paramSpec, value) : String(value)}</dd>
             </div>
           );

@@ -9,6 +9,7 @@ pub mod crypto;
 pub mod enhance;
 pub mod files;
 pub mod jobs;
+pub mod netguard;
 pub mod presets;
 pub mod queue;
 pub mod recipes;

@@ -72,6 +72,11 @@ export interface ModelSpec {
   description?: string | null;
   tags?: string[];
   configured: boolean;
+  /** False for discovered gateway models listed without params or inputs; load GET /api/models/{id}. */
+  complete?: boolean;
+  /** Hosted mode: runs are paid from the wallet and `pricing` already includes the markup. */
+  billed?: boolean;
+  meta?: Record<string, unknown> | null;
 }
 
 export type ProviderKind = "cloud" | "gateway" | "local";
@@ -183,6 +188,8 @@ export type Mode = "local" | "hosted";
 export interface Me {
   mode: Mode;
   user: User | null;
+  /** Local mode with PICTESA_TOKEN set and no cookie yet. */
+  needs_token?: boolean;
 }
 
 export interface Health {
@@ -208,6 +215,87 @@ export interface GenerationRequest {
   inputs: JobInput[];
   count: number;
   preset?: string;
+  /** Up to 7 more models that run the same prompt, inputs and params in the same batch. */
+  compare?: string[];
+}
+
+export interface RecipeField {
+  key: string;
+  label: string;
+  type: "text" | "enum" | "preset";
+  options?: string[];
+  category?: string | null;
+  default?: string | null;
+  required?: boolean;
+  multiline?: boolean;
+  help?: string | null;
+}
+
+export interface RecipeInput {
+  key: string;
+  label: string;
+  kind: MediaKind;
+  max: number;
+  required?: boolean;
+}
+
+export interface RecipeStep {
+  id: string;
+  label: string;
+  output: MediaKind;
+  models: string[];
+  prompt?: string | null;
+  params?: Record<string, ParamValue> | null;
+  preset?: string | null;
+  inputs?: { from: string; role: InputRole }[];
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  description?: string | null;
+  output: MediaKind;
+  fields: RecipeField[];
+  inputs: RecipeInput[];
+  steps: RecipeStep[];
+  /** The model each step uses by default, or null when none is configured. */
+  step_models: (string | null)[];
+  runnable: boolean;
+}
+
+export type RunStatus = "running" | "succeeded" | "failed" | "canceled";
+
+export interface RecipeRun {
+  id: string;
+  recipe_id: string;
+  recipe_name: string;
+  status: RunStatus;
+  /** Index of the current (or last) step. */
+  step: number;
+  steps: number;
+  jobs: string[];
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface LedgerEntry {
+  id: string;
+  amount_usd: number;
+  reason: string;
+  job_id: string | null;
+  created_at: number;
+}
+
+export interface Billing {
+  enabled: boolean;
+  topups_available: boolean;
+  balance_usd: number;
+  debt_usd: number;
+  locked: boolean;
+  markup: number;
+  topups_usd: number[];
+  ledger: LedgerEntry[];
 }
 
 export interface AssetQuery {

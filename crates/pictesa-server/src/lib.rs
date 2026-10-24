@@ -34,8 +34,10 @@ use tower_http::{
 
 pub const SESSION_COOKIE: &str = "pictesa_session";
 pub const TOKEN_COOKIE: &str = "pictesa_token";
-/// Largest upload accepted in one request.
-pub const MAX_UPLOAD: usize = 1024 * 1024 * 1024;
+/// Largest upload accepted in one request (streamed to disk, never held in memory).
+pub const MAX_UPLOAD: usize = 4 * 1024 * 1024 * 1024 - 1;
+/// Largest JSON body on every other route.
+pub const MAX_JSON: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug, Default)]
 pub struct ServerOptions {
@@ -217,7 +219,7 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/generations/{id}", get(get_job).delete(delete_job))
         .route("/generations/{id}/cancel", post(cancel_job))
         .route("/generations/{id}/retry", post(retry_job))
-        .route("/assets", get(list_assets).post(upload_assets))
+        .route("/assets", get(list_assets).post(upload_assets).layer(DefaultBodyLimit::max(MAX_UPLOAD)))
         .route("/assets/import", post(import_asset))
         .route("/assets/{id}", get(get_asset).patch(patch_asset).delete(delete_asset))
         .route("/assets/{id}/restore", post(restore_asset))
@@ -239,7 +241,7 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/mcp", post(mcp_http).get(|| async { StatusCode::METHOD_NOT_ALLOWED }))
         .fallback(web::serve)
         .layer(middleware::from_fn_with_state(state.clone(), authenticate))
-        .layer(DefaultBodyLimit::max(MAX_UPLOAD))
+        .layer(DefaultBodyLimit::max(MAX_JSON))
         .layer(CompressionLayer::new().compress_when(DefaultPredicate::new().and(NotForContentType::const_new("video/")).and(NotForContentType::const_new("audio/"))))
         .with_state(state)
 }
@@ -275,7 +277,7 @@ async fn health(State(s): State<AppState>) -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "mode": mode_name(s.engine.mode()),
         "ffmpeg": s.engine.has_ffmpeg(),
-        "data_dir": s.engine.data_dir().display().to_string(),
+        "data_dir": (s.engine.mode() == Mode::Local).then(|| s.engine.data_dir().display().to_string()),
     }))
 }
 
@@ -315,8 +317,35 @@ fn hosted_only(s: &AppState) -> ApiResult<()> {
     Ok(())
 }
 
-async fn signup(State(s): State<AppState>, Json(b): Json<Credentials>) -> ApiResult<Response> {
+/// Few sign-in attempts per address per minute (Argon2 is deliberately slow).
+fn throttle(headers: &HeaderMap) -> ApiResult<()> {
+    use std::{collections::HashMap, sync::Mutex, time::Instant};
+    static SEEN: std::sync::OnceLock<Mutex<HashMap<String, (Instant, u32)>>> = std::sync::OnceLock::new();
+    let who = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .unwrap_or("direct")
+        .trim()
+        .to_string();
+    let mut seen = SEEN.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+    if seen.len() > 50_000 {
+        seen.retain(|_, (t, _)| t.elapsed().as_secs() < 60);
+    }
+    let entry = seen.entry(who).or_insert((Instant::now(), 0));
+    if entry.0.elapsed().as_secs() >= 60 {
+        *entry = (Instant::now(), 0);
+    }
+    entry.1 += 1;
+    if entry.1 > 10 {
+        return Err(ApiError(EngineError::Forbidden("Too many attempts. Wait a minute and try again.".into())));
+    }
+    Ok(())
+}
+
+async fn signup(State(s): State<AppState>, headers: HeaderMap, Json(b): Json<Credentials>) -> ApiResult<Response> {
     hosted_only(&s)?;
+    throttle(&headers)?;
     let user = s.engine.signup(&b.email, &b.password, b.name.as_deref()).await?;
     let session = s.engine.create_session(&user.id).await?;
     let mut resp = Json(json!(user)).into_response();
@@ -324,8 +353,9 @@ async fn signup(State(s): State<AppState>, Json(b): Json<Credentials>) -> ApiRes
     Ok(resp)
 }
 
-async fn login(State(s): State<AppState>, Json(b): Json<Credentials>) -> ApiResult<Response> {
+async fn login(State(s): State<AppState>, headers: HeaderMap, Json(b): Json<Credentials>) -> ApiResult<Response> {
     hosted_only(&s)?;
+    throttle(&headers)?;
     let user = s.engine.login(&b.email, &b.password).await?;
     let session = s.engine.create_session(&user.id).await?;
     let mut resp = Json(json!(user)).into_response();
@@ -417,6 +447,9 @@ async fn model(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> 
 }
 
 async fn refresh_models(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
+    if s.engine.mode() == Mode::Hosted && c.user.as_ref().is_none_or(|u| u.role != "admin") {
+        return Err(ApiError(EngineError::Forbidden("Only the administrator can refresh catalogs.".into())));
+    }
     Ok(Json(json!({ "models": s.engine.refresh_models(&c.user_id).await })))
 }
 
@@ -481,12 +514,12 @@ async fn upload_assets(State(s): State<AppState>, c: Caller, mut form: Multipart
     let mut out = Vec::new();
     while let Some(field) = form.next_field().await.map_err(|e| bad(&format!("Upload failed: {e}"), Some("file")))? {
         let name = field.file_name().map(String::from);
-        let mime = field.content_type().map(String::from);
-        let bytes = field.bytes().await.map_err(|e| bad(&format!("Upload failed: {e}"), Some("file")))?;
-        if bytes.is_empty() {
-            continue;
+        let stream = field.map(|chunk| chunk.map_err(|e| std::io::Error::other(e.to_string())));
+        match s.engine.upload_stream(&c.user_id, Box::pin(stream), name.as_deref()).await {
+            Ok(asset) => out.push(asset),
+            Err(EngineError::Validation { message, .. }) if message.contains("empty") => continue,
+            Err(e) => return Err(e.into()),
         }
-        out.push(s.engine.upload(&c.user_id, &bytes, name.as_deref(), mime.as_deref()).await?);
     }
     if out.is_empty() {
         return Err(bad("Choose at least one file.", Some("file")));
@@ -617,14 +650,15 @@ use futures::StreamExt;
 #[derive(Deserialize)]
 struct FileQuery {
     download: Option<String>,
-    /// Signed key that lets a provider fetch an input file without a session (hosted mode).
+    /// Signed key and expiry that let a provider fetch an input file without a session (hosted mode).
     k: Option<String>,
+    e: Option<i64>,
 }
 
 async fn file(State(s): State<AppState>, caller: Option<Caller>, Path(id): Path<String>, Query(q): Query<FileQuery>, req: Request) -> Response {
     let user = match (&caller, &q.k) {
         (Some(c), _) => Some(c.user_id.clone()),
-        (None, Some(k)) if s.engine.file_key_ok(&id, k) => None,
+        (None, Some(k)) if s.engine.file_key_ok(&id, k, q.e.unwrap_or(0)) => None,
         _ => return ApiError(EngineError::Unauthorized("Sign in to view this file.".into())).into_response(),
     };
     let (path, mime, name) = match s.engine.asset_file(user.as_deref(), &id).await {
@@ -638,6 +672,8 @@ async fn file(State(s): State<AppState>, caller: Option<Caller>, Path(id): Path<
     let h = resp.headers_mut();
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=31536000, immutable"));
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    // Files are media only; even if one were misread, it cannot run script on this origin.
+    h.insert("content-security-policy", HeaderValue::from_static("sandbox; default-src 'none'; img-src 'self'; media-src 'self'"));
     if q.download.is_some() {
         if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
             h.insert(header::CONTENT_DISPOSITION, v);
@@ -662,12 +698,16 @@ async fn thumb(State(s): State<AppState>, caller: Option<Caller>, Path(id): Path
 
 // ---------- MCP ----------
 
-async fn mcp_http(State(s): State<AppState>, caller: Option<Caller>, Json(body): Json<Value>) -> Response {
+async fn mcp_http(State(s): State<AppState>, caller: Option<Caller>, raw: axum::body::Bytes) -> Response {
     let Some(c) = caller else {
         return (StatusCode::UNAUTHORIZED, Json(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32001, "message": "Unauthorized: send Authorization: Bearer <token>" } })))
             .into_response();
     };
     let ctx = mcp::McpContext { engine: s.engine.clone(), user_id: c.user_id, local_files: s.engine.mode() == Mode::Local };
+    let body: Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Json(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": format!("Parse error: {e}") } })).into_response(),
+    };
     match body {
         Value::Array(batch) => {
             let mut out = Vec::new();

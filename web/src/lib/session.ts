@@ -42,8 +42,17 @@ export async function logout() {
   setUser(null);
 }
 
-// A 401 in hosted mode means the session cookie expired: fall back to the login screen.
+// A 401 means the session cookie expired (hosted) or a token is now required (local):
+// fall back to the login or token screen.
+let rechecking = false;
 onUnauthorized(() => {
   const state = session.get();
-  if (state.status === "ready" && state.me.mode === "hosted" && state.me.user) setUser(null);
+  if (state.status !== "ready") return;
+  if (state.me.mode === "hosted" && state.me.user) setUser(null);
+  else if (state.me.mode === "local" && !state.me.needs_token && !rechecking) {
+    rechecking = true;
+    void loadSession().finally(() => {
+      rechecking = false;
+    });
+  }
 });

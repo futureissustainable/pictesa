@@ -1,6 +1,7 @@
 import type {
   ApiToken,
   Asset,
+  Billing,
   AssetDetail,
   AssetQuery,
   GenerationRequest,
@@ -11,6 +12,8 @@ import type {
   ModelSpec,
   Preset,
   ProviderState,
+  Recipe,
+  RecipeRun,
   User,
 } from "./types";
 
@@ -88,6 +91,7 @@ const id = (value: string) => encodeURIComponent(value);
 export const api = {
   me: () => request<Me>("GET", "/api/auth/me"),
   login: (body: { email: string; password: string }) => request<User>("POST", "/api/auth/login", body),
+  submitToken: (token: string) => request<void>("POST", "/api/auth/token", { token }),
   signup: (body: { email: string; password: string; name?: string }) => request<User>("POST", "/api/auth/signup", body),
   logout: () => request<void>("POST", "/api/auth/logout"),
   tokens: () => request<{ tokens: ApiToken[] }>("GET", "/api/tokens"),
@@ -104,8 +108,11 @@ export const api = {
 
   models: (query: { output?: MediaKind; task?: string; provider?: string; q?: string; configured?: boolean } = {}) =>
     request<{ models: ModelSpec[] }>("GET", withQuery("/api/models", query)),
+  /** Full spec of one model. Ids contain ":" and "/", which the server expects as they are. */
+  model: (modelId: string) => request<ModelSpec>("GET", `/api/models/${encodeURI(modelId).replaceAll("?", "%3F").replaceAll("#", "%23")}`),
   refreshModels: () => request<{ models: number }>("POST", "/api/models/refresh"),
   presets: (output: MediaKind) => request<{ presets: Preset[] }>("GET", withQuery("/api/presets", { output })),
+  enhancePrompt: (prompt: string, output: MediaKind) => request<{ prompt: string }>("POST", "/api/prompt/enhance", { prompt, output }),
 
   generate: (body: GenerationRequest) => request<{ batch_id: string; jobs: Job[] }>("POST", "/api/generations", body),
   jobs: (query: { status?: string; output?: MediaKind; limit?: number; before?: string } = {}) =>
@@ -122,6 +129,16 @@ export const api = {
     request<void>("DELETE", withQuery(`/api/assets/${id(assetId)}`, { permanent })),
   restoreAsset: (assetId: string) => request<Asset>("POST", `/api/assets/${id(assetId)}/restore`),
   importAsset: (url: string) => request<{ assets: Asset[] }>("POST", "/api/assets/import", { url }),
+
+  recipes: () => request<{ recipes: Recipe[] }>("GET", "/api/recipes"),
+  runRecipe: (recipeId: string, body: { values: Record<string, string>; inputs: Record<string, string[]>; models?: Record<string, string> }) =>
+    request<RecipeRun>("POST", `/api/recipes/run/${encodeURI(recipeId)}`, body),
+  recipeRuns: (limit = 30) => request<{ runs: RecipeRun[] }>("GET", withQuery("/api/recipes/runs", { limit })),
+  recipeRun: (runId: string) => request<RecipeRun>("GET", `/api/recipes/runs/${id(runId)}`),
+  cancelRun: (runId: string) => request<RecipeRun>("POST", `/api/recipes/runs/${id(runId)}/cancel`),
+
+  billing: () => request<Billing>("GET", "/api/billing"),
+  checkout: (amountCents: number, requestId: string) => request<{ url: string }>("POST", "/api/billing/checkout", { amount_cents: amountCents, request_id: requestId }),
 };
 
 /**

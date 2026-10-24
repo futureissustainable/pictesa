@@ -1,10 +1,9 @@
 import { useEffect, useRef } from "react";
 import { toggleFavorite, useAssetList } from "../../lib/assets";
 import { useModelNames, useModels } from "../../lib/catalog";
-import { setMode, useComposer } from "../../lib/composer";
-import { kindIcon, kindLabel, kindPlural } from "../../lib/format";
+import { useComposer } from "../../lib/composer";
+import { kindPlural } from "../../lib/format";
 import { Link } from "../../lib/router";
-import type { MediaKind } from "../../lib/types";
 import { openViewer, useSequence } from "../../lib/viewer";
 import { PixelMark } from "../../ui/brand";
 import { AssetGrid } from "../../ui/grid";
@@ -12,6 +11,7 @@ import { Icon, Spinner } from "../../ui/icon";
 import { SizeSlider, useImageSize } from "../../ui/size-slider";
 import { Composer } from "./composer";
 import { JobsTray } from "./jobs-tray";
+import { ModeSwitch } from "./mode-switch";
 
 export default function CreatePage() {
   const { mode } = useComposer();
@@ -21,8 +21,6 @@ export default function CreatePage() {
   const list = useAssetList({ kind: mode, source: "generated" });
   const nameOf = useModelNames([mode]);
   const models = useModels(mode);
-  const audio = useModels("audio");
-  const modes: MediaKind[] = audio.data?.length ? ["image", "video", "audio"] : ["image", "video"];
   const noneConfigured = Boolean(models.data && models.data.length && !models.data.some((model) => model.configured));
   useSequence(list.items, list.hasMore, list.loadMore);
 
@@ -45,14 +43,7 @@ export default function CreatePage() {
           <h1 id="feed-title" className="sr-only">
             Create
           </h1>
-          <div className="segmented mode-switch" role="group" aria-label="What to create">
-            {modes.map((kind) => (
-              <button key={kind} type="button" aria-pressed={mode === kind} onClick={() => setMode(kind)}>
-                <Icon name={kindIcon[kind]} filled={mode === kind} />
-                <span>{kindLabel[kind]}</span>
-              </button>
-            ))}
-          </div>
+          <ModeSwitch active={mode} />
           <SizeSlider />
         </div>
         {list.items.length ? (

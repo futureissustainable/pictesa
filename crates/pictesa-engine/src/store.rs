@@ -29,6 +29,8 @@ pub struct JobRow {
     pub error: Option<String>,
     pub cost_usd: Option<f64>,
     pub attempts: i64,
+    #[sqlx(default)]
+    pub billing: String,
     pub created_at: i64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
@@ -97,6 +99,8 @@ pub struct AssetRow {
     pub source_url: Option<String>,
     pub created_at: i64,
     pub deleted_at: Option<i64>,
+    #[sqlx(default)]
+    pub name: Option<String>,
 }
 
 impl AssetRow {
@@ -118,6 +122,7 @@ impl AssetRow {
             favorite: self.favorite,
             created_at: self.created_at,
             deleted_at: self.deleted_at,
+            name: self.name.clone(),
         }
     }
 }

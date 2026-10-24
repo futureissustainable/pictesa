@@ -59,7 +59,7 @@ enum Command {
         /// Parameter as key=value (repeatable), e.g. -p aspect_ratio=16:9 -p duration=5.
         #[arg(short, long = "param", value_name = "KEY=VALUE")]
         params: Vec<String>,
-        /// Input file as role=path (repeatable). Roles: reference, start_frame, end_frame, video, audio, mask.
+        /// Input as role=path or role=asset:<library id> (repeatable). Roles: reference, start_frame, end_frame, video, audio, mask.
         #[arg(short, long = "input", value_name = "ROLE=PATH")]
         inputs: Vec<String>,
         #[arg(short = 'n', long, default_value_t = 1)]
@@ -431,6 +431,10 @@ async fn generate_local(
     let mut job_inputs = Vec::new();
     for raw in &inputs {
         let (role, path) = parse_input(raw)?;
+        if let Some(id) = path.strip_prefix("asset:") {
+            job_inputs.push(JobInput { asset_id: id.to_string(), role });
+            continue;
+        }
         let bytes = tokio::fs::read(&path).await.with_context(|| format!("reading {path}"))?;
         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned());
         let asset = engine.upload(LOCAL_USER, &bytes, name.as_deref(), None).await?;
@@ -546,6 +550,10 @@ impl Remote {
         let mut job_inputs = Vec::new();
         for raw in &inputs {
             let (role, path) = parse_input(raw)?;
+            if let Some(id) = path.strip_prefix("asset:") {
+                job_inputs.push(json!({ "asset_id": id, "role": role }));
+                continue;
+            }
             let bytes = tokio::fs::read(&path).await.with_context(|| format!("reading {path}"))?;
             let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "input".into());
             let form = reqwest::multipart::Form::new().part("file", reqwest::multipart::Part::bytes(bytes).file_name(name));
@@ -625,7 +633,8 @@ impl Remote {
 /// MCP over stdio: newline-delimited JSON-RPC. Logs go to stderr so stdout stays clean.
 async fn run_mcp(cli: &Cli) -> anyhow::Result<()> {
     let engine = open_engine(cli, Mode::Local, None).await?;
-    engine.start();
+    // Scoped: this process runs only the jobs its agent creates and never adopts the studio's work.
+    engine.start_scoped();
     let ctx = mcp::McpContext { engine, user_id: LOCAL_USER.to_string(), local_files: true };
     let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();

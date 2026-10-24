@@ -1,6 +1,7 @@
 // Every Material Symbols icon the UI uses. `pnpm icons` builds the font subset from this list,
 // and `pnpm build` fails when the list and the subset disagree. Add a name here before using it.
 export const iconNames = [
+  "account_balance_wallet",
   "add",
   "add_circle",
   "add_photo_alternate",
@@ -12,6 +13,7 @@ export const iconNames = [
   "aspect_ratio",
   "auto_awesome",
   "block",
+  "camera",
   "casino",
   "check",
   "check_circle",
@@ -23,6 +25,7 @@ export const iconNames = [
   "code",
   "computer",
   "content_copy",
+  "conversion_path",
   "delete",
   "delete_forever",
   "dns",
@@ -43,6 +46,7 @@ export const iconNames = [
   "ink_eraser",
   "key",
   "keyboard_arrow_down",
+  "landscape",
   "last_page",
   "license",
   "light_mode",

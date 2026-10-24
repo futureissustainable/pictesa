@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { api, ApiError, errorMessage } from "../../lib/api";
 import { ASSET_DRAG_TYPE, readDraggedAsset, rejectionMessage, routeFiles, uploadInto } from "../../lib/attach";
-import { defaultModel, useModels, usePresets, useProviders } from "../../lib/catalog";
+import { defaultModel, useFullModel, useModels, usePresets, useProviders } from "../../lib/catalog";
 import {
   activeInputs,
   addInput,
+  composer,
   effectiveParams,
   inputKey,
   requestParams,
   resetParams,
   selectModel,
+  setCompare,
   setCount,
   setNegativePrompt,
   setParam,
@@ -18,14 +20,15 @@ import {
   useComposer,
 } from "../../lib/composer";
 import { estimateCost, kindPlural, money, plural } from "../../lib/format";
+import { MAX_COMPARE, trackCompare } from "../../lib/compare";
 import { addJobs } from "../../lib/jobs";
 import { notify, notifyError } from "../../lib/notices";
 import { navigate } from "../../lib/router";
-import type { GenerationRequest, ParamValues } from "../../lib/types";
+import type { GenerationRequest, MediaKind, ModelSpec, ParamValues } from "../../lib/types";
 import { Choice, Control } from "../../ui/control";
 import { Icon, Spinner } from "../../ui/icon";
 import { InputSlots, slotLabel } from "./inputs";
-import { ModelPicker, providerName } from "./model-picker";
+import { ComparePicker, ModelPicker, providerName } from "./model-picker";
 import { ParamControl, ParamField } from "./params";
 import { PresetsStrip } from "./presets";
 
@@ -43,23 +46,84 @@ export function Composer() {
   const providers = useProviders().data;
   const presets = usePresets(mode).data;
   const list = models.data ?? [];
-  const model = list.find((item) => item.id === draft.modelByMode[mode]) ?? defaultModel(list);
+  const listed = list.find((item) => item.id === draft.modelByMode[mode]) ?? defaultModel(list);
+  // Discovered gateway models are listed without params; their full spec loads on selection.
+  const full = useFullModel(listed);
+  const model = full.spec;
+  const lastFull = useRef<Partial<Record<MediaKind, ModelSpec>>>({});
   const preset = presets?.find((item) => item.id === draft.presetByMode[mode]) ?? null;
   const explicit = (model && draft.paramsByModel[model.id]) || NO_PARAMS;
   const values = useMemo(() => (model ? effectiveParams(model, explicit, preset) : {}), [model, explicit, preset]);
   const inputs = draft.inputsByMode[mode];
   const attached = activeInputs(model, inputs);
   const uploading = attached.some((input) => input.upload);
-  const estimate = model ? estimateCost(model, values, draft.count) : null;
+  const compare = (draft.compareByMode[mode] ?? []).filter((id) => id !== model?.id);
+  const compareModels = compare.map((id) => list.find((item) => item.id === id)).filter((item): item is ModelSpec => Boolean(item));
+  // With compare models the total is the sum of every model's estimate, when all can be computed.
+  const estimate = useMemo(() => {
+    if (!model) return null;
+    const own = estimateCost(model, values, draft.count);
+    if (!compareModels.length) return own;
+    let usd = own?.kind === "total" ? own.usd : null;
+    for (const other of compareModels) {
+      const part = estimateCost(other, values, draft.count);
+      usd = usd !== null && part?.kind === "total" ? usd + part.usd : null;
+    }
+    return usd === null ? null : ({ kind: "total", usd } as const);
+  }, [model, values, draft.count, compareModels]);
   const [busy, setBusy] = useState(false);
   const [invalid, setInvalid] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhanceError, setEnhanceError] = useState<string | null>(null);
+  const [undo, setUndo] = useState<{ before: string; after: string } | null>(null);
+
+  // "Improve prompt": the server rewrites a short idea into a detailed prompt (2 to 10 s).
+  async function improvePrompt() {
+    const before = draft.prompt;
+    if (!before.trim() || enhancing) return;
+    setEnhancing(true);
+    setEnhanceError(null);
+    try {
+      const { prompt: after } = await api.enhancePrompt(before.trim(), mode);
+      if (composer.get().prompt !== before) return; // The person kept typing; keep their text.
+      setPrompt(after);
+      setUndo({ before, after });
+      promptRef.current?.focus();
+    } catch (error) {
+      setEnhanceError(errorMessage(error));
+    } finally {
+      setEnhancing(false);
+    }
+  }
+
+  function restorePrompt() {
+    if (!undo) return;
+    setPrompt(undo.before);
+    setUndo(null);
+    promptRef.current?.focus();
+  }
+
+  // The inline Undo stays for a few seconds; Ctrl or Cmd+Z works while the text is unchanged.
+  useEffect(() => {
+    if (!undo) return;
+    const timer = setTimeout(() => setUndo(null), 12000);
+    return () => clearTimeout(timer);
+  }, [undo]);
 
   // Remember the default model so the choice is stable across reloads.
   useEffect(() => {
-    if (model && draft.modelByMode[mode] !== model.id) selectModel(mode, model);
-  }, [model, mode, draft.modelByMode]);
+    if (listed && draft.modelByMode[mode] !== listed.id) selectModel(mode, listed);
+  }, [listed, mode, draft.modelByMode]);
+
+  // A model whose spec just loaded inherits fitting choices from the previous model of this mode.
+  useEffect(() => {
+    if (!model) return;
+    const previous = lastFull.current[mode];
+    if (previous && previous.id !== model.id && !draft.paramsByModel[model.id]) selectModel(mode, model, previous);
+    lastFull.current[mode] = model;
+  }, [model, mode, draft.paramsByModel]);
 
   // Settings loaded from the library: put the cursor in the prompt.
   useEffect(() => {
@@ -141,13 +205,19 @@ export function Composer() {
       inputs: attached.flatMap((input) => (input.asset ? [{ asset_id: input.asset.id, role: input.role }] : [])),
       count: draft.count,
       ...(preset ? { preset: preset.id } : {}),
+      ...(compare.length ? { compare } : {}),
     };
     try {
-      const { jobs } = await api.generate(body);
+      const { batch_id: batchId, jobs } = await api.generate(body);
+      if (compare.length) trackCompare(batchId, jobs);
       addJobs(jobs);
     } catch (error) {
-      if (error instanceof ApiError && error.field) setInvalid(error.field);
-      notifyError(errorMessage(error));
+      if (error instanceof ApiError && error.field === "billing") {
+        notify(errorMessage(error), { tone: "error", action: { label: "Add funds", run: () => navigate("/settings/billing") } });
+      } else {
+        if (error instanceof ApiError && error.field) setInvalid(error.field);
+        notifyError(errorMessage(error));
+      }
     } finally {
       setBusy(false);
     }
@@ -159,10 +229,12 @@ export function Composer() {
   const providerLabel = model ? providerName(model.provider, providers) : "";
   const price = estimate ? (estimate.kind === "total" ? money(estimate.usd) : estimate.text) : null;
   const generateLabel = !model
-    ? "Choose a model first"
+    ? full.loading
+      ? "Loading the model's settings"
+      : "Choose a model first"
     : !model.configured
       ? `Set up ${providerLabel} to use ${model.name}`
-      : `Generate ${plural(draft.count, model.output, kindPlural[model.output])}${estimate?.kind === "total" ? `, estimated ${money(estimate.usd)}` : ""}`;
+      : `Generate ${plural(draft.count, model.output, kindPlural[model.output])}${estimate?.kind === "total" ? `, estimated ${money(estimate.usd)}${model.billed ? " from your balance" : ""}` : ""}`;
 
   return (
     <form
@@ -172,8 +244,12 @@ export function Composer() {
         event.preventDefault();
         void submit();
       }}
+      onKeyDown={(event) => {
+        // Enter in a field inside a popover (model search, seed, steps) must not start a run.
+        if (event.key === "Enter" && event.target instanceof HTMLInputElement) event.preventDefault();
+      }}
     >
-      {model && <PresetsStrip mode={mode} selected={preset?.id ?? null} />}
+      {listed && <PresetsStrip mode={mode} selected={preset?.id ?? null} />}
       <div
         className={`composer ${dragging ? "dragging" : ""}`}
         onDragOver={(event) => {
@@ -186,6 +262,7 @@ export function Composer() {
         }}
         onDrop={onDrop}
       >
+        <div className="composer-main">
         {model && model.inputs.length > 0 && <InputSlots model={model} mode={mode} inputs={inputs} invalidRole={invalid?.startsWith("inputs.") ? invalid.slice(7) : null} />}
         <div className="prompt-line">
           {model?.prompt === false ? (
@@ -198,6 +275,7 @@ export function Composer() {
               <label className="sr-only" htmlFor="prompt">
                 Prompt
               </label>
+              <div className="prompt-body">
               <textarea
                 id="prompt"
                 ref={promptRef}
@@ -206,30 +284,86 @@ export function Composer() {
                 maxLength={50000}
                 value={draft.prompt}
                 aria-invalid={invalid === "prompt" || undefined}
+                aria-busy={enhancing || undefined}
+                aria-describedby={enhanceError ? "prompt-help-error" : undefined}
                 placeholder={mode === "video" ? "Describe the shot and the motion" : mode === "audio" ? "Describe the sound" : "Describe your image"}
-                onChange={(event) => setPrompt(event.target.value)}
+                onChange={(event) => {
+                  setPrompt(event.target.value);
+                  setEnhanceError(null);
+                }}
                 onPaste={onPromptPaste}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault();
                     void submit();
                   }
+                  // The rewrite replaced the text programmatically, so the browser cannot undo it.
+                  if (event.key.toLowerCase() === "z" && (event.metaKey || event.ctrlKey) && !event.shiftKey && undo && draft.prompt === undo.after) {
+                    event.preventDefault();
+                    restorePrompt();
+                  }
                 }}
               />
+              {enhanceError && (
+                <p className="prompt-error" id="prompt-help-error" role="alert">
+                  {enhanceError}
+                </p>
+              )}
+              </div>
+              <div className="prompt-tools">
+                {undo && draft.prompt === undo.after && (
+                  <button type="button" className="text-button prompt-undo" onClick={restorePrompt}>
+                    Undo
+                  </button>
+                )}
+                {mode !== "audio" && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label="Improve prompt"
+                    title="Improve prompt"
+                    disabled={enhancing || !draft.prompt.trim()}
+                    onClick={() => void improvePrompt()}
+                  >
+                    {enhancing ? <Spinner /> : <Icon name="auto_awesome" />}
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>
+        </div>
         <div className="composer-toolbar">
           <div className="composer-controls" aria-label="Generation settings" role="group">
-            <ModelPicker
-              models={list}
-              model={model}
-              loading={models.loading}
-              onSelect={(next) => {
-                if (model) selectModel(mode, next, model);
-                else selectModel(mode, next);
-              }}
-            />
+            <ModelPicker key={mode} models={list} model={listed} loading={models.loading} onSelect={(next) => selectModel(mode, next, model)} />
+            {compareModels.map((other) => (
+              <span key={other.id} className="compare-chip">
+                <span>{other.name}</span>
+                <button type="button" aria-label={`Remove ${other.name} from the comparison`} onClick={() => setCompare(mode, compare.filter((id) => id !== other.id))}>
+                  <Icon name="close" />
+                </button>
+              </span>
+            ))}
+            {model && (
+              <ComparePicker
+                models={list}
+                exclude={[model.id, ...compare]}
+                disabled={compare.length >= MAX_COMPARE}
+                onAdd={(other) => setCompare(mode, [...compare, other.id])}
+              />
+            )}
+            {full.loading && (
+              <span className="control-note" role="status">
+                <Spinner />
+                Loading settings
+              </span>
+            )}
+            {full.error && (
+              <button type="button" className="control-trigger" onClick={full.retry} title={full.error}>
+                <Icon name="refresh" />
+                <span className="control-value">Settings did not load. Retry</span>
+              </button>
+            )}
             {model &&
               main.map((spec) => (
                 <ParamControl
@@ -279,9 +413,14 @@ export function Composer() {
               </Control>
             )}
           </div>
-          <button type="submit" className="primary-button generate" disabled={busy || !model} aria-label={generateLabel} aria-keyshortcuts="Control+Enter Meta+Enter">
+          <button type="submit" className="primary-button generate" disabled={busy || !model} aria-label={generateLabel} aria-keyshortcuts="Control+Enter Meta+Enter" title={model?.billed ? "Paid from your Pictesa balance" : undefined}>
             <span className="generate-text">{busy ? "Starting" : model && !model.configured ? "Set up" : "Generate"}</span>
-            {price && model?.configured && <span className="generate-price">{price}</span>}
+            {price && model?.configured && (
+              <span className="generate-price">
+                {model.billed && <Icon name="account_balance_wallet" />}
+                {price}
+              </span>
+            )}
             {busy ? <Spinner /> : <Icon name={model && !model.configured ? "key" : "arrow_upward"} />}
           </button>
         </div>

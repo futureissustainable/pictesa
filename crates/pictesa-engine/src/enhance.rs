@@ -55,8 +55,10 @@ impl Engine {
             return Err(EngineError::invalid("The prompt is too long to improve.", Some("prompt")));
         }
         let provider = self.inner.catalog.provider("openrouter").ok_or_else(|| EngineError::invalid("Prompt help needs the OpenRouter provider.", None))?;
-        let ctx = self.ctx_for(user, provider.as_ref()).await?;
-        let key = ctx.get("api_key").ok_or_else(|| EngineError::invalid("Add an OpenRouter key in Settings > Providers to use prompt help (a free model is used).", None))?;
+        // Hosted: only the person's own key; the operator's key is never spent on prompt help.
+        let sources = if self.mode() == crate::Mode::Hosted { crate::creds::Sources::Stored } else { crate::creds::Sources::Any };
+        let ctx = self.ctx_from(self.resolve_with(user, provider.as_ref(), sources).await?);
+        let key = ctx.get("api_key").ok_or_else(|| EngineError::invalid("Add your OpenRouter key in Settings > Providers to use prompt help (a free model is used).", None))?;
         let models: Vec<String> = match std::env::var("PICTESA_ENHANCE_MODEL").ok().filter(|m| !m.is_empty()) {
             Some(m) => vec![m],
             None => FREE_MODELS.iter().map(|m| m.to_string()).collect(),

@@ -12,6 +12,19 @@ use crate::{
 };
 
 pub const MAX_COUNT: u32 = 16;
+
+/// A validated, priced request ready to be queued.
+struct Planned {
+    spec: ModelSpec,
+    prompt: String,
+    negative: Option<String>,
+    params_json: String,
+    inputs_json: String,
+    preset: Option<String>,
+    billing: &'static str,
+    /// (outputs, cost estimate in USD, wallet charge in micro-dollars) per provider request.
+    runs: Vec<(u32, Option<f64>, i64)>,
+}
 /// Tags a provider sets on models that cannot run right now (missing local nodes or files).
 pub const UNAVAILABLE_TAGS: &[&str] = &["unavailable", "needs-nodes", "needs-models"];
 
@@ -52,6 +65,8 @@ impl Engine {
                 if is_billed {
                     spec.pricing = spec.pricing.map(|p| with_markup(p, markup));
                 }
+                // Provider bindings are internal and heavy; the full spec comes from GET /api/models/{id}.
+                spec.meta = Value::Null;
                 ModelView { spec, configured: ok, billed: is_billed }
             })
             .filter(|v| f.configured != Some(true) || v.configured)
@@ -67,13 +82,13 @@ impl Engine {
             return Ok(spec);
         }
         let provider = self.inner.catalog.provider(&spec.provider).ok_or_else(|| EngineError::not_found("provider"))?;
-        let ctx = self.ctx_for(user, provider.as_ref()).await?;
+        let ctx = self.catalog_ctx(user, provider.as_ref()).await?;
         self.inner.catalog.resolve(&self.inner.db, &ctx, id).await.map_err(|e| EngineError::invalid(format!("could not load {id}: {e:#}"), Some("model")))
     }
 
     pub async fn refresh_models_for(&self, user: &str, provider_id: &str) -> Result<usize> {
         let provider = self.inner.catalog.provider(provider_id).ok_or_else(|| EngineError::not_found("provider"))?;
-        let ctx = self.ctx_for(user, provider.as_ref()).await?;
+        let ctx = self.catalog_ctx(user, provider.as_ref()).await?;
         let n = self.inner.catalog.refresh(&self.inner.db, provider.as_ref(), &ctx).await.map_err(EngineError::Internal)?;
         // Load full settings for featured models in the background so the picker shows inputs and prices at once.
         let engine = self.clone();
@@ -89,7 +104,7 @@ impl Engine {
                 .filter(|m| !m.complete && m.tags.iter().any(|t| t == "featured"))
                 .map(|m| m.id)
                 .collect();
-            let Ok(ctx) = engine.ctx_for(&user, provider.as_ref()).await else { return };
+            let Ok(ctx) = engine.catalog_ctx(&user, provider.as_ref()).await else { return };
             use futures::StreamExt;
             futures::stream::iter(pending)
                 .for_each_concurrent(4, |id| {
@@ -131,42 +146,41 @@ impl Engine {
 
     // ---------- generations ----------
 
+    /// Validates, prices and queues a generation (or a comparison across models) in one transaction:
+    /// either every run is queued and paid, or nothing is.
     pub async fn create_generation(&self, user: &str, req: CreateGeneration) -> Result<Created> {
+        let mut plans = Vec::new();
         if req.compare.is_empty() {
-            return self.create_one(user, req, None).await;
-        }
-        if req.compare.len() > 8 {
-            return Err(EngineError::invalid("Compare at most 8 models at once.", Some("compare")));
-        }
-        let batch = crate::new_id();
-        let mut models = vec![req.model.clone()];
-        for m in &req.compare {
-            if !models.contains(m) {
-                models.push(m.clone());
+            plans.push(self.plan(user, req).await?);
+        } else {
+            if req.compare.len() > 7 {
+                return Err(EngineError::invalid("Compare at most 8 models at once.", Some("compare")));
+            }
+            let mut models = vec![req.model.clone()];
+            for m in &req.compare {
+                if !models.contains(m) {
+                    models.push(m.clone());
+                }
+            }
+            for m in &models {
+                let spec = self.model(user, m).await?;
+                let mut one = req.clone();
+                one.model = spec.id.clone();
+                one.compare.clear();
+                one.params = req
+                    .params
+                    .iter()
+                    .filter_map(|(k, v)| spec.param_spec(k).and_then(|p| crate::recipes::fit_param(p, v)).map(|v| (k.clone(), v)))
+                    .collect();
+                one.inputs = req.inputs.iter().filter(|i| spec.accepts(i.role).is_some()).cloned().collect();
+                plans.push(self.plan(user, one).await?);
             }
         }
-        // Validate every model first so a typo does not leave half a comparison queued.
-        let mut specs = Vec::new();
-        for m in &models {
-            specs.push(self.model(user, m).await?);
-        }
-        let mut jobs = Vec::new();
-        for spec in specs {
-            let mut one = req.clone();
-            one.model = spec.id.clone();
-            one.compare.clear();
-            one.params = req
-                .params
-                .iter()
-                .filter_map(|(k, v)| spec.param_spec(k).and_then(|p| crate::recipes::fit_param(p, v)).map(|v| (k.clone(), v)))
-                .collect();
-            one.inputs = req.inputs.iter().filter(|i| spec.accepts(i.role).is_some()).cloned().collect();
-            jobs.extend(self.create_one(user, one, Some(batch.clone())).await?.jobs);
-        }
-        Ok(Created { batch_id: batch, jobs })
+        self.commit(user, plans, None).await
     }
 
-    async fn create_one(&self, user: &str, mut req: CreateGeneration, batch: Option<String>) -> Result<Created> {
+    /// Queues an already-validated request inside an existing batch (recipes use this through `create_generation`).
+    async fn plan(&self, user: &str, mut req: CreateGeneration) -> Result<Planned> {
         let spec = self.model(user, &req.model).await?;
         let provider = self.inner.catalog.provider(&spec.provider).ok_or_else(|| EngineError::not_found("provider"))?;
         let info = provider.info();
@@ -174,7 +188,10 @@ impl Engine {
         if !Self::is_configured(&info, &resolved) {
             return Err(EngineError::invalid(format!("{} is not set up yet. Add its key in Settings > Providers.", info.name), Some("model")));
         }
-        let platform = Self::uses_platform(&info, &resolved);
+        if spec.tags.iter().any(|t| UNAVAILABLE_TAGS.contains(&t.as_str())) {
+            return Err(EngineError::invalid(format!("{} cannot run right now: {}", spec.name, spec.description.clone().unwrap_or_else(|| "its server is missing files or nodes".into())), Some("model")));
+        }
+        let platform = resolved.billing == "platform";
         // Safety switch for demos and tests: refuse anything that can cost money.
         if std::env::var("PICTESA_DENY_PAID").is_ok_and(|v| v == "1") {
             let free = matches!(spec.pricing, Some(Pricing::Local)) || info.kind == pictesa_core::ProviderKind::Local;
@@ -183,11 +200,12 @@ impl Engine {
             }
         }
 
+        // The stored prompt stays the person's own text; the preset's words are added when the
+        // request is sent, so "reuse settings" never doubles them.
+        let mut full_prompt = req.prompt.clone();
         if let Some(pid) = req.preset.clone().filter(|p| !p.is_empty()) {
             let preset = self.preset(&pid).ok_or_else(|| EngineError::invalid(format!("unknown preset {pid}"), Some("preset")))?;
-            if !preset.prompt_suffix.is_empty() {
-                req.prompt = if req.prompt.trim().is_empty() { preset.prompt_suffix.clone() } else { format!("{}, {}", req.prompt.trim_end(), preset.prompt_suffix) };
-            }
+            full_prompt = with_preset(&req.prompt, &preset.prompt_suffix);
             for (k, v) in &preset.params {
                 if spec.param_spec(k).is_some() && !req.params.contains_key(k) {
                     req.params.insert(k.clone(), v.clone());
@@ -195,11 +213,11 @@ impl Engine {
             }
         }
 
-        if req.prompt.chars().count() > 20_000 {
+        if full_prompt.chars().count() > 20_000 {
             return Err(EngineError::invalid("The prompt is longer than 20,000 characters.", Some("prompt")));
         }
         let needs_prompt = spec.prompt && spec.tasks.iter().any(|t| matches!(t, Task::TextToImage | Task::TextToVideo | Task::TextToAudio)) && req.inputs.is_empty();
-        if needs_prompt && req.prompt.trim().is_empty() {
+        if needs_prompt && full_prompt.trim().is_empty() {
             return Err(EngineError::invalid("Describe what to generate.", Some("prompt")));
         }
 
@@ -209,90 +227,104 @@ impl Engine {
         let negative = req.negative_prompt.filter(|n| spec.negative_prompt && !n.trim().is_empty());
 
         // Split the count into provider requests and price each one.
+        let markup = self.inner.billing.markup;
         let mut runs = Vec::new();
         let mut remaining = count;
         while remaining > 0 {
             let n = remaining.min(spec.max_outputs.max(1));
             remaining -= n;
-            runs.push((n, estimate_cost(&spec, &params, n)));
-        }
-        let mut charges = vec![0i64; runs.len()];
-        if platform {
-            let markup = self.inner.billing.markup;
-            for (i, (_, cost)) in runs.iter().enumerate() {
+            let cost = estimate_cost(&spec, &params, n);
+            let charge = if platform {
                 let usd = cost.ok_or_else(|| EngineError::invalid(format!("{} has no fixed price, so it can only run with your own {} key.", spec.name, info.name), Some("model")))?;
-                charges[i] = crate::billing::to_micros(usd * markup).max(1);
-            }
-            let total: i64 = charges.iter().sum();
-            let wallet: Option<(i64, bool)> = sqlx::query_as("SELECT balance_micros, locked FROM wallets WHERE user_id = ?").bind(user).fetch_optional(&self.inner.db).await?;
+                crate::billing::to_micros(usd * markup).max(1)
+            } else {
+                0
+            };
+            runs.push((n, cost, charge));
+        }
+        Ok(Planned {
+            params_json: serde_json::to_string(&params).map_err(anyhow::Error::from)?,
+            inputs_json: serde_json::to_string(&inputs).map_err(anyhow::Error::from)?,
+            spec,
+            prompt: req.prompt,
+            negative,
+            preset: req.preset,
+            billing: resolved.billing,
+            runs,
+        })
+    }
+
+    async fn commit(&self, user: &str, plans: Vec<Planned>, batch: Option<String>) -> Result<Created> {
+        let total: i64 = plans.iter().flat_map(|p| p.runs.iter().map(|r| r.2)).sum();
+        let batch_id = batch.unwrap_or_else(crate::new_id);
+        self.inner.owned_batches.lock().unwrap().insert(batch_id.clone());
+        let now = now_ms();
+        let mut tx = self.inner.db.begin().await?;
+        if total > 0 {
+            let wallet: Option<(i64, bool)> = sqlx::query_as("SELECT balance_micros, locked FROM wallets WHERE user_id = ?").bind(user).fetch_optional(&mut *tx).await?;
             let (balance, locked) = wallet.unwrap_or((0, false));
             if locked {
                 return Err(EngineError::Forbidden("Billing is paused on this account. Contact the operator.".into()));
             }
-            if balance < total {
+            let paid = sqlx::query("UPDATE wallets SET balance_micros = balance_micros - ? WHERE user_id = ? AND locked = 0 AND balance_micros >= ?")
+                .bind(total)
+                .bind(user)
+                .bind(total)
+                .execute(&mut *tx)
+                .await?;
+            if paid.rows_affected() != 1 {
                 return Err(EngineError::invalid(
                     format!("This run costs about ${:.2} and your balance is ${:.2}. Top up in Settings > Billing, or add your own key.", total as f64 / 1e6, balance as f64 / 1e6),
                     Some("billing"),
                 ));
             }
         }
-
-        let batch_id = batch.unwrap_or_else(crate::new_id);
-        self.inner.owned_batches.lock().unwrap().insert(batch_id.clone());
-        let now = now_ms();
-        let params_json = serde_json::to_string(&params).map_err(anyhow::Error::from)?;
-        let inputs_json = serde_json::to_string(&inputs).map_err(anyhow::Error::from)?;
-        let mut jobs = Vec::new();
-        for (i, (n, cost)) in runs.into_iter().enumerate() {
-            let id = crate::new_id();
-            let charge = charges[i];
-            let mut tx = self.inner.db.begin().await?;
-            if charge > 0 {
-                let paid = sqlx::query("UPDATE wallets SET balance_micros = balance_micros - ? WHERE user_id = ? AND locked = 0 AND balance_micros >= ?")
-                    .bind(charge)
-                    .bind(user)
-                    .bind(charge)
-                    .execute(&mut *tx)
-                    .await?;
-                if paid.rows_affected() != 1 {
-                    return Err(EngineError::invalid("Your balance ran out before every run could be queued.", Some("billing")));
+        let mut ids = Vec::new();
+        for plan in &plans {
+            for (n, cost, charge) in &plan.runs {
+                let id = crate::new_id();
+                if *charge > 0 {
+                    sqlx::query("INSERT INTO ledger (id, user_id, amount_micros, reason, job_id, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+                        .bind(format!("charge:{id}"))
+                        .bind(user)
+                        .bind(-charge)
+                        .bind(format!("{} run", plan.spec.name))
+                        .bind(&id)
+                        .bind(now)
+                        .execute(&mut *tx)
+                        .await?;
                 }
-                sqlx::query("INSERT INTO ledger (id, user_id, amount_micros, reason, job_id, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-                    .bind(format!("charge:{id}"))
-                    .bind(user)
-                    .bind(-charge)
-                    .bind(format!("{} run", spec.name))
-                    .bind(&id)
-                    .bind(now)
-                    .execute(&mut *tx)
-                    .await?;
+                sqlx::query(
+                    "INSERT INTO jobs (id, user_id, batch_id, model, provider, model_name, output, status, prompt, negative_prompt, params, inputs, preset, count, cost_usd, charged_micros, billing, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&id)
+                .bind(user)
+                .bind(&batch_id)
+                .bind(&plan.spec.id)
+                .bind(&plan.spec.provider)
+                .bind(&plan.spec.name)
+                .bind(plan.spec.output.as_str())
+                .bind(&plan.prompt)
+                .bind(&plan.negative)
+                .bind(&plan.params_json)
+                .bind(&plan.inputs_json)
+                .bind(&plan.preset)
+                .bind(*n as i64)
+                .bind(if *charge > 0 { Some(*charge as f64 / 1e6) } else { *cost })
+                .bind(charge)
+                .bind(plan.billing)
+                .bind(now)
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+                ids.push(id);
             }
-            sqlx::query(
-                "INSERT INTO jobs (id, user_id, batch_id, model, provider, model_name, output, status, prompt, negative_prompt, params, inputs, preset, count, cost_usd, charged_micros, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&id)
-            .bind(user)
-            .bind(&batch_id)
-            .bind(&spec.id)
-            .bind(&spec.provider)
-            .bind(&spec.name)
-            .bind(spec.output.as_str())
-            .bind(&req.prompt)
-            .bind(&negative)
-            .bind(&params_json)
-            .bind(&inputs_json)
-            .bind(&req.preset)
-            .bind(n as i64)
-            .bind(if charge > 0 { Some(charge as f64 / 1e6) } else { cost })
-            .bind(charge)
-            .bind(now)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
-            tx.commit().await?;
-            let row = store::job_row(&self.inner.db, user, &id).await?;
-            let job = row.to_job(Vec::new());
+        }
+        tx.commit().await?;
+        let mut jobs = Vec::new();
+        for id in ids {
+            let job = store::job_row(&self.inner.db, user, &id).await?.to_job(Vec::new());
             self.emit(user, "job", json!(job));
             jobs.push(job);
         }
@@ -366,17 +398,19 @@ impl Engine {
         let row = store::job_row(&self.inner.db, user, id).await.map_err(|_| EngineError::not_found("generation"))?;
         if !row.status().is_final() {
             let now = now_ms();
-            let done = sqlx::query("UPDATE jobs SET status = 'canceled', message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')")
+            // `attempts` is read in the same statement, so a submit that starts right after is
+            // stopped by the queue (it re-checks the status before calling the provider).
+            let done: Option<(i64,)> = sqlx::query_as("UPDATE jobs SET status = 'canceled', message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running') RETURNING attempts")
                 .bind(now)
                 .bind(now)
                 .bind(id)
-                .execute(&self.inner.db)
+                .fetch_optional(&self.inner.db)
                 .await?;
             if let Some(token) = self.inner.cancels.lock().unwrap().get(id) {
                 token.cancel();
             }
             // Refund only when the provider never got the job; a started run may already be billed upstream.
-            if done.rows_affected() == 1 && row.remote.is_none() {
+            if matches!(done, Some((0,))) {
                 self.refund_job(id).await;
             }
         }
@@ -435,10 +469,15 @@ impl Engine {
     // ---------- assets ----------
 
     pub(crate) async fn insert_asset(&self, user: &str, stored: &Stored, source: &str, job: Option<&JobRow>, source_url: Option<&str>) -> Result<Asset> {
+        self.insert_named_asset(user, stored, source, job, source_url, None).await
+    }
+
+    pub(crate) async fn insert_named_asset(&self, user: &str, stored: &Stored, source: &str, job: Option<&JobRow>, source_url: Option<&str>, name: Option<&str>) -> Result<Asset> {
         let id = crate::new_id();
+        let name = name.map(|n| n.chars().filter(|c| !c.is_control()).take(200).collect::<String>()).filter(|n| !n.trim().is_empty());
         sqlx::query(
-            "INSERT INTO assets (id, user_id, job_id, kind, mime, hash, ext, size, width, height, duration_ms, has_thumb, source, model, prompt, source_url, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO assets (id, user_id, job_id, kind, mime, hash, ext, size, width, height, duration_ms, has_thumb, source, model, prompt, source_url, created_at, name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(user)
@@ -457,6 +496,7 @@ impl Engine {
         .bind(job.map(|j| j.prompt.clone()))
         .bind(source_url)
         .bind(now_ms())
+        .bind(name)
         .execute(&self.inner.db)
         .await?;
         let asset = store::asset_row(&self.inner.db, user, &id).await?.to_asset();
@@ -468,8 +508,17 @@ impl Engine {
         if bytes.is_empty() {
             return Err(EngineError::invalid("The file is empty.", Some("file")));
         }
-        let stored = self.inner.files.store_bytes(bytes, mime, file_name).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("file")))?;
-        self.insert_asset(user, &stored, "upload", None, None).await
+        let stored = self.inner.files.store_bytes(bytes, mime, file_name, false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("file")))?;
+        self.insert_named_asset(user, &stored, "upload", None, None, file_name).await
+    }
+
+    /// Stores an upload straight from the request body stream (never buffered in memory).
+    pub async fn upload_stream<S>(&self, user: &str, stream: S, file_name: Option<&str>) -> Result<Asset>
+    where
+        S: futures::Stream<Item = std::result::Result<bytes::Bytes, std::io::Error>> + Unpin,
+    {
+        let stored = self.inner.files.store_stream(stream, None, file_name, false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("file")))?;
+        self.insert_named_asset(user, &stored, "upload", None, None, file_name).await
     }
 
     pub async fn import_url(&self, user: &str, url: &str) -> Result<Asset> {
@@ -477,15 +526,19 @@ impl Engine {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(EngineError::invalid("Only http and https URLs can be imported.", Some("url")));
         }
-        if self.mode() == crate::Mode::Hosted && is_private_host(&parsed) {
-            return Err(EngineError::invalid("Private network addresses cannot be imported.", Some("url")));
-        }
-        let resp = self.inner.download.get(parsed.clone()).send().await.map_err(|e| EngineError::invalid(format!("Download failed: {e}"), Some("url")))?;
+        let hosted = self.mode() == crate::Mode::Hosted;
+        let resp = if hosted {
+            // Hosted: only public addresses, checked on every redirect, with the checked address pinned.
+            crate::netguard::fetch_public(parsed.clone(), "pictesa").await.map_err(|e| EngineError::invalid(format!("Cannot import this URL: {e}."), Some("url")))?
+        } else {
+            self.inner.download.get(parsed.clone()).send().await.map_err(|e| EngineError::invalid(format!("Download failed: {e}"), Some("url")))?
+        };
         if !resp.status().is_success() {
-            return Err(EngineError::invalid(format!("Download failed with HTTP {}.", resp.status()), Some("url")));
+            return Err(EngineError::invalid(if hosted { "The download failed.".to_string() } else { format!("Download failed with HTTP {}.", resp.status()) }, Some("url")));
         }
-        let stored = self.inner.files.store_response(resp, Some(parsed.path())).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("url")))?;
-        self.insert_asset(user, &stored, "import", None, Some(url)).await
+        let stored = self.inner.files.store_response(resp, Some(parsed.path()), false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("url")))?;
+        let name = parsed.path_segments().and_then(|mut s| s.next_back()).filter(|n| !n.is_empty()).map(String::from);
+        self.insert_named_asset(user, &stored, "import", None, Some(url), name.as_deref()).await
     }
 
     pub async fn assets(&self, user: &str, f: &AssetFilter) -> Result<(Vec<Asset>, Option<String>)> {
@@ -539,7 +592,7 @@ impl Engine {
     pub async fn asset_file(&self, user: Option<&str>, id: &str) -> Result<(std::path::PathBuf, String, String)> {
         let row = match user {
             Some(u) => store::asset_row(&self.inner.db, u, id).await,
-            None => Ok(sqlx::query_as::<_, AssetRow>("SELECT * FROM assets WHERE id = ?").bind(id).fetch_one(&self.inner.db).await?),
+            None => Ok(sqlx::query_as::<_, AssetRow>("SELECT * FROM assets WHERE id = ? AND deleted_at IS NULL").bind(id).fetch_one(&self.inner.db).await?),
         }
         .map_err(|_| EngineError::not_found("file"))?;
         let name = format!("pictesa-{}.{}", row.id.to_lowercase(), row.ext);
@@ -597,9 +650,22 @@ impl Engine {
         Ok(asset)
     }
 
-    /// True when `key` is the signed key for this asset (public file URLs in hosted mode).
-    pub fn file_key_ok(&self, asset_id: &str, key: &str) -> bool {
-        crate::queue::file_key(self, asset_id) == key
+    /// True when `key` is a valid, unexpired signed key for this asset (provider input links in hosted mode).
+    pub fn file_key_ok(&self, asset_id: &str, key: &str, exp: i64) -> bool {
+        if exp < now_ms() || exp > now_ms() + crate::queue::FILE_LINK_TTL_MS + 60_000 {
+            return false;
+        }
+        let expected = crate::queue::file_key(self, asset_id, exp);
+        expected.len() == key.len() && expected.bytes().zip(key.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0
+    }
+}
+
+/// The prompt sent to the provider: the person's text plus the preset's words.
+pub fn with_preset(prompt: &str, suffix: &str) -> String {
+    match (prompt.trim().is_empty(), suffix.trim().is_empty()) {
+        (_, true) => prompt.to_string(),
+        (true, false) => suffix.to_string(),
+        (false, false) => format!("{}, {}", prompt.trim_end().trim_end_matches(','), suffix),
     }
 }
 
@@ -619,7 +685,8 @@ pub fn validate_params(spec: &ModelSpec, given: &Map<String, Value>) -> Result<M
                 p.validate(&v).map_err(|m| EngineError::invalid(m, Some(&format!("params.{k}"))))?;
                 out.insert(k.clone(), v);
             }
-            None if spec.params.is_empty() => {
+            // Only models that declare passthrough accept settings outside their spec.
+            None if spec.meta.get("passthrough").and_then(Value::as_bool) == Some(true) => {
                 out.insert(k.clone(), v.clone());
             }
             None => return Err(EngineError::invalid(format!("{} has no setting called {k}.", spec.name), Some(&format!("params.{k}")))),
@@ -692,11 +759,3 @@ pub fn estimate_cost(spec: &ModelSpec, params: &Map<String, Value>, outputs: u32
     Some((usd * 10_000.0).round() / 10_000.0)
 }
 
-fn is_private_host(u: &url::Url) -> bool {
-    match u.host() {
-        Some(url::Host::Ipv4(ip)) => ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unspecified() || (ip.segments()[0] & 0xfe00) == 0xfc00,
-        Some(url::Host::Domain(d)) => d == "localhost" || d.ends_with(".local") || d.ends_with(".internal"),
-        None => true,
-    }
-}

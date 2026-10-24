@@ -96,7 +96,7 @@ function SlotGroup({ slot, model, mode, inputs, invalid, onPick }: { slot: Input
             <>
               <Icon name={roleIcon[slot.role]} />
               <span className="slot-label">{label}</span>
-              {slot.max > 1 && (
+              {slot.max > 1 && filled.length > 0 && (
                 <small className="slot-count">
                   {filled.length}/{slot.max}
                 </small>

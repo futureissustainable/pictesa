@@ -66,6 +66,39 @@ export function ModelPicker({ models, model, onSelect, loading }: { models: Mode
           setFilters={setFilters}
           onSelect={(next) => {
             onSelect(next);
+            // Keep the filters, start the next search fresh.
+            setFilters({ ...current, q: "" });
+            close();
+          }}
+        />
+      )}
+    </Control>
+  );
+}
+
+/** "+ Compare": adds another model to run the same prompt side by side. */
+export function ComparePicker({ models, exclude, disabled, onAdd }: { models: ModelSpec[]; exclude: string[]; disabled: boolean; onAdd(model: ModelSpec): void }) {
+  const [filters, setFilters] = useState<PickerFilters | null>(null);
+  const current = filters ?? { q: "", provider: "", task: "", where: "all", configuredOnly: true };
+  return (
+    <Control
+      label="Compare with another model"
+      icon="add"
+      value="Compare"
+      caret={false}
+      size="large"
+      className="compare-trigger"
+      panelClassName="model-panel"
+      showTitle={false}
+      disabled={disabled}
+    >
+      {(close) => (
+        <ModelList
+          models={models.filter((model) => !exclude.includes(model.id))}
+          filters={current}
+          setFilters={setFilters}
+          onSelect={(model) => {
+            onAdd(model);
             close();
           }}
         />
@@ -192,7 +225,12 @@ function ModelList({
                 </span>
                 <span className="model-side">
                   {model.open_weights && <span className="badge">Open weights</span>}
-                  {price && <span className="model-price">{price}</span>}
+                  {price && (
+                    <span className="model-price" title={model.billed ? "Paid from your Pictesa balance" : undefined}>
+                      {model.billed && <Icon name="account_balance_wallet" />}
+                      {price}
+                    </span>
+                  )}
                 </span>
                 <Icon name="check" className={`model-check ${isSelected ? "" : "invisible"}`} />
               </button>

@@ -23,11 +23,10 @@ Typical flow: list_models (filter by output image or video), optionally get_mode
 roles are reference, start_frame, end_frame, video, audio, mask. Presets (list_presets) add camera moves or looks.";
 
 pub async fn handle(ctx: &McpContext, msg: Value) -> Option<Value> {
-    let id = msg.get("id").cloned();
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
-    // Notifications (no id) never get an answer.
-    let id = id?;
+    // Notifications (no id, or a null id) never get an answer.
+    let id = msg.get("id").cloned().filter(|v| !v.is_null())?;
     let result = match method {
         "initialize" => {
             let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOLS[0]);
@@ -368,9 +367,12 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
             for (key, items) in args.get("inputs").and_then(Value::as_object).into_iter().flatten() {
                 let mut ids = Vec::new();
                 for item in items.as_array().into_iter().flatten() {
-                    let mut tagged = item.clone();
-                    tagged["role"] = json!("reference");
-                    ids.push(resolve_input(ctx, &tagged).await?.asset_id);
+                    let Some(obj) = item.as_object() else {
+                        return Err(format!("inputs.{key} items must be objects like {{\"path\": ...}}, {{\"url\": ...}} or {{\"asset_id\": ...}}"));
+                    };
+                    let mut tagged = obj.clone();
+                    tagged.insert("role".into(), json!("reference"));
+                    ids.push(resolve_input(ctx, &Value::Object(tagged)).await?.asset_id);
                 }
                 req.inputs.insert(key.clone(), ids);
             }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toggleFavorite, useAssetList } from "../../lib/assets";
 import { useModelNames, useModels } from "../../lib/catalog";
-import { kindIcon, kindPlural } from "../../lib/format";
+import { kindIcon } from "../../lib/format";
 import { Link, navigate, useLocation, withParams } from "../../lib/router";
 import type { AssetQuery, AssetSource, MediaKind } from "../../lib/types";
 import { openViewer, useSequence } from "../../lib/viewer";
@@ -9,6 +9,8 @@ import { Choice, Control } from "../../ui/control";
 import { AssetGrid } from "../../ui/grid";
 import { Icon, Spinner } from "../../ui/icon";
 import { SizeSlider, useImageSize } from "../../ui/size-slider";
+
+const kindLabelPlural: Record<MediaKind, string> = { image: "Images", video: "Videos", audio: "Audio" };
 
 const sources: { value: AssetSource | ""; label: string }[] = [
   { value: "", label: "All sources" },
@@ -90,9 +92,15 @@ export default function LibraryPage() {
         <SizeSlider />
         <div className="segmented" role="group" aria-label="Kind">
           {kinds.map((kind) => (
-            <button key={kind || "all"} type="button" aria-pressed={(query.kind ?? "") === kind} onClick={() => set({ kind: kind || null })} title={kind ? kindPlural[kind] : "Everything"}>
-              {kind ? <Icon name={kindIcon[kind]} /> : null}
-              <span className={kind ? "segmented-label" : ""}>{kind ? kindPlural[kind].charAt(0).toUpperCase() + kindPlural[kind].slice(1) : "All"}</span>
+            <button
+              key={kind || "all"}
+              type="button"
+              aria-pressed={(query.kind ?? "") === kind}
+              aria-label={kind ? kindLabelPlural[kind] : "Everything"}
+              title={kind ? kindLabelPlural[kind] : "Everything"}
+              onClick={() => set({ kind: kind || null })}
+            >
+              {kind ? <Icon name={kindIcon[kind]} filled={query.kind === kind} /> : "All"}
             </button>
           ))}
         </div>

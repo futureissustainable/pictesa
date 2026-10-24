@@ -296,7 +296,8 @@ impl Engine {
         let mut step_outputs: HashMap<String, String> = HashMap::new();
         let mut job_ids: Vec<String> = Vec::new();
         for (i, step) in recipe.steps.iter().enumerate() {
-            if self.run_status(run_id).await.as_deref() == Some("canceled") {
+            // Stop when the run was canceled, or marked failed by another process.
+            if self.run_status(run_id).await.as_deref() != Some("running") {
                 return Ok(());
             }
             let mut inputs = Vec::new();
@@ -344,7 +345,19 @@ impl Engine {
                 .execute(&self.inner.db)
                 .await?;
             self.publish_run(user, run_id).await;
-            let job = self.wait_job(user, &job_id, Duration::from_secs(3 * 3600)).await?;
+            // Heartbeat while the step runs, so other processes can tell a live run from an orphan.
+            let beat = {
+                let (engine, run) = (self.clone(), run_id.to_string());
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(15)).await;
+                        let _ = sqlx::query("UPDATE recipe_runs SET updated_at = ? WHERE id = ? AND status = 'running'").bind(now_ms()).bind(&run).execute(&engine.inner.db).await;
+                    }
+                })
+            };
+            let job = self.wait_job(user, &job_id, Duration::from_secs(3 * 3600)).await;
+            beat.abort();
+            let job = job?;
             match job.status {
                 JobStatus::Succeeded => {
                     if let Some(first) = job.outputs.first() {
@@ -419,10 +432,12 @@ impl Engine {
         self.recipe_run(user, id).await
     }
 
-    /// Runs interrupted by a restart cannot resume their orchestration; mark them failed.
+    /// Runs whose process died cannot resume their orchestration; mark them failed once their
+    /// heartbeat is clearly stale (a live run updates it every 15 seconds).
     pub(crate) async fn fail_orphan_runs(&self) {
-        let _ = sqlx::query("UPDATE recipe_runs SET status = 'failed', error = 'Pictesa restarted during this run. Finished steps are in the library.', updated_at = ? WHERE status = 'running'")
+        let _ = sqlx::query("UPDATE recipe_runs SET status = 'failed', error = 'Pictesa restarted during this run. Finished steps are in the library.', updated_at = ? WHERE status = 'running' AND updated_at < ?")
             .bind(now_ms())
+            .bind(now_ms() - 120_000)
             .execute(&self.inner.db)
             .await;
     }

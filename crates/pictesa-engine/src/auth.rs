@@ -48,6 +48,9 @@ impl Engine {
         if password.chars().count() < 10 {
             return Err(EngineError::invalid("Use a password of at least 10 characters.", Some("password")));
         }
+        if password.len() > 256 {
+            return Err(EngineError::invalid("Use a password of at most 256 characters.", Some("password")));
+        }
         let (taken,): (i64,) = sqlx::query_as("SELECT count(*) FROM users WHERE email = ?").bind(&email).fetch_one(&self.inner.db).await?;
         if taken > 0 {
             return Err(EngineError::Conflict("An account with this email already exists.".into()));
@@ -56,19 +59,26 @@ impl Engine {
             .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
             .map_err(|e| EngineError::Internal(anyhow::anyhow!("password hashing failed: {e}")))?
             .to_string();
-        // The first account on a hosted instance administers it.
-        let (users,): (i64,) = sqlx::query_as("SELECT count(*) FROM users WHERE id != 'local'").fetch_one(&self.inner.db).await?;
-        let role = if users == 0 { "admin" } else { "user" };
+        // The first account on a hosted instance administers it; decided inside the insert so two
+        // simultaneous first sign-ups cannot both become admin.
         let id = crate::new_id();
-        sqlx::query("INSERT INTO users (id, email, name, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(&id)
-            .bind(&email)
-            .bind(name.map(str::trim).filter(|n| !n.is_empty()))
-            .bind(hash)
-            .bind(role)
-            .bind(now_ms())
-            .execute(&self.inner.db)
-            .await?;
+        let inserted = sqlx::query(
+            "INSERT INTO users (id, email, name, password_hash, role, created_at)
+             SELECT ?, ?, ?, ?, CASE WHEN (SELECT count(*) FROM users WHERE id != 'local') = 0 THEN 'admin' ELSE 'user' END, ?",
+        )
+        .bind(&id)
+        .bind(&email)
+        .bind(name.map(str::trim).filter(|n| !n.is_empty()))
+        .bind(hash)
+        .bind(now_ms())
+        .execute(&self.inner.db)
+        .await;
+        if let Err(sqlx::Error::Database(e)) = &inserted {
+            if e.is_unique_violation() {
+                return Err(EngineError::Conflict("An account with this email already exists.".into()));
+            }
+        }
+        inserted?;
         self.user(&id).await
     }
 
@@ -79,6 +89,9 @@ impl Engine {
 
     /// Checks the password and returns the user. The same error covers unknown email and wrong password.
     pub async fn login(&self, email: &str, password: &str) -> Result<User> {
+        if password.len() > 256 {
+            return Err(EngineError::Unauthorized("Email or password is wrong.".into()));
+        }
         let email = email.trim().to_lowercase();
         let row: Option<UserRow> = sqlx::query_as("SELECT id, email, name, password_hash, role, created_at FROM users WHERE email = ?")
             .bind(&email)

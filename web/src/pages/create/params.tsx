@@ -66,7 +66,7 @@ export function ParamControl({ spec, value, onChange, invalid }: { spec: ParamSp
     const label = optionLabel(spec, value);
     if (isRatioParam(spec)) {
       return (
-        <Control label={spec.label} invalid={invalid} trigger={<><RatioShape text={label} /><span className="control-value">{label}</span><Icon name="keyboard_arrow_down" className="control-caret" /></>}>
+        <Control label={spec.label} icon="aspect_ratio" value={label} invalid={invalid}>
           <div className="ratio-options">
             {spec.options.map((option) => (
               <Choice key={String(option.value)} selected={sameValue(option.value, value)} onPick={() => onChange(option.value)} className="ratio-choice">

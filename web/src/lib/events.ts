@@ -1,5 +1,5 @@
 import { createStore } from "./store";
-import type { Asset, Job } from "./types";
+import type { Asset, Job, RecipeRun } from "./types";
 
 // One EventSource for the whole app (GET /api/events). Lists and the job tray subscribe here.
 
@@ -10,6 +10,7 @@ export const connection = createStore<ConnectionState>("idle");
 interface Handlers {
   job?: (job: Job) => void;
   asset?: (asset: Asset) => void;
+  recipe?: (run: RecipeRun) => void;
   /** Local only: an asset deleted permanently. */
   removed?: (id: string) => void;
 }
@@ -61,6 +62,10 @@ export function startEvents() {
     const asset = parse<Asset>(event as MessageEvent);
     if (asset) handlers.forEach((handler) => handler.asset?.(asset));
   });
+  stream.addEventListener("recipe", (event) => {
+    const run = parse<RecipeRun>(event as MessageEvent);
+    if (run) handlers.forEach((handler) => handler.recipe?.(run));
+  });
 }
 
 export function stopEvents() {
@@ -81,8 +86,9 @@ export function onReconnect(listener: () => void): () => void {
 }
 
 /** Lets local actions (an upload, a favorite toggle) reach every list the same way server events do. */
-export function emitLocal({ job, asset, removed }: { job?: Job; asset?: Asset; removed?: string }) {
+export function emitLocal({ job, asset, removed, recipe }: { job?: Job; asset?: Asset; removed?: string; recipe?: RecipeRun }) {
   if (job) handlers.forEach((handler) => handler.job?.(job));
+  if (recipe) handlers.forEach((handler) => handler.recipe?.(recipe));
   if (asset) handlers.forEach((handler) => handler.asset?.(asset));
   if (removed) handlers.forEach((handler) => handler.removed?.(removed));
 }

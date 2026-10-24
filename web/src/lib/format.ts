@@ -116,7 +116,6 @@ export const taskLabel: Record<Task, string> = {
 };
 export const taskName = (task: string) => taskLabel[task as Task] ?? task.replaceAll("_", " ");
 
-export const providerKindLabel: Record<ProviderKind, string> = { local: "Local", gateway: "Gateway", cloud: "Cloud" };
 export const providerKindIcon: Record<ProviderKind, IconName> = { local: "computer", gateway: "hub", cloud: "cloud" };
 
 /** Icons for the shared parameter vocabulary (crates/pictesa-core keys) and common gateway names. */

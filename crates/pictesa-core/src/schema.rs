@@ -236,6 +236,19 @@ fn param_for(name: &str, prop: &Value) -> Option<ParamSpec> {
 /// Media inputs are filled by the caller (they may need uploading); this handles text and params.
 pub fn body_from_bindings(bindings: &Value, req: &crate::GenerationRequest) -> Map<String, Value> {
     let mut body = Map::new();
+    // Plain params first; bound fields (prompt, count, seed, inputs) are written after and always win.
+    let bound: Vec<&str> = ["prompt", "negative_prompt", "count"].iter().filter_map(|k| bindings.get(*k).and_then(Value::as_str)).collect();
+    let input_fields: Vec<String> = input_bindings(bindings).into_iter().map(|(_, f, _)| f).collect();
+    let seed_field = bindings.get("seed").and_then(Value::as_str);
+    for (k, v) in &req.params {
+        if k == keys::SEED || bound.contains(&k.as_str()) || input_fields.contains(k) {
+            continue;
+        }
+        body.insert(k.clone(), v.clone());
+    }
+    if let Some(v) = req.params.get(keys::SEED) {
+        body.insert(seed_field.unwrap_or("seed").into(), v.clone());
+    }
     if let Some(field) = bindings.get("prompt").and_then(Value::as_str) {
         if !req.prompt.is_empty() {
             body.insert(field.into(), json!(req.prompt));
@@ -248,14 +261,6 @@ pub fn body_from_bindings(bindings: &Value, req: &crate::GenerationRequest) -> M
     }
     if let Some(field) = bindings.get("count").and_then(Value::as_str) {
         body.insert(field.into(), json!(req.num_outputs));
-    }
-    let seed_field = bindings.get("seed").and_then(Value::as_str);
-    for (k, v) in &req.params {
-        if k == keys::SEED {
-            body.insert(seed_field.unwrap_or("seed").into(), v.clone());
-        } else {
-            body.insert(k.clone(), v.clone());
-        }
     }
     body
 }

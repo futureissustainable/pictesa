@@ -1,4 +1,5 @@
 import { api, errorMessage } from "./api";
+import { refreshBillingSoon } from "./catalog";
 import { onReconnect, subscribeEvents } from "./events";
 import { notifyError } from "./notices";
 import { createStore } from "./store";
@@ -33,6 +34,7 @@ export function upsertJob(job: Job, track = false) {
   }
   if (job.status === "succeeded" && !doneTimers.has(job.id)) {
     doneTimers.set(job.id, setTimeout(() => removeJob(job.id), READY_MS));
+    refreshBillingSoon();
   }
 }
 

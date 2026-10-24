@@ -94,6 +94,9 @@ pub struct Asset {
     pub favorite: bool,
     pub created_at: i64,
     pub deleted_at: Option<i64>,
+    /// Original file name for uploads and imports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Body of `POST /api/generations`.

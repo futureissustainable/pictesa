@@ -56,23 +56,29 @@ export function LibraryPicker({ kind, room, title, onPick, onClose }: { kind: Me
           <span className="sr-only">Search {kindPlural[kind]}</span>
           <input type="search" value={search} placeholder={`Search ${kindPlural[kind]} by prompt`} onChange={(event) => setSearch(event.target.value)} />
         </label>
-        <form
-          className="import-link"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void importLink();
-          }}
-        >
+        {/* Not a <form>: the picker opens inside the composer's form. */}
+        <div className="import-link">
           <label className="search">
             <Icon name="link" />
             <span className="sr-only">Import from a link</span>
-            <input type="url" value={link} placeholder="Or paste a link to import" onChange={(event) => setLink(event.target.value)} />
+            <input
+              type="url"
+              value={link}
+              placeholder="Or paste a link to import"
+              onChange={(event) => setLink(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void importLink();
+                }
+              }}
+            />
           </label>
-          <button type="submit" className="text-button" disabled={!link.trim() || importing}>
+          <button type="button" className="text-button" disabled={!link.trim() || importing} onClick={() => void importLink()}>
             {importing ? <Spinner /> : <Icon name="download" />}
             Import
           </button>
-        </form>
+        </div>
       </div>
       <div className="picker-body" ref={scrollRef}>
         {list.items.length ? (

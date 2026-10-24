@@ -8,7 +8,7 @@ use std::{
     process::Stdio,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use futures::StreamExt;
 use pictesa_core::MediaKind;
 use tokio::io::AsyncWriteExt;
@@ -51,10 +51,15 @@ impl FileStore {
         for d in [&s.files, &s.thumbs, &s.tmp] {
             std::fs::create_dir_all(d)?;
         }
-        // Leftovers from an interrupted download.
+        // Leftovers from an interrupted download. Only old ones: another process (the server next to a
+        // CLI command) may be writing fresh ones right now.
         if let Ok(entries) = std::fs::read_dir(&s.tmp) {
+            let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(6 * 3600);
             for e in entries.flatten() {
-                let _ = std::fs::remove_file(e.path());
+                let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < cutoff);
+                if old {
+                    let _ = std::fs::remove_file(e.path());
+                }
             }
         }
         Ok(s)
@@ -76,37 +81,54 @@ impl FileStore {
         self.tmp.join(format!("{}.part", crate::new_id()))
     }
 
-    pub async fn store_bytes(&self, bytes: &[u8], mime_hint: Option<&str>, name_hint: Option<&str>) -> anyhow::Result<Stored> {
+    /// Stores bytes. `trusted` (provider outputs) lets the declared type count when sniffing finds
+    /// nothing; files from people (uploads, imports) must be recognised from their content.
+    pub async fn store_bytes(&self, bytes: &[u8], mime_hint: Option<&str>, name_hint: Option<&str>, trusted: bool) -> anyhow::Result<Stored> {
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Err(anyhow!("file is larger than 4 GB"));
         }
         let tmp = self.tmp_file();
         tokio::fs::write(&tmp, bytes).await?;
         let hash = blake3::hash(bytes).to_hex().to_string();
-        let mime = sniff(bytes).map(String::from).or_else(|| mime_hint.map(String::from)).or_else(|| name_hint.and_then(|n| mime_guess::from_path(n).first_raw().map(String::from)));
+        let mime = decide_mime(bytes, mime_hint, name_hint, trusted);
         self.finalize(tmp, hash, bytes.len() as u64, mime).await
     }
 
     /// Streams an HTTP response to disk while hashing it.
-    pub async fn store_response(&self, resp: reqwest::Response, name_hint: Option<&str>) -> anyhow::Result<Stored> {
+    pub async fn store_response(&self, resp: reqwest::Response, name_hint: Option<&str>, trusted: bool) -> anyhow::Result<Stored> {
         let header_mime = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.split(';').next().unwrap_or(s).trim().to_string());
+        let stream = resp.bytes_stream().map(|c| c.map_err(|e| std::io::Error::other(e.to_string())));
+        self.store_stream(stream, header_mime.as_deref(), name_hint, trusted).await
+    }
+
+    /// Streams any byte source (an upload, a download) to disk while hashing it, never holding it in memory.
+    pub async fn store_stream<S>(&self, mut stream: S, mime_hint: Option<&str>, name_hint: Option<&str>, trusted: bool) -> anyhow::Result<Stored>
+    where
+        S: futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Unpin,
+    {
         let tmp = self.tmp_file();
         let mut file = tokio::fs::File::create(&tmp).await?;
         let mut hasher = blake3::Hasher::new();
         let mut size = 0u64;
         let mut head: Vec<u8> = Vec::with_capacity(64);
-        let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.context("download interrupted")?;
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(e) => {
+                    drop(file);
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    return Err(anyhow!("transfer interrupted: {e}"));
+                }
+            };
             size += chunk.len() as u64;
             if size > MAX_FILE_BYTES {
                 drop(file);
                 let _ = tokio::fs::remove_file(&tmp).await;
-                return Err(anyhow!("download is larger than 4 GB"));
+                return Err(anyhow!("file is larger than 4 GB"));
             }
             if head.len() < 64 {
                 head.extend_from_slice(&chunk[..chunk.len().min(64 - head.len())]);
@@ -116,15 +138,19 @@ impl FileStore {
         }
         file.flush().await?;
         drop(file);
-        let mime = sniff(&head)
-            .map(String::from)
-            .or(header_mime.filter(|m| m != "application/octet-stream" && m != "binary/octet-stream"))
-            .or_else(|| name_hint.and_then(|n| mime_guess::from_path(n.split('?').next().unwrap_or(n)).first_raw().map(String::from)));
+        if size == 0 {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(anyhow!("the file is empty"));
+        }
+        let mime = decide_mime(&head, mime_hint, name_hint, trusted);
         self.finalize(tmp, hasher.finalize().to_hex().to_string(), size, mime).await
     }
 
     async fn finalize(&self, tmp: PathBuf, hash: String, size: u64, mime: Option<String>) -> anyhow::Result<Stored> {
-        let mime = mime.ok_or_else(|| anyhow!("unrecognized file type"))?;
+        let Some(mime) = mime else {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(anyhow!("unrecognized or unsupported file type"));
+        };
         let kind = MediaKind::from_mime(&mime).ok_or_else(|| {
             let _ = std::fs::remove_file(&tmp);
             anyhow!("unsupported file type {mime}")
@@ -231,6 +257,28 @@ fn image_thumb(src: &Path, dst: &Path) -> anyhow::Result<(u32, u32)> {
     let rgb = small.to_rgb8();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 82).encode_image(&rgb)?;
     Ok((w, h))
+}
+
+/// Types Pictesa stores and serves. Nothing that a browser could execute (no SVG or HTML).
+const SAFE_MIMES: &[&str] = &[
+    "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif", "image/heic",
+    "video/mp4", "video/quicktime", "video/webm",
+    "audio/mpeg", "audio/wav", "audio/x-wav", "audio/ogg", "audio/flac", "audio/mp4", "audio/aac",
+];
+
+/// Content sniffing first; a declared type only for trusted sources and only when it is a safe type.
+fn decide_mime(head: &[u8], mime_hint: Option<&str>, name_hint: Option<&str>, trusted: bool) -> Option<String> {
+    if let Some(m) = sniff(head) {
+        return Some(m.to_string());
+    }
+    if !trusted {
+        return None;
+    }
+    let declared = mime_hint
+        .map(|m| m.split(';').next().unwrap_or(m).trim().to_ascii_lowercase())
+        .filter(|m| m != "application/octet-stream" && m != "binary/octet-stream")
+        .or_else(|| name_hint.and_then(|n| mime_guess::from_path(n.split('?').next().unwrap_or(n)).first_raw().map(String::from)));
+    declared.filter(|m| SAFE_MIMES.contains(&m.as_str()))
 }
 
 /// Recognizes common media formats from their first bytes.

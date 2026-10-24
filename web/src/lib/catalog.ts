@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { api, errorMessage } from "./api";
+import { api, ApiError, errorMessage } from "./api";
 import { createStore, useStore } from "./store";
 import type { MediaKind, ModelSpec, Preset, ProviderState } from "./types";
 
@@ -8,6 +8,8 @@ import type { MediaKind, ModelSpec, Preset, ProviderState } from "./types";
 interface Loadable<T> {
   data: T | null;
   error: string | null;
+  /** HTTP status of the failure (403 when the account may not see it). */
+  status?: number;
   loading: boolean;
 }
 
@@ -23,7 +25,7 @@ function cachedLoader<T>(fetcher: () => Promise<T>) {
     store.set({ ...state, loading: true, error: null });
     inflight = fetcher()
       .then((data) => store.set({ data, error: null, loading: false }))
-      .catch((error: unknown) => store.set({ ...store.get(), error: errorMessage(error), loading: false }))
+      .catch((error: unknown) => store.set({ ...store.get(), error: errorMessage(error), status: error instanceof ApiError ? error.status : 0, loading: false }))
       .finally(() => {
         inflight = null;
       });
@@ -77,7 +79,6 @@ export function usePresets(output: MediaKind) {
 }
 
 const providerLoader = cachedLoader(() => api.providers().then((answer) => answer.providers ?? []));
-export const providersStore = providerLoader.store;
 export const loadProviders = providerLoader.load;
 
 export function useProviders() {
@@ -116,3 +117,69 @@ export function useModelNames(outputs: readonly MediaKind[]): (id: string | null
   for (const output of outputs) for (const model of lists[output].data ?? []) names.set(model.id, model.name);
   return (id) => (id ? (names.get(id) ?? fallbackModelName(id)) : "");
 }
+
+// Discovered gateway models arrive without params or inputs (`complete: false`). The full spec
+// is fetched once, when a model is selected, and kept for the session.
+const fullSpecs = createStore<Record<string, ModelSpec>>({});
+const specErrors = createStore<Record<string, string>>({});
+const pendingSpecs = new Map<string, Promise<ModelSpec | null>>();
+
+export function loadFullModel(model: ModelSpec): Promise<ModelSpec | null> {
+  if (model.complete !== false) return Promise.resolve(model);
+  const cached = fullSpecs.get()[model.id];
+  if (cached) return Promise.resolve(cached);
+  let pending = pendingSpecs.get(model.id);
+  if (!pending) {
+    specErrors.set(({ [model.id]: _old, ...rest }) => rest);
+    pending = api
+      .model(model.id)
+      .then((spec) => {
+        const full: ModelSpec = { ...model, ...spec, complete: true };
+        fullSpecs.set((specs) => ({ ...specs, [model.id]: full }));
+        return full;
+      })
+      .catch((error: unknown) => {
+        specErrors.set((errors) => ({ ...errors, [model.id]: errorMessage(error) }));
+        return null;
+      })
+      .finally(() => pendingSpecs.delete(model.id));
+    pendingSpecs.set(model.id, pending);
+  }
+  return pending;
+}
+
+export function useFullModel(model: ModelSpec | undefined): { spec: ModelSpec | undefined; loading: boolean; error: string | null; retry(): void } {
+  const specs = useStore(fullSpecs);
+  const errors = useStore(specErrors);
+  useEffect(() => {
+    if (model && model.complete === false) void loadFullModel(model);
+  }, [model]);
+  const retry = () => {
+    if (model) void loadFullModel(model);
+  };
+  if (!model || model.complete !== false) return { spec: model, loading: false, error: null, retry };
+  const full = specs[model.id];
+  const error = errors[model.id] ?? null;
+  return { spec: full, loading: !full && !error, error, retry };
+}
+
+// Hosted wallet. Only read in hosted mode; `enabled` decides whether anything is shown.
+const billingLoader = cachedLoader(() => api.billing());
+export const loadBilling = billingLoader.load;
+
+export function useBilling(active: boolean) {
+  const state = useStore(billingLoader.store);
+  useEffect(() => {
+    if (active) void billingLoader.load();
+  }, [active]);
+  return state;
+}
+
+let billingTimer: ReturnType<typeof setTimeout> | undefined;
+/** Runs change the balance; refresh it shortly after one finishes. */
+export function refreshBillingSoon() {
+  if (!billingLoader.store.get().data?.enabled) return;
+  clearTimeout(billingTimer);
+  billingTimer = setTimeout(() => void billingLoader.load(true), 1200);
+}
+

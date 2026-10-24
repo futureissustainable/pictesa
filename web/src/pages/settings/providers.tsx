@@ -13,7 +13,7 @@ const groups: { kind: ProviderKind; title: string; text: string }[] = [
 ];
 
 export function Providers() {
-  const { data, error, loading } = useProviders();
+  const { data, error, loading, status } = useProviders();
   const [refreshing, setRefreshing] = useState(false);
 
   // Links such as /settings#provider-fal land on that card.
@@ -39,9 +39,18 @@ export function Providers() {
   };
 
   if (!data) {
+    if (status === 403) {
+      return (
+        <div className="empty">
+          <Icon name="key" />
+          <h2>Providers are managed by the admin.</h2>
+          <p>Your account uses the models this server has set up.</p>
+        </div>
+      );
+    }
     return error ? (
       <div className="empty" role="alert">
-        <Icon name={error.includes("403") || /admin/i.test(error) ? "key" : "cloud_off"} />
+        <Icon name="cloud_off" />
         <h2>Providers did not load.</h2>
         <p>{error}</p>
         <button type="button" className="primary-button" onClick={() => void loadProviders(true)}>
@@ -96,7 +105,6 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
   const dirty = Object.keys(edits).length > 0;
   const busy = status.kind === "busy";
   const stored = Object.values(provider.values ?? {}).some((value) => value.source === "stored");
-  const serverUrl = provider.kind === "local" ? provider.values?.base_url?.value : null;
 
   useEffect(() => {
     if (!confirmForget) return;
@@ -151,10 +159,7 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
         </div>
         <span className={`status ${provider.configured ? "" : "off"}`}>{provider.configured ? "Ready" : "Not set up"}</span>
       </header>
-      <p className="provider-meta">
-        {plural(provider.model_count, "model", "models")}
-        {serverUrl ? <span className="provider-url">{serverUrl}</span> : null}
-      </p>
+      <p className="provider-meta">{plural(provider.model_count, "model", "models")}</p>
       <form onSubmit={(event) => void save(event)} noValidate>
         {provider.fields.map((field) => (
           <CredentialInput
@@ -173,9 +178,11 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
           />
         ))}
         <div className="provider-actions">
-          <button type="submit" className="primary-button" disabled={!dirty || busy}>
-            Save
-          </button>
+          {dirty && (
+            <button type="submit" className="primary-button" disabled={busy}>
+              Save
+            </button>
+          )}
           <button type="button" className="text-button" disabled={busy} onClick={() => void check()}>
             <Icon name="check_circle" />
             Check
@@ -214,14 +221,15 @@ function CredentialInput({ field, state, value, onChange }: { field: CredentialF
   const id = useId();
   const [reveal, setReveal] = useState(false);
   const env = field.env?.filter(Boolean) ?? [];
-  const storedValue = !field.secret && state?.source === "stored" ? (state.value ?? "") : "";
+  // Non-secret values (a local server URL) are shown as they are; secrets never come back.
+  const storedValue = field.secret ? "" : (state?.value ?? "");
   const placeholder = field.secret
     ? state?.set
       ? state.source === "env"
         ? `Set by ${env[0] ?? "the environment"}`
         : "Saved. Type to replace."
       : (field.placeholder ?? "Paste your key")
-    : (state?.value ?? field.default ?? field.placeholder ?? "");
+    : (field.placeholder ?? field.default ?? "");
   const hint =
     state?.source === "env"
       ? `Read from ${env.join(" or ") || "the environment"}.`
@@ -230,7 +238,7 @@ function CredentialInput({ field, state, value, onChange }: { field: CredentialF
           ? "Stored on the server."
           : null
         : state?.source === "default"
-          ? "Using the default."
+          ? "Default."
           : env.length
             ? `Or set ${env.join(" or ")}.`
             : null;

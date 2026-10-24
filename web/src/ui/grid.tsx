@@ -48,7 +48,8 @@ export function AssetGrid({ items, size, scroller, label, titleOf, onOpen, onFav
     return () => observer.disconnect();
   }, []);
 
-  const fit = width ? Math.max(1, Math.floor((width + gap) / (size + gap))) : 1;
+  // The slider sets a target width: use the column count whose width lands closest to it.
+  const fit = width ? Math.max(1, Math.round((width + gap) / (size + gap))) : 1;
   // Collapse unused columns when only a few items remain, so cells fill the canvas.
   const columns = Math.max(1, Math.min(fit, items.length || 1));
   const cell = width ? (width - gap * (columns - 1)) / columns : size;

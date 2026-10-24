@@ -1,5 +1,12 @@
 //! The job dispatcher: claims queued jobs within each provider's concurrency limit, submits
 //! them, polls until done, downloads the outputs into the library and reports every step.
+//!
+//! Safety rules:
+//! - A job's heartbeat (`updated_at`) is refreshed every few seconds for its whole lifetime, so
+//!   another process only adopts it after this one really died.
+//! - The status is re-checked right before the provider is called, so a cancel never races a submit.
+//! - A failed run is refunded only when the provider never billed it (rejected before or at submit,
+//!   or reported the job as failed). Timeouts, lost contact and download failures keep the charge.
 
 use std::time::Duration;
 
@@ -9,6 +16,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    creds::Sources,
     store::{self, JobRow},
     Engine, JobStatus,
 };
@@ -45,33 +53,47 @@ pub async fn run(engine: Engine) {
 }
 
 async fn dispatch_once(engine: &Engine) -> anyhow::Result<()> {
-    let queued: Vec<JobRow> = sqlx::query_as("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 100").fetch_all(&engine.inner.db).await?;
-    for job in queued {
-        if scoped(engine) && !engine.inner.owned_batches.lock().unwrap().contains(&job.batch_id) {
-            continue;
-        }
-        let Some(provider) = engine.inner.catalog.provider(&job.provider) else {
-            fail(engine, &job, "not_supported", &format!("provider {} is not available in this build", job.provider)).await;
+    // One scan per provider, so a long backlog on one provider never starves the others.
+    let providers: Vec<(String,)> = sqlx::query_as("SELECT DISTINCT provider FROM jobs WHERE status = 'queued'").fetch_all(&engine.inner.db).await?;
+    for (pid,) in providers {
+        let Some(provider) = engine.inner.catalog.provider(&pid) else {
+            if scoped(engine) {
+                continue;
+            }
+            let orphans: Vec<JobRow> = sqlx::query_as("SELECT * FROM jobs WHERE status = 'queued' AND provider = ? LIMIT 50").bind(&pid).fetch_all(&engine.inner.db).await?;
+            for job in orphans {
+                fail(engine, &job, "not_supported", &format!("The provider {pid} is not available in this build."), true).await;
+            }
             continue;
         };
         let limit = provider.info().max_concurrency.max(1);
-        {
-            let running = engine.inner.running.lock().unwrap();
-            if running.get(&job.provider).copied().unwrap_or(0) >= limit {
-                continue;
-            }
-        }
-        let now = now_ms();
-        let claimed = sqlx::query("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ?, message = 'Starting' WHERE id = ? AND status = 'queued'")
-            .bind(now)
-            .bind(now)
-            .bind(&job.id)
-            .execute(&engine.inner.db)
-            .await?;
-        if claimed.rows_affected() != 1 {
+        let running = engine.inner.running.lock().unwrap().get(&pid).copied().unwrap_or(0);
+        if running >= limit {
             continue;
         }
-        spawn_job(engine, job);
+        let queued: Vec<JobRow> = sqlx::query_as("SELECT * FROM jobs WHERE status = 'queued' AND provider = ? ORDER BY id LIMIT ?")
+            .bind(&pid)
+            .bind(((limit - running) * 4) as i64)
+            .fetch_all(&engine.inner.db)
+            .await?;
+        for job in queued {
+            if engine.inner.running.lock().unwrap().get(&pid).copied().unwrap_or(0) >= limit {
+                break;
+            }
+            if scoped(engine) && !engine.inner.owned_batches.lock().unwrap().contains(&job.batch_id) {
+                continue;
+            }
+            let now = now_ms();
+            let claimed = sqlx::query("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ?, message = 'Starting' WHERE id = ? AND status = 'queued'")
+                .bind(now)
+                .bind(now)
+                .bind(&job.id)
+                .execute(&engine.inner.db)
+                .await?;
+            if claimed.rows_affected() == 1 {
+                spawn_job(engine, job);
+            }
+        }
     }
     Ok(())
 }
@@ -84,7 +106,27 @@ pub(crate) fn spawn_job(engine: &Engine, job: JobRow) {
     tokio::spawn(async move {
         let id = job.id.clone();
         let provider = job.provider.clone();
-        process(&engine, job, token).await;
+        // Heartbeat for the whole lifetime of the job, including long submits and downloads.
+        let beat = {
+            let (engine, id) = (engine.clone(), id.clone());
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(HEARTBEAT).await;
+                    let _ = sqlx::query("UPDATE jobs SET updated_at = ? WHERE id = ? AND status = 'running'").bind(now_ms()).bind(&id).execute(&engine.inner.db).await;
+                }
+            })
+        };
+        // Run the job in its own task so a panic in provider code cannot leak the slot.
+        let work = {
+            let (engine, job) = (engine.clone(), job.clone());
+            tokio::spawn(async move { process(&engine, job, token).await })
+        };
+        if let Err(e) = work.await {
+            tracing::error!("job {id} crashed: {e}");
+            let refund = matches!(store::job_row_any(&engine.inner.db, &id).await, Ok(r) if r.attempts == 0);
+            fail(&engine, &job, "internal", "Pictesa hit an internal error while running this job. Retry it, and report it if it happens again.", refund).await;
+        }
+        beat.abort();
         engine.inner.cancels.lock().unwrap().remove(&id);
         if let Some(n) = engine.inner.running.lock().unwrap().get_mut(&provider) {
             *n = n.saturating_sub(1);
@@ -112,7 +154,8 @@ async fn set_progress(engine: &Engine, job: &JobRow, progress: Option<f32>, mess
     publish(engine, &job.id).await;
 }
 
-async fn fail(engine: &Engine, job: &JobRow, kind: &str, message: &str) {
+/// Marks a job failed. `refund` returns its wallet charge (only when the provider did not bill it).
+async fn fail(engine: &Engine, job: &JobRow, kind: &str, message: &str, refund: bool) {
     let now = now_ms();
     let changed = sqlx::query("UPDATE jobs SET status = 'failed', error_kind = ?, error = ?, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')")
         .bind(kind)
@@ -122,10 +165,19 @@ async fn fail(engine: &Engine, job: &JobRow, kind: &str, message: &str) {
         .bind(&job.id)
         .execute(&engine.inner.db)
         .await;
-    if matches!(changed, Ok(r) if r.rows_affected() == 1) {
+    if refund && matches!(changed, Ok(r) if r.rows_affected() == 1) {
         engine.refund_job(&job.id).await;
     }
     publish(engine, &job.id).await;
+}
+
+/// Whether a submit error means the provider did not take (and bill) the job.
+fn submit_refundable(e: &ProviderError) -> bool {
+    match e {
+        // A timeout may have reached the provider; everything else was refused or never sent.
+        ProviderError::Transient(m) => !m.starts_with("request timed out"),
+        _ => true,
+    }
 }
 
 async fn is_canceled(engine: &Engine, job: &JobRow, token: &CancellationToken) -> bool {
@@ -138,34 +190,44 @@ async fn is_canceled(engine: &Engine, job: &JobRow, token: &CancellationToken) -
 async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
     publish(engine, &job.id).await;
     let Some(provider) = engine.inner.catalog.provider(&job.provider) else {
-        return fail(engine, &job, "not_supported", &format!("The provider {} is not available in this build.", job.provider)).await;
+        return fail(engine, &job, "not_supported", &format!("The provider {} is not available in this build.", job.provider), job.attempts == 0).await;
     };
-    let ctx = match engine.ctx_for(&job.user_id, provider.as_ref()).await {
-        Ok(c) => c,
-        Err(e) => return fail(engine, &job, "auth", &e.to_string()).await,
+    // Use exactly the credential source the job was created (and paid) with.
+    let ctx = match engine.resolve_with(&job.user_id, provider.as_ref(), Sources::for_billing(&job.billing)).await {
+        Ok(r) if Engine::is_configured(&provider.info(), &r) => engine.ctx_from(r),
+        Ok(_) => return fail(engine, &job, "auth", "The key this job was created with is no longer available. Add it again in Settings > Providers and retry.", job.attempts == 0).await,
+        Err(e) => return fail(engine, &job, "auth", &e.to_string(), job.attempts == 0).await,
     };
-    let spec = match engine.inner.catalog.resolve(&engine.inner.db, &ctx, &job.model).await {
+    let spec = match engine.model(&job.user_id, &job.model).await {
         Ok(s) => s,
-        Err(e) => return fail(engine, &job, "not_supported", &format!("{e:#}")).await,
+        Err(e) => return fail(engine, &job, "not_supported", &e.to_string(), job.attempts == 0).await,
     };
 
     // Resume a job that was already submitted before a restart; otherwise submit it now.
     let mut handle: Option<RemoteHandle> = job.remote.as_deref().and_then(|r| serde_json::from_str(r).ok());
     let mut outputs: Option<Vec<Output>> = None;
     if handle.is_none() {
+        if job.attempts > 0 {
+            // A submit was started by a process that died: the provider may have the job, so do not repeat it.
+            return fail(engine, &job, "interrupted", "Pictesa stopped before the provider confirmed this job. Retry it to run it again.", false).await;
+        }
         let req = match build_request(engine, &job, &spec).await {
             Ok(r) => r,
-            Err(e) => return fail(engine, &job, "invalid_input", &e).await,
+            Err(e) => return fail(engine, &job, "invalid_input", &e, true).await,
         };
         let mut attempt = 0;
         loop {
             attempt += 1;
-            let _ = sqlx::query("UPDATE jobs SET attempts = attempts + 1, message = 'Submitting', updated_at = ? WHERE id = ?").bind(now_ms()).bind(&job.id).execute(&engine.inner.db).await;
-            let result = tokio::select! {
-                r = provider.submit(&ctx, &spec, &req) => r,
-                _ = token.cancelled() => return,
-            };
-            match result {
+            // Mark the submit as started; this fails when the job was canceled meanwhile.
+            let started = sqlx::query("UPDATE jobs SET attempts = attempts + 1, message = 'Submitting', updated_at = ? WHERE id = ? AND status = 'running'")
+                .bind(now_ms())
+                .bind(&job.id)
+                .execute(&engine.inner.db)
+                .await;
+            if !matches!(started, Ok(r) if r.rows_affected() == 1) {
+                return publish(engine, &job.id).await;
+            }
+            match provider.submit(&ctx, &spec, &req).await {
                 Ok(Submission::Done(out)) => {
                     outputs = Some(out);
                     break;
@@ -183,9 +245,9 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                 Err(e) if e.is_retryable() && attempt < MAX_SUBMIT_ATTEMPTS => {
                     let wait = e.retry_after().unwrap_or(Duration::from_millis(1500 * 2u64.pow(attempt)));
                     set_progress(engine, &job, None, Some(format!("Provider busy, retrying in {}s", wait.as_secs().max(1)))).await;
-                    tokio::select! { _ = tokio::time::sleep(wait) => {}, _ = token.cancelled() => return }
+                    tokio::select! { _ = tokio::time::sleep(wait) => {}, _ = token.cancelled() => return publish(engine, &job.id).await }
                 }
-                Err(e) => return fail(engine, &job, e.kind(), &e.to_string()).await,
+                Err(e) => return fail(engine, &job, e.kind(), &e.to_string(), submit_refundable(&e)).await,
             }
         }
         publish(engine, &job.id).await;
@@ -197,31 +259,31 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
         let mut attempt: u32 = 0;
         let mut errors: u32 = 0;
         let mut last: Option<(Option<f32>, Option<String>)> = None;
-        let mut beat = tokio::time::Instant::now();
         loop {
-            if beat.elapsed() > HEARTBEAT {
-                let _ = sqlx::query("UPDATE jobs SET updated_at = ? WHERE id = ? AND status = 'running'").bind(now_ms()).bind(&job.id).execute(&engine.inner.db).await;
-                beat = tokio::time::Instant::now();
-            }
             if is_canceled(engine, &job, &token).await {
                 let _ = provider.cancel(&ctx, &handle).await;
                 return publish(engine, &job.id).await;
             }
             if started.elapsed() > MAX_RUNTIME {
                 let _ = provider.cancel(&ctx, &handle).await;
-                return fail(engine, &job, "timeout", "The provider did not finish within 3 hours.").await;
+                return fail(engine, &job, "timeout", "The provider did not finish within 3 hours.", false).await;
             }
-            tokio::select! { _ = tokio::time::sleep(provider.poll_interval(attempt)) => {}, _ = token.cancelled() => {
-                let _ = provider.cancel(&ctx, &handle).await;
-                return publish(engine, &job.id).await;
-            } }
+            tokio::select! {
+                _ = tokio::time::sleep(provider.poll_interval(attempt)) => {}
+                _ = token.cancelled() => continue,
+            }
             attempt += 1;
-            match provider.poll(&ctx, &handle).await {
+            let polled = tokio::select! {
+                r = provider.poll(&ctx, &handle) => r,
+                _ = token.cancelled() => continue,
+            };
+            match polled {
                 Ok(PollStatus::Done(out)) => {
                     outputs = Some(out);
                     break;
                 }
-                Ok(PollStatus::Failed(e)) => return fail(engine, &job, e.kind(), &e.to_string()).await,
+                // The provider reports the job failed; providers do not bill failed generations.
+                Ok(PollStatus::Failed(e)) => return fail(engine, &job, e.kind(), &e.to_string(), true).await,
                 Ok(PollStatus::Queued { position }) => {
                     errors = 0;
                     let msg = Some(match position {
@@ -244,21 +306,22 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                 Err(e) if e.is_retryable() || matches!(e, ProviderError::Failed(_)) && errors < 3 => {
                     errors += 1;
                     if errors > MAX_POLL_ERRORS {
-                        return fail(engine, &job, e.kind(), &format!("Lost contact with the provider: {e}")).await;
+                        return fail(engine, &job, "lost_contact", &format!("Lost contact with the provider: {e}"), false).await;
                     }
                     if let Some(wait) = e.retry_after() {
                         tokio::time::sleep(wait).await;
                     }
                 }
-                Err(e) => return fail(engine, &job, e.kind(), &e.to_string()).await,
+                Err(e) => return fail(engine, &job, e.kind(), &e.to_string(), false).await,
             }
         }
     }
 
     let outputs = outputs.unwrap_or_default();
     if outputs.is_empty() {
-        return fail(engine, &job, "failed", "The provider finished without returning any media.").await;
+        return fail(engine, &job, "failed", "The provider finished without returning any media.", false).await;
     }
+    // The provider finished (and billed). Keep the results even if a cancel arrived too late.
     set_progress(engine, &job, Some(0.99), Some("Saving".into())).await;
     let mut saved = 0;
     let mut last_error = None;
@@ -272,10 +335,11 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
         }
     }
     if saved == 0 {
-        return fail(engine, &job, "failed", &format!("Could not download the result: {:#}", last_error.unwrap())).await;
+        let _ = sqlx::query("UPDATE jobs SET status = 'running' WHERE id = ? AND status = 'canceled'").bind(&job.id).execute(&engine.inner.db).await;
+        return fail(engine, &job, "download_failed", &format!("Could not download the result: {:#}", last_error.unwrap()), false).await;
     }
     let now = now_ms();
-    let _ = sqlx::query("UPDATE jobs SET status = 'succeeded', progress = 1.0, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'")
+    let _ = sqlx::query("UPDATE jobs SET status = 'succeeded', progress = 1.0, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('running', 'canceled')")
         .bind(now)
         .bind(now)
         .bind(&job.id)
@@ -289,21 +353,23 @@ async fn build_request(engine: &Engine, job: &JobRow, spec: &pictesa_core::Model
     for input in job.inputs_list() {
         let row = store::asset_row(&engine.inner.db, &job.user_id, &input.asset_id).await.map_err(|_| "An input file was deleted.".to_string())?;
         let path = engine.inner.files.path(&row.hash, &row.ext);
-        let url = engine.inner.cfg.public_url.as_ref().map(|base| format!("{}/files/{}?k={}", base.trim_end_matches('/'), row.id, file_key(engine, &row.id)));
+        // Hosted servers hand providers a short-lived signed link; local inputs are sent as bytes.
+        let url = engine.inner.cfg.public_url.as_ref().map(|base| signed_file_url(engine, base, &row.id));
         inputs.push(MediaInput {
             role: input.role,
             kind: store::parse_kind(&row.kind),
             mime: row.mime.clone(),
             path,
-            url: url.or(row.source_url.clone()),
+            url,
             width: row.width.map(|w| w as u32),
             height: row.height.map(|h| h as u32),
         });
     }
+    let suffix = job.preset.as_deref().and_then(|p| engine.preset(p)).map(|p| p.prompt_suffix).unwrap_or_default();
     Ok(GenerationRequest {
         job_id: job.id.clone(),
         model: spec.remote_id().to_string(),
-        prompt: job.prompt.clone(),
+        prompt: crate::jobs::with_preset(&job.prompt, &suffix),
         negative_prompt: job.negative_prompt.clone(),
         params: job.params_map(),
         inputs,
@@ -311,20 +377,27 @@ async fn build_request(engine: &Engine, job: &JobRow, spec: &pictesa_core::Model
     })
 }
 
-/// Unguessable per-file key so providers can fetch inputs by URL in hosted mode.
-pub fn file_key(engine: &Engine, asset_id: &str) -> String {
-    engine.inner.crypto.sign(asset_id)
+/// Validity of signed input links handed to providers.
+pub const FILE_LINK_TTL_MS: i64 = 6 * 3600 * 1000;
+
+fn signed_file_url(engine: &Engine, base: &str, asset_id: &str) -> String {
+    let exp = now_ms() + FILE_LINK_TTL_MS;
+    format!("{}/files/{asset_id}?e={exp}&k={}", base.trim_end_matches('/'), file_key(engine, asset_id, exp))
+}
+
+/// Unguessable, expiring key so providers can fetch inputs by URL in hosted mode.
+pub fn file_key(engine: &Engine, asset_id: &str, exp: i64) -> String {
+    engine.inner.crypto.sign(&format!("{asset_id}.{exp}"))
 }
 
 async fn save_output(engine: &Engine, job: &JobRow, out: Output) -> anyhow::Result<()> {
     let stored = match out {
-        Output::Bytes { data, mime } => engine.inner.files.store_bytes(&data, Some(&mime), None).await?,
-        Output::Url { url, headers } if url.starts_with("data:") => {
+        Output::Bytes { data, mime } => engine.inner.files.store_bytes(&data, Some(&mime), None, true).await?,
+        Output::Url { url, .. } if url.starts_with("data:") => {
             let (meta, b64) = url.split_once(',').ok_or_else(|| anyhow::anyhow!("bad data URI"))?;
             let mime = meta.trim_start_matches("data:").split(';').next().unwrap_or("").to_string();
             let data = base64::engine::general_purpose::STANDARD.decode(b64.trim())?;
-            let _ = headers;
-            engine.inner.files.store_bytes(&data, Some(&mime), None).await?
+            engine.inner.files.store_bytes(&data, Some(&mime), None, true).await?
         }
         Output::Url { url, headers } => {
             let mut last = None;
@@ -335,7 +408,7 @@ async fn save_output(engine: &Engine, job: &JobRow, out: Output) -> anyhow::Resu
                     req = req.header(k, v);
                 }
                 match req.send().await {
-                    Ok(resp) if resp.status().is_success() => match engine.inner.files.store_response(resp, Some(&url)).await {
+                    Ok(resp) if resp.status().is_success() => match engine.inner.files.store_response(resp, Some(&url), true).await {
                         Ok(s) => {
                             stored = Some(s);
                             break;
@@ -356,7 +429,8 @@ async fn save_output(engine: &Engine, job: &JobRow, out: Output) -> anyhow::Resu
 
 impl Engine {
     /// Adopts running jobs whose process died (stale heartbeat): resumes the ones the provider
-    /// already accepted and fails the ones interrupted mid-submit (re-submitting could charge twice).
+    /// accepted, restarts never-submitted ones, and fails the ones interrupted mid-submit without
+    /// a refund (the provider may have billed).
     pub(crate) async fn recover(&self) -> anyhow::Result<()> {
         let running: Vec<JobRow> = sqlx::query_as("SELECT * FROM jobs WHERE status = 'running' AND updated_at < ?")
             .bind(now_ms() - STALE_MS)
@@ -366,7 +440,7 @@ impl Engine {
             if self.inner.cancels.lock().unwrap().contains_key(&job.id) {
                 continue;
             }
-            // Take ownership atomically so two servers never adopt the same job.
+            // Take ownership atomically so two processes never adopt the same job.
             let taken = sqlx::query("UPDATE jobs SET updated_at = ? WHERE id = ? AND status = 'running' AND updated_at = ?")
                 .bind(now_ms())
                 .bind(&job.id)
@@ -376,10 +450,10 @@ impl Engine {
             if taken.rows_affected() != 1 {
                 continue;
             }
-            if job.remote.is_some() {
+            if job.remote.is_some() || job.attempts == 0 {
                 spawn_job(self, job);
             } else {
-                fail(self, &job, "interrupted", "Pictesa stopped before the provider confirmed this job. Retry it to run it again.").await;
+                fail(self, &job, "interrupted", "Pictesa stopped before the provider confirmed this job. Retry it to run it again.", false).await;
             }
         }
         Ok(())

@@ -1,5 +1,6 @@
 {
  "icons": [
+  "account_balance_wallet",
   "add",
   "add_circle",
   "add_photo_alternate",
@@ -11,6 +12,7 @@
   "aspect_ratio",
   "auto_awesome",
   "block",
+  "camera",
   "casino",
   "check",
   "check_circle",
@@ -22,6 +24,7 @@
   "code",
   "computer",
   "content_copy",
+  "conversion_path",
   "delete",
   "delete_forever",
   "dns",
@@ -42,6 +45,7 @@
   "ink_eraser",
   "key",
   "keyboard_arrow_down",
+  "landscape",
   "last_page",
   "license",
   "light_mode",

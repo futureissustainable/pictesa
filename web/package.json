@@ -14,7 +14,7 @@
     "mock:hosted": "VITE_MOCK=hosted vite",
     "build": "node scripts/check-icons.mjs && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "icons": "python3 scripts/subset-icons.py"
   },
   "dependencies": {

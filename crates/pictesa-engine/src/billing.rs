@@ -162,7 +162,10 @@ impl Engine {
         }
         let user: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?").bind(email.trim().to_lowercase()).fetch_optional(&self.inner.db).await?;
         let (user,) = user.ok_or_else(|| EngineError::not_found("account"))?;
-        self.credit(&user, &format!("grant:{operation}"), to_micros(usd_amount), "Allowance from the operator", None).await?;
+        let added = self.credit(&user, &format!("grant:{user}:{operation}"), to_micros(usd_amount), "Allowance from the operator", None).await?;
+        if !added {
+            return Err(EngineError::Conflict(format!("The grant \"{operation}\" was already given to this account.")));
+        }
         Ok(())
     }
 
@@ -206,8 +209,8 @@ impl Engine {
             ("line_items[0][quantity]", "1".into()),
             ("metadata[user_id]", user.to_string()),
             ("metadata[request_id]", request_id.to_string()),
-            ("success_url", format!("{base}/settings/billing?payment=success")),
-            ("cancel_url", format!("{base}/settings/billing?payment=cancelled")),
+            ("success_url", format!("{base}/settings/billing?checkout=success")),
+            ("cancel_url", format!("{base}/settings/billing?checkout=canceled")),
         ];
         if let Some(e) = email {
             form.push(("customer_email", e.to_string()));
@@ -261,14 +264,32 @@ impl Engine {
                 if amount != total || stored_session.as_deref().is_some_and(|s| s != session) {
                     return Err(EngineError::invalid("Payment mismatch.", None));
                 }
-                self.credit(user, &format!("stripe:{session}"), amount * 10_000, "Balance top-up", None).await?;
+                let micros = amount * 10_000;
+                let mut tx = self.inner.db.begin().await?;
+                let added = sqlx::query("INSERT OR IGNORE INTO ledger (id, user_id, amount_micros, reason, created_at) VALUES (?, ?, ?, 'Balance top-up', ?)")
+                    .bind(format!("stripe:{session}"))
+                    .bind(user)
+                    .bind(micros)
+                    .bind(now_ms())
+                    .execute(&mut *tx)
+                    .await?;
+                if added.rows_affected() == 1 {
+                    sqlx::query("INSERT OR IGNORE INTO wallets (user_id) VALUES (?)").bind(user).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE wallets SET balance_micros = balance_micros + max(? - debt_micros, 0), debt_micros = max(debt_micros - ?, 0) WHERE user_id = ?")
+                        .bind(micros)
+                        .bind(micros)
+                        .bind(user)
+                        .execute(&mut *tx)
+                        .await?;
+                }
                 sqlx::query("UPDATE checkouts SET paid = 1, session_id = ?, payment_intent = ? WHERE user_id = ? AND request_id = ?")
                     .bind(session)
                     .bind(obj.get("payment_intent").and_then(Value::as_str))
                     .bind(user)
                     .bind(request)
-                    .execute(&self.inner.db)
+                    .execute(&mut *tx)
                     .await?;
+                tx.commit().await?;
             }
             "charge.refunded" => {
                 let intent = obj.get("payment_intent").and_then(Value::as_str).unwrap_or("");

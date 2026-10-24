@@ -20,17 +20,25 @@ export function requestFromJob(job: Job): GenerationRequest {
   return request;
 }
 
-/** `pictesa generate ...` for the CLI. Flag names follow the CLI contract noted in web/README.md. */
+const exampleExtension: Record<string, string> = { video: "mp4", audio: "mp3" };
+
+/**
+ * `pictesa generate ...` as the CLI takes it: the prompt is positional and `--input` reads a
+ * local file, so library inputs become example paths to replace.
+ */
 export function cliCommand(request: GenerationRequest): string {
   const parts = ["pictesa generate", `--model ${shellQuote(request.model)}`];
-  if (request.prompt) parts.push(`--prompt ${shellQuote(request.prompt)}`);
-  if (request.negative_prompt) parts.push(`--negative-prompt ${shellQuote(request.negative_prompt)}`);
   for (const [key, value] of Object.entries(request.params)) {
     if (value !== null) parts.push(`--param ${shellQuote(`${key}=${value}`)}`);
   }
-  for (const input of request.inputs) parts.push(`--input ${shellQuote(`${input.role}=${input.asset_id}`)}`);
+  request.inputs.forEach((input, index) => {
+    const name = `${input.role}${request.inputs.filter((item) => item.role === input.role).length > 1 ? `-${index + 1}` : ""}`;
+    parts.push(`--input ${shellQuote(`${input.role}=./${name}.${exampleExtension[input.role] ?? "png"}`)}`);
+  });
   if (request.count > 1) parts.push(`--count ${request.count}`);
+  if (request.negative_prompt) parts.push(`--negative ${shellQuote(request.negative_prompt)}`);
   if (request.preset) parts.push(`--preset ${shellQuote(request.preset)}`);
+  if (request.prompt) parts.push(shellQuote(request.prompt));
   return parts.join(" \\\n  ");
 }
 

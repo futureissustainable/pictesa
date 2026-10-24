@@ -1,6 +1,9 @@
 import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { useBilling } from "./lib/catalog";
 import { connection, startEvents, stopEvents } from "./lib/events";
+import { money } from "./lib/format";
 import { isActive, jobs, loadActiveJobs } from "./lib/jobs";
+import { loadActiveRuns } from "./lib/recipes";
 import { Link, navigate, useLocation } from "./lib/router";
 import { loadSession, useSession } from "./lib/session";
 import { useStore } from "./lib/store";
@@ -11,8 +14,10 @@ import { Notices } from "./ui/notices";
 
 const CreatePage = lazy(() => import("./pages/create/create-page"));
 const LibraryPage = lazy(() => import("./pages/library/library-page"));
+const RecipesPage = lazy(() => import("./pages/recipes/recipes-page"));
 const SettingsPage = lazy(() => import("./pages/settings/settings-page"));
 const AuthPage = lazy(() => import("./pages/auth/auth-page"));
+const TokenPage = lazy(() => import("./pages/auth/auth-page").then((module) => ({ default: module.TokenPage })));
 const Viewer = lazy(() => import("./pages/viewer/viewer"));
 
 type Section = "create" | "library" | "favorites" | "uploads" | "trash" | "settings" | "none";
@@ -37,7 +42,7 @@ const settingsItem: NavItem = { id: "settings", label: "Settings", icon: "tune",
 const mobileItems = [primary[0]!, primary[1]!, collections[0]!, settingsItem];
 
 function sectionOf(url: URL): Section {
-  if (url.pathname === "/") return "create";
+  if (url.pathname === "/" || url.pathname === "/recipes") return "create";
   if (url.pathname.startsWith("/settings")) return "settings";
   if (url.pathname === "/library") {
     if (url.searchParams.get("trash") === "true") return "trash";
@@ -66,6 +71,13 @@ export function App() {
 
   if (state.status === "loading") return <Splash />;
   if (state.status === "offline") return <Offline message={state.message} />;
+  if (state.me.needs_token) {
+    return (
+      <Suspense fallback={<Splash />}>
+        <TokenPage />
+      </Suspense>
+    );
+  }
   if (state.me.mode === "hosted" && !state.me.user) {
     return (
       <Suspense fallback={<Splash />}>
@@ -111,6 +123,7 @@ function Shell({ me }: { me: Me }) {
   useEffect(() => {
     startEvents();
     void loadActiveJobs();
+    void loadActiveRuns();
     return () => stopEvents();
   }, []);
 
@@ -118,9 +131,10 @@ function Shell({ me }: { me: Me }) {
     if (url.pathname === "/login" || url.pathname === "/signup") navigate("/", { replace: true });
   }, [url.pathname]);
 
+  const recipes = url.pathname === "/recipes";
   useEffect(() => {
-    document.title = `${titles[section]} | Pictesa`;
-  }, [section]);
+    document.title = `${recipes ? "Recipes" : titles[section]} | Pictesa`;
+  }, [section, recipes]);
 
   const navButton = (item: NavItem) => (
     <Link
@@ -156,7 +170,7 @@ function Shell({ me }: { me: Me }) {
         <div className="sidebar-bottom">{navButton(settingsItem)}</div>
       </aside>
       <main className="main" id="workspace">
-        <Topbar title={titles[section]} me={me} />
+        <Topbar title={recipes ? "Recipes" : titles[section]} me={me} />
         <ErrorBoundary key={section}>
           <Suspense
             fallback={
@@ -166,7 +180,9 @@ function Shell({ me }: { me: Me }) {
               </div>
             }
           >
-            {section === "create" ? (
+            {recipes ? (
+              <RecipesPage />
+            ) : section === "create" ? (
               <CreatePage />
             ) : section === "settings" ? (
               <SettingsPage />
@@ -204,6 +220,7 @@ function Shell({ me }: { me: Me }) {
 
 function Topbar({ title, me }: { title: string; me: Me }) {
   const state = useStore(connection);
+  const billing = useBilling(me.mode === "hosted" && Boolean(me.user)).data;
   return (
     <header className="topbar">
       <Brand className="mobile-brand" />
@@ -218,8 +235,12 @@ function Topbar({ title, me }: { title: string; me: Me }) {
           </span>
         )}
         {me.mode === "hosted" && me.user && (
-          <Link to="/settings/account" className="account-button" aria-label="Account settings">
-            <span className="account-label">{me.user.name || me.user.email}</span>
+          <Link
+            to={billing?.enabled ? "/settings/billing" : "/settings/account"}
+            className="account-button"
+            aria-label={billing?.enabled ? `Balance ${money(billing.balance_usd)}, billing settings` : "Account settings"}
+          >
+            <span className="account-label">{billing?.enabled ? money(billing.balance_usd) : me.user.name || me.user.email}</span>
             <span className="avatar">{(me.user.name || me.user.email).slice(0, 1).toUpperCase()}</span>
           </Link>
         )}
@@ -245,14 +266,14 @@ function NotFound() {
 }
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state = { error: null as Error | null };
+  override state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) {
     return { error };
   }
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(error, info.componentStack);
   }
-  render() {
+  override render() {
     if (!this.state.error) return this.props.children;
     return (
       <div className="workspace">

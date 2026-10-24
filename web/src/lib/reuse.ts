@@ -1,5 +1,5 @@
 import { api } from "./api";
-import { loadModels, peekModels } from "./catalog";
+import { loadFullModel, loadModels, peekModels } from "./catalog";
 import { composer, loadSettings, placeAsset, selectModel } from "./composer";
 import { kindLabel, roleLabel } from "./format";
 import { notify } from "./notices";
@@ -30,7 +30,9 @@ export async function sendToCreate(asset: Asset, mode: MediaKind, role: InputRol
   await loadModels(mode);
   const models = peekModels(mode) ?? [];
   const currentId = composer.get().modelByMode[mode];
-  const current = models.find((model) => model.id === currentId);
+  const listed = models.find((model) => model.id === currentId);
+  // The current model may be a listed-only spec; its slots are known once the full spec loads.
+  const current = (listed && (await loadFullModel(listed))) ?? undefined;
   const candidates = models.filter((model) => fits(model, role, asset.kind));
   const target =
     (current && fits(current, role, asset.kind) ? current : undefined) ??
