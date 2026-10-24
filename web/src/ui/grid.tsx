@@ -56,9 +56,9 @@ interface Layout {
 
 /** Masonry: each cell goes to the shortest column, at its own aspect ratio. */
 function layoutCells(ratios: number[], width: number, size: number, gap: number): Layout {
-  const fit = width ? Math.max(1, Math.round((width + gap) / (size + gap))) : 1;
-  // Collapse unused columns when only a few items remain, so cells fill the canvas.
-  const columns = Math.max(1, Math.min(fit, ratios.length || 1));
+  // The column count follows the size slider only: a few results keep their size instead of
+  // stretching to the full width (one result would otherwise be taller than the window).
+  const columns = width ? Math.max(1, Math.round((width + gap) / (size + gap))) : 1;
   const cellWidth = width ? (width - gap * (columns - 1)) / columns : size;
   const heights = new Float64Array(columns);
   const n = ratios.length;
