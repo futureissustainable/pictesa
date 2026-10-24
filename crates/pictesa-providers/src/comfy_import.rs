@@ -159,16 +159,19 @@ pub fn infer_manifest(name: &str, graph: &Graph) -> Result<(Value, Vec<String>),
         return Err("The workflow saves nothing. Add a Save Image, Save Video or Save Audio node.".into());
     };
 
-    // Prompts: whatever feeds the samplers' positive and negative conditioning.
+    // Prompts: whatever feeds the samplers' positive and negative conditioning. A plain
+    // `conditioning` input (guiders, conditioning tweaks) counts as positive unless its node
+    // flows into a `negative` input, as in SD3's zeroed and time-limited negative branch.
     let mut positive = Vec::new();
     let mut negative = Vec::new();
-    for node in graph.values() {
+    for (id, node) in graph {
         for (name, v) in inputs(node).into_iter().flatten() {
             if link(v).is_none() {
                 continue;
             }
             match name.as_str() {
-                "positive" | "conditioning" => positive.extend(trace_text(graph, v)),
+                "positive" => positive.extend(trace_text(graph, v)),
+                "conditioning" if !consumers(graph, id).iter().any(|(_, input)| input == "negative") => positive.extend(trace_text(graph, v)),
                 "negative" => negative.extend(trace_text(graph, v)),
                 _ => {}
             }
@@ -234,7 +237,7 @@ pub fn infer_manifest(name: &str, graph: &Graph) -> Result<(Value, Vec<String>),
             };
             match name.as_str() {
                 "seed" | "noise_seed" if v.is_i64() || v.is_u64() => seeds.push(at(name)),
-                "steps" if v.is_i64() => steps.push((at(name), v.as_i64().unwrap_or(20))),
+                "steps" if v.is_i64() => steps.push((at(name), v.as_i64().unwrap_or(20).clamp(1, 1000))),
                 "cfg" if v.is_number() => cfgs.push((at(name), v.as_f64().unwrap_or(4.0))),
                 "guidance" if v.is_number() => guidance.push((at(name), v.as_f64().unwrap_or(3.5))),
                 "width" if v.is_i64() && latent => {
@@ -249,9 +252,9 @@ pub fn infer_manifest(name: &str, graph: &Graph) -> Result<(Value, Vec<String>),
                         Some(src) => (src.clone(), "value".to_string()),
                         None => (id.clone(), name.clone()),
                     };
-                    frames.push((n, i, v.as_i64().unwrap_or(81)));
+                    frames.push((n, i, v.as_i64().unwrap_or(81).clamp(1, 100_000)));
                 }
-                "fps" | "frame_rate" if v.is_number() => fps = fps.or(v.as_f64()),
+                "fps" | "frame_rate" if v.is_number() => fps = fps.or(v.as_f64().filter(|f| *f > 0.0 && *f <= 240.0)),
                 n if n.ends_with("_name") || n.starts_with("clip_name") => {
                     if let Some(file) = v.as_str().filter(|f| [".safetensors", ".gguf", ".ckpt", ".pt", ".pth", ".bin"].iter().any(|e| f.ends_with(e))) {
                         models.insert((file.to_string(), model_dir(n)));
@@ -337,7 +340,7 @@ pub fn infer_manifest(name: &str, graph: &Graph) -> Result<(Value, Vec<String>),
     if let Some((id, name, len)) = frames.first() {
         let fps_v = fps.unwrap_or(24.0);
         let (step, offset) = if (len - 1) % 8 == 0 { (8, 1) } else if (len - 1) % 4 == 0 { (4, 1) } else { (1, 0) };
-        let secs = ((*len as f64) / fps_v).round().max(1.0) as i64;
+        let secs = ((*len as f64) / fps_v).round().clamp(1.0, 3600.0) as i64;
         let binds: Vec<Value> = frames.iter().map(|(i, n, _)| json!({ "node": i, "input": n, "frames": { "fps": fps_v, "step": step, "offset": offset } })).collect();
         let _ = (id, name);
         params.push(json!({ "key": "duration", "label": "Duration", "type": "int", "min": 1, "max": (secs * 3).clamp(4, 20), "default": secs, "bind": binds }));
@@ -417,7 +420,8 @@ pub fn import(dir: &Path, name: &str, workflow: &Value) -> Result<(String, Value
     let (manifest, notes) = infer_manifest(name, graph)?;
     let mut id = slug(name);
     let mut n = 2;
-    while dir.join(&id).exists() {
+    // A folder with a built-in's id replaces that built-in, which an import must never do.
+    while dir.join(&id).exists() || crate::comfyui::is_builtin(&id) {
         id = format!("{}-{n}", slug(name));
         n += 1;
     }
@@ -484,6 +488,52 @@ mod tests {
         assert_eq!(dur["default"], 5);
         assert_eq!(dur["bind"][0]["frames"]["step"], 8);
         assert_eq!(m["size"]["match_input"], "start_frame");
+    }
+
+    #[test]
+    fn a_zeroed_negative_branch_stays_negative() {
+        // SD3 style: the negative encoder reaches KSampler.negative through ZeroOut, a timestep range and a combine.
+        let g: Graph = serde_json::from_value(json!({
+            "1": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "sd3.safetensors" } },
+            "2": { "class_type": "CLIPTextEncode", "inputs": { "text": "a fox", "clip": ["1", 1] } },
+            "3": { "class_type": "CLIPTextEncode", "inputs": { "text": "blurry", "clip": ["1", 1] } },
+            "4": { "class_type": "ConditioningZeroOut", "inputs": { "conditioning": ["3", 0] } },
+            "5": { "class_type": "ConditioningSetTimestepRange", "inputs": { "conditioning": ["3", 0], "start": 0.0, "end": 0.1 } },
+            "6": { "class_type": "ConditioningCombine", "inputs": { "conditioning_1": ["4", 0], "conditioning_2": ["5", 0] } },
+            "7": { "class_type": "EmptySD3LatentImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1 } },
+            "8": { "class_type": "KSampler", "inputs": { "model": ["1", 0], "positive": ["2", 0], "negative": ["6", 0], "latent_image": ["7", 0], "seed": 1, "steps": 28, "cfg": 4.5 } },
+            "9": { "class_type": "VAEDecode", "inputs": { "samples": ["8", 0], "vae": ["1", 2] } },
+            "10": { "class_type": "SaveImage", "inputs": { "images": ["9", 0] } }
+        }))
+        .unwrap();
+        let (m, _) = infer_manifest("SD3", &g).unwrap();
+        assert_eq!(m["prompt"], json!([["2", "text"]]));
+        assert_eq!(m["negative_prompt"], json!([["3", "text"]]));
+    }
+
+    #[test]
+    fn extreme_numbers_do_not_overflow() {
+        let g: Graph = serde_json::from_value(json!({
+            "1": { "class_type": "EmptyLatentVideo", "inputs": { "width": 832, "height": 480, "length": i64::MIN } },
+            "2": { "class_type": "KSampler", "inputs": { "latent_image": ["1", 0], "steps": i64::MAX } },
+            "3": { "class_type": "CreateVideo", "inputs": { "fps": 0, "images": ["2", 0] } },
+            "4": { "class_type": "SaveVideo", "inputs": { "video": ["3", 0] } }
+        }))
+        .unwrap();
+        let (m, _) = infer_manifest("Odd", &g).unwrap();
+        let param = |key: &str| m["params"].as_array().unwrap().iter().find(|p| p["key"] == key).unwrap().clone();
+        assert_eq!(param("duration")["default"], 1, "one frame at the 24 fps fallback");
+        assert_eq!(param("steps")["default"], 1000);
+    }
+
+    #[test]
+    fn an_import_never_takes_a_built_in_id() {
+        let dir = std::env::temp_dir().join(format!("pictesa-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let workflow = serde_json::to_value(sdxl_like()).unwrap();
+        let (id, _, _) = import(&dir, "Wan22 i2v", &workflow).unwrap();
+        assert_eq!(id, "wan22-i2v-2");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

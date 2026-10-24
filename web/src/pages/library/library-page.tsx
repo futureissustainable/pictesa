@@ -57,14 +57,16 @@ export default function LibraryPage() {
   };
   const togglePick = (asset: Asset) => {
     if (asset.kind !== "image") return notify("Characters are made of images.");
+    if (!picked.has(asset.id) && picked.size >= MAX_CHARACTER_IMAGES) return notify(`A character holds up to ${MAX_CHARACTER_IMAGES} images.`);
     setPicked((current) => {
       const next = new Map(current);
       if (next.has(asset.id)) next.delete(asset.id);
-      else if (next.size < MAX_CHARACTER_IMAGES) next.set(asset.id, asset);
-      else notify(`A character holds up to ${MAX_CHARACTER_IMAGES} images.`);
+      else next.set(asset.id, asset);
       return next;
     });
   };
+  // Trashed images cannot become a character: opening the trash ends a selection.
+  if (query.trash && selecting) stopSelecting();
   useSequence(list.items, list.hasMore, list.loadMore);
 
   // Typing updates the URL after a short pause; the URL is the source of truth for filters.

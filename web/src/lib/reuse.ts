@@ -84,10 +84,12 @@ export async function sendCharacterToCreate(character: Character) {
   if (!takesCharacter(current)) {
     const usable = models.filter((model) => model.configured && takesCharacter(model));
     const target = usable.find((model) => model.tags?.includes("featured")) ?? usable[0];
-    if (target) {
-      selectModel(mode, target, current);
-      notify(`Switched to ${target.name}, which takes reference images.`);
+    if (!target) {
+      notify("None of your image models takes reference images yet. Set one up in Settings > Providers to use characters.");
+      return;
     }
+    selectModel(mode, target, current);
+    notify(`Switched to ${target.name}, which takes reference images.`);
   }
   setCharacter(mode, character.id);
   setMode(mode);

@@ -329,6 +329,11 @@ pub(crate) fn parse_template(
     })
 }
 
+/// Whether an id belongs to a template shipped with Pictesa.
+pub(crate) fn is_builtin(id: &str) -> bool {
+    BUILTIN.iter().any(|(builtin, _, _)| *builtin == id)
+}
+
 fn builtins() -> &'static [Template] {
     static CELL: OnceLock<Vec<Template>> = OnceLock::new();
     CELL.get_or_init(|| {
@@ -1613,10 +1618,12 @@ impl Provider for ComfyUi {
         let cid = client_id();
         // Open the event stream first so short runs do not finish before it listens.
         live::watch(ctx, &base, cid);
-        let mut body = json!({ "prompt": graph, "client_id": cid });
+        // ComfyUI sends sampler previews only when asked: its default is `--preview-method none`.
+        // "auto" uses TAESD when installed, else a cheap latent-to-RGB image.
+        let mut body = json!({ "prompt": graph, "client_id": cid, "extra_data": { "preview_method": "auto" } });
         if let Some(k) = ctx.get("api_key").filter(|k| k.starts_with("comfyui-")) {
             // Lets partner (API) nodes inside a workflow bill the same Comfy account.
-            body["extra_data"] = json!({ "api_key_comfy_org": k });
+            body["extra_data"]["api_key_comfy_org"] = json!(k);
         }
         let resp = authed(ctx, ctx.http.post(format!("{base}/api/prompt")))
             .json(&body)
@@ -1775,9 +1782,10 @@ mod live {
         P.get_or_init(Default::default)
     }
 
-    /// The prompt that is executing right now (previews without metadata belong to it).
-    fn running() -> &'static Mutex<Option<String>> {
-        static R: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    /// The prompt each server is executing, by listener key (`base|client_id`). Previews without
+    /// metadata belong to it; frames of any other prompt are late or foreign and dropped.
+    fn running() -> &'static Mutex<HashMap<String, String>> {
+        static R: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
         R.get_or_init(Default::default)
     }
 
@@ -1785,28 +1793,27 @@ mod live {
         previews().lock().ok()?.get(prompt_id).map(|(b, m, _)| (b.clone(), m.clone()))
     }
 
-    /// Binary event: type 1 is a preview image (u32 image format, then bytes); type 4 adds a
-    /// JSON metadata block with the prompt id before the image.
-    pub fn apply_binary(msg: &[u8]) {
+    /// Binary event from one listener: type 1 is a preview image (u32 image format, then bytes);
+    /// type 4 adds a JSON metadata block with the prompt id before the image.
+    pub fn apply_binary(listener: &str, msg: &[u8]) {
         if msg.len() < 8 {
             return;
         }
+        let Some(prompt) = running().lock().ok().and_then(|r| r.get(listener).cloned()) else { return };
         let event = u32::from_be_bytes([msg[0], msg[1], msg[2], msg[3]]);
-        let (prompt, format, image) = match event {
-            1 => {
-                let format = u32::from_be_bytes([msg[4], msg[5], msg[6], msg[7]]);
-                let Some(p) = running().lock().ok().and_then(|r| r.clone()) else { return };
-                (p, format, &msg[8..])
-            }
+        let (format, image) = match event {
+            1 => (u32::from_be_bytes([msg[4], msg[5], msg[6], msg[7]]), &msg[8..]),
             4 => {
                 let len = u32::from_be_bytes([msg[4], msg[5], msg[6], msg[7]]) as usize;
                 if msg.len() < 8 + len {
                     return;
                 }
                 let Ok(meta) = serde_json::from_slice::<Value>(&msg[8..8 + len]) else { return };
-                let Some(p) = meta.get("prompt_id").and_then(Value::as_str).map(String::from) else { return };
+                if meta.get("prompt_id").and_then(Value::as_str) != Some(prompt.as_str()) {
+                    return;
+                }
                 let format = if meta.get("image_type").and_then(Value::as_str).is_some_and(|t| t.contains("png")) { 2 } else { 1 };
-                (p, format, &msg[8 + len..])
+                (format, &msg[8 + len..])
             }
             _ => return,
         };
@@ -1963,10 +1970,10 @@ mod live {
                 if frame.fin {
                     if text {
                         if let Ok(v) = serde_json::from_slice::<Value>(&message) {
-                            apply(&v);
+                            apply(key, &v);
                         }
                     } else {
-                        apply_binary(&message);
+                        apply_binary(key, &message);
                     }
                     message.clear();
                 }
@@ -2057,14 +2064,20 @@ mod live {
     }
 
     /// Records one ComfyUI event.
-    pub fn apply(v: &Value) {
+    pub fn apply(listener: &str, v: &Value) {
         let data = v.get("data").unwrap_or(&Value::Null);
         let Some(prompt) = data.get("prompt_id").and_then(Value::as_str) else {
             return;
         };
-        if matches!(v.get("type").and_then(Value::as_str), Some("progress" | "executing" | "execution_start")) {
-            if let Ok(mut r) = running().lock() {
-                *r = Some(prompt.to_string());
+        if let Ok(mut r) = running().lock() {
+            match v.get("type").and_then(Value::as_str) {
+                Some("progress" | "executing" | "execution_start") => {
+                    r.insert(listener.to_string(), prompt.to_string());
+                }
+                Some("execution_success" | "execution_error" | "execution_interrupted") if r.get(listener).is_some_and(|p| p == prompt) => {
+                    r.remove(listener);
+                }
+                _ => {}
             }
         }
         let Ok(mut s) = steps().lock() else { return };
@@ -2560,23 +2573,31 @@ mod tests {
 
     #[test]
     fn keeps_preview_images_from_binary_events() {
+        let (a, b) = ("http://a|c1", "http://b|c1");
         // Type 4 carries the prompt id in a JSON block before the image.
+        live::apply(a, &json!({"type": "execution_start", "data": {"prompt_id": "p-meta"}}));
         let meta = br#"{"prompt_id":"p-meta","image_type":"image/png"}"#;
         let mut msg = 4u32.to_be_bytes().to_vec();
         msg.extend_from_slice(&(meta.len() as u32).to_be_bytes());
         msg.extend_from_slice(meta);
         msg.extend_from_slice(&[0x89, b'P', b'N', b'G', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-        live::apply_binary(&msg);
+        live::apply_binary(a, &msg);
         let (bytes, mime) = live::preview("p-meta").expect("stored");
         assert_eq!(mime, "image/png");
         assert_eq!(bytes.len(), 16);
-        // Type 1 belongs to the prompt that is running.
-        live::apply(&json!({"type": "executing", "data": {"prompt_id": "p-run", "node": "3"}}));
+        // Type 1 belongs to the prompt running on the same server, never to another server's.
+        live::apply(a, &json!({"type": "executing", "data": {"prompt_id": "p-run", "node": "3"}}));
         let mut msg = 1u32.to_be_bytes().to_vec();
         msg.extend_from_slice(&1u32.to_be_bytes());
         msg.extend_from_slice(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        live::apply_binary(&msg);
+        live::apply_binary(b, &msg);
+        assert!(live::preview("p-run").is_none(), "a frame from server b is not a's");
+        live::apply_binary(a, &msg);
         assert_eq!(live::preview("p-run").unwrap().1, "image/jpeg");
+        // Once the prompt ends, late frames are dropped instead of stored again.
+        live::apply(a, &json!({"type": "execution_success", "data": {"prompt_id": "p-run"}}));
+        live::apply_binary(a, &msg);
+        assert!(live::preview("p-run").is_none());
 
         let big = vec![7u8; 300];
         let mut framed = live::client_frame(0x2, &big);
@@ -2585,6 +2606,7 @@ mod tests {
         assert!(framed.is_empty());
 
         live::apply(
+            a,
             &json!({"type": "progress", "data": {"value": 3, "max": 20, "prompt_id": "pid-test", "node": "7"}}),
         );
         let step = live::get("pid-test").unwrap();
@@ -2603,7 +2625,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        live::apply(&json!({"type": "execution_success", "data": {"prompt_id": "pid-test"}}));
+        live::apply(a, &json!({"type": "execution_success", "data": {"prompt_id": "pid-test"}}));
         assert!(live::get("pid-test").is_none());
     }
 

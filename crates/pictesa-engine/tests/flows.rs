@@ -143,6 +143,19 @@ async fn recipes_chain_steps_through_the_queue() {
     assert_eq!(job.inputs.len(), 1, "the photo is passed to the step");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn hosted_workflow_import_is_for_the_administrator_only() {
+    let e = engine("import", Mode::Hosted).await;
+    let admin = e.signup("admin@example.com", "correct horse battery", None).await.unwrap();
+    let user = e.signup("user@example.com", "correct horse battery", None).await.unwrap();
+    let graph = json!({ "1": { "class_type": "SaveImage", "inputs": {} } });
+    let refused = e.import_comfy_workflow(&user.id, "Mine", graph.clone()).await;
+    assert!(matches!(refused, Err(pictesa_engine::EngineError::Forbidden(_))), "{refused:?}");
+    // The administrator gets past the check (the graph itself may still be refused).
+    let admin_try = e.import_comfy_workflow(&admin.id, "Mine", graph).await;
+    assert!(!matches!(admin_try, Err(pictesa_engine::EngineError::Forbidden(_))), "{admin_try:?}");
+}
+
 /// A tiny valid PNG, generated so the test needs no fixture file.
 fn png() -> Vec<u8> {
     let mut out = Vec::new();

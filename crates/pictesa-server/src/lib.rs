@@ -627,10 +627,6 @@ struct ImportWorkflowBody {
 }
 
 async fn import_workflow(State(s): State<AppState>, c: Caller, Json(b): Json<ImportWorkflowBody>) -> ApiResult<Response> {
-    // Writes files on the server, so hosted instances keep it to the administrator.
-    if s.engine.mode() == Mode::Hosted && c.user.as_ref().is_none_or(|u| u.role != "admin") {
-        return Err(ApiError(EngineError::Forbidden("Only the administrator can add ComfyUI workflows.".into())));
-    }
     Ok((StatusCode::CREATED, Json(json!(s.engine.import_comfy_workflow(&c.user_id, &b.name, b.workflow).await?))).into_response())
 }
 

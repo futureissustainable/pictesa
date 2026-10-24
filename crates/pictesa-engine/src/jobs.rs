@@ -787,6 +787,11 @@ impl Engine {
     /// Saves any ComfyUI workflow (API format) as a template with an inferred manifest and returns
     /// its model id. The model then appears in the picker, the CLI and the MCP tools.
     pub async fn import_comfy_workflow(&self, user: &str, name: &str, workflow: Value) -> Result<ImportedWorkflow> {
+        // Writes files on the server and adds a model for every account, so hosted instances keep
+        // it to the administrator. Checked here so the API, MCP and CLI all enforce it.
+        if self.mode() == crate::Mode::Hosted && !self.user(user).await.is_ok_and(|u| u.role == "admin") {
+            return Err(EngineError::Forbidden("Only the administrator can add ComfyUI workflows.".into()));
+        }
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 80 {
             return Err(EngineError::invalid("Give the workflow a short name.", Some("name")));
