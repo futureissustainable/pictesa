@@ -17,7 +17,7 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 - **Compare.** Run one prompt on up to eight models side by side, with parameters adapted to each.
 - **Presets.** 76 camera moves and looks (dolly in, orbit, crane, FPV drone, bullet time, film stocks, light) as editable JSON.
 - **Built for agents.** An MCP server (stdio and HTTP), a CLI with `--json`, and a REST API with live events. Agents and people share one library, so an image you make can go straight to an agent and back. See [docs/AGENTS.md](docs/AGENTS.md).
-- **One fast binary.** Rust (Tokio, Axum, SQLite) with the web UI embedded. No Python, Docker or Node at runtime. Files are stored once by content hash, with thumbnails, range-streamed video and full-text prompt search.
+- **One fast binary.** Rust (Tokio, Axum, SQLite) with the web UI embedded. No Python, Docker or Node at runtime. Files are stored once by content hash, with thumbnails, range-streamed video and full-text prompt search. It starts in 17 ms, and the studio page loads in 41 requests and 308 KB where Higgsfield's video page needs 745 and 7.8 MB ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)).
 - **Yours or hosted.** Run it for yourself, or host it for others the way n8n works: accounts, API tokens, and optional prepaid wallets with Stripe top-ups so people can run on your provider keys.
 
 ## Quick start
