@@ -1729,6 +1729,10 @@ impl Provider for ComfyUi {
         Ok(())
     }
 
+    fn preview(&self, handle: &RemoteHandle) -> Option<(Vec<u8>, String)> {
+        live::preview(&handle.id)
+    }
+
     fn poll_interval(&self, attempt: u32) -> std::time::Duration {
         std::time::Duration::from_millis((500 + 250 * attempt as u64).min(2_000))
     }
@@ -1763,6 +1767,59 @@ mod live {
     fn steps() -> &'static Mutex<HashMap<String, Step>> {
         static S: OnceLock<Mutex<HashMap<String, Step>>> = OnceLock::new();
         S.get_or_init(Default::default)
+    }
+
+    /// Latest preview image per prompt, from ComfyUI's binary websocket messages.
+    fn previews() -> &'static Mutex<HashMap<String, (Vec<u8>, String, Instant)>> {
+        static P: OnceLock<Mutex<HashMap<String, (Vec<u8>, String, Instant)>>> = OnceLock::new();
+        P.get_or_init(Default::default)
+    }
+
+    /// The prompt that is executing right now (previews without metadata belong to it).
+    fn running() -> &'static Mutex<Option<String>> {
+        static R: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+        R.get_or_init(Default::default)
+    }
+
+    pub fn preview(prompt_id: &str) -> Option<(Vec<u8>, String)> {
+        previews().lock().ok()?.get(prompt_id).map(|(b, m, _)| (b.clone(), m.clone()))
+    }
+
+    /// Binary event: type 1 is a preview image (u32 image format, then bytes); type 4 adds a
+    /// JSON metadata block with the prompt id before the image.
+    pub fn apply_binary(msg: &[u8]) {
+        if msg.len() < 8 {
+            return;
+        }
+        let event = u32::from_be_bytes([msg[0], msg[1], msg[2], msg[3]]);
+        let (prompt, format, image) = match event {
+            1 => {
+                let format = u32::from_be_bytes([msg[4], msg[5], msg[6], msg[7]]);
+                let Some(p) = running().lock().ok().and_then(|r| r.clone()) else { return };
+                (p, format, &msg[8..])
+            }
+            4 => {
+                let len = u32::from_be_bytes([msg[4], msg[5], msg[6], msg[7]]) as usize;
+                if msg.len() < 8 + len {
+                    return;
+                }
+                let Ok(meta) = serde_json::from_slice::<Value>(&msg[8..8 + len]) else { return };
+                let Some(p) = meta.get("prompt_id").and_then(Value::as_str).map(String::from) else { return };
+                let format = if meta.get("image_type").and_then(Value::as_str).is_some_and(|t| t.contains("png")) { 2 } else { 1 };
+                (p, format, &msg[8 + len..])
+            }
+            _ => return,
+        };
+        if image.len() < 16 || image.len() > 16 << 20 {
+            return;
+        }
+        let mime = if format == 2 { "image/png" } else { "image/jpeg" };
+        if let Ok(mut p) = previews().lock() {
+            if p.len() > 64 {
+                p.retain(|_, (_, _, at)| at.elapsed() < Duration::from_secs(3600));
+            }
+            p.insert(prompt, (image.to_vec(), mime.to_string(), Instant::now()));
+        }
     }
 
     fn listeners() -> &'static Mutex<HashMap<String, Instant>> {
@@ -1908,6 +1965,8 @@ mod live {
                         if let Ok(v) = serde_json::from_slice::<Value>(&message) {
                             apply(&v);
                         }
+                    } else {
+                        apply_binary(&message);
                     }
                     message.clear();
                 }
@@ -2003,6 +2062,11 @@ mod live {
         let Some(prompt) = data.get("prompt_id").and_then(Value::as_str) else {
             return;
         };
+        if matches!(v.get("type").and_then(Value::as_str), Some("progress" | "executing" | "execution_start")) {
+            if let Ok(mut r) = running().lock() {
+                *r = Some(prompt.to_string());
+            }
+        }
         let Ok(mut s) = steps().lock() else { return };
         match v.get("type").and_then(Value::as_str).unwrap_or("") {
             "progress" => {
@@ -2029,6 +2093,9 @@ mod live {
             }
             "execution_success" | "execution_error" | "execution_interrupted" => {
                 s.remove(prompt);
+                if let Ok(mut p) = previews().lock() {
+                    p.remove(prompt);
+                }
             }
             _ => {}
         }
@@ -2489,6 +2556,27 @@ mod tests {
         );
         buf.push(0);
         assert_eq!(live::parse_frame(&mut buf).unwrap().opcode, 9);
+    }
+
+    #[test]
+    fn keeps_preview_images_from_binary_events() {
+        // Type 4 carries the prompt id in a JSON block before the image.
+        let meta = br#"{"prompt_id":"p-meta","image_type":"image/png"}"#;
+        let mut msg = 4u32.to_be_bytes().to_vec();
+        msg.extend_from_slice(&(meta.len() as u32).to_be_bytes());
+        msg.extend_from_slice(meta);
+        msg.extend_from_slice(&[0x89, b'P', b'N', b'G', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        live::apply_binary(&msg);
+        let (bytes, mime) = live::preview("p-meta").expect("stored");
+        assert_eq!(mime, "image/png");
+        assert_eq!(bytes.len(), 16);
+        // Type 1 belongs to the prompt that is running.
+        live::apply(&json!({"type": "executing", "data": {"prompt_id": "p-run", "node": "3"}}));
+        let mut msg = 1u32.to_be_bytes().to_vec();
+        msg.extend_from_slice(&1u32.to_be_bytes());
+        msg.extend_from_slice(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        live::apply_binary(&msg);
+        assert_eq!(live::preview("p-run").unwrap().1, "image/jpeg");
 
         let big = vec![7u8; 300];
         let mut framed = live::client_frame(0x2, &big);

@@ -134,6 +134,7 @@ pub(crate) fn spawn_job(engine: &Engine, job: JobRow) {
             fail(&engine, &job, "internal", "Pictesa hit an internal error while running this job. Retry it, and report it if it happens again.", refund).await;
         }
         beat.abort();
+        engine.inner.previews.lock().unwrap().remove(&id);
         engine.inner.cancels.lock().unwrap().remove(&id);
         if let Some(n) = engine.inner.running.lock().unwrap().get_mut(&provider) {
             *n = n.saturating_sub(1);
@@ -345,6 +346,22 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                 }
                 Ok(PollStatus::Running { progress, message }) => {
                     errors = 0;
+                    if let Some((bytes, mime)) = provider.preview(&handle) {
+                        let fresh = {
+                            let mut previews = engine.inner.previews.lock().unwrap();
+                            let changed = previews.get(&job.id).is_none_or(|(b, _, _)| *b != bytes);
+                            if changed {
+                                let version = previews.get(&job.id).map(|p| p.2 + 1).unwrap_or(1);
+                                previews.insert(job.id.clone(), (bytes, mime, version));
+                                Some(version)
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(version) = fresh {
+                            engine.emit(&job.user_id, "preview", json!({ "job_id": job.id, "version": version, "url": format!("/api/generations/{}/preview?v={version}", job.id) }));
+                        }
+                    }
                     let msg = message.or_else(|| Some("Generating".into()));
                     if last.as_ref() != Some(&(progress, msg.clone())) {
                         set_progress(engine, &job, progress, msg.clone()).await;

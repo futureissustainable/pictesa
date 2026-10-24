@@ -183,6 +183,12 @@ pub trait Provider: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Latest in-progress preview image for a running job (bytes and MIME type), when the backend
+    /// streams them (ComfyUI does). Called after each poll; cheap.
+    fn preview(&self, _handle: &RemoteHandle) -> Option<(Vec<u8>, String)> {
+        None
+    }
+
     /// Delay before the next poll. Video providers can ask for longer waits.
     fn poll_interval(&self, attempt: u32) -> Duration {
         Duration::from_millis((800 + 400 * attempt as u64).min(5_000))

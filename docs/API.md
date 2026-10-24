@@ -229,3 +229,6 @@ Named sets of reference images (a person, a product, a style) that any run can a
 
 ### Import a ComfyUI workflow
 `POST /api/workflows/import { name, workflow }` turns a ComfyUI workflow in API format into a model (hosted mode: administrators only). Pictesa reads the graph for the prompt and negative prompt (by following the samplers' conditioning), seed, steps, guidance, output size, batch size, video length and frame rate, and the image, video and audio loaders, writes a template into the ComfyUI workflows folder and refreshes the catalog. Answer: `201 { model: "comfyui:<id>", manifest, notes: [] }`. The editor format (with `nodes` and `links`) is refused with a hint to use Workflow > Export (API). Also: `pictesa workflow import file.json --name ...` and the MCP tool `import_workflow`.
+
+### Live previews
+Backends that stream in-progress images (ComfyUI) produce `event: preview` with `{ job_id, version, url }` while a job runs. `GET /api/generations/{id}/preview` returns the latest preview image (JPEG or PNG, not cached); it answers 404 when there is none. Previews disappear when the job ends.

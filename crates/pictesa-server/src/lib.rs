@@ -220,6 +220,7 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/generations/{id}", get(get_job).delete(delete_job))
         .route("/generations/{id}/cancel", post(cancel_job))
         .route("/generations/{id}/retry", post(retry_job))
+        .route("/generations/{id}/preview", get(job_preview))
         .route("/assets", get(list_assets).post(upload_assets).layer(DefaultBodyLimit::max(MAX_UPLOAD)))
         .route("/assets/import", post(import_asset))
         .route("/assets/{id}", get(get_asset).patch(patch_asset).delete(delete_asset))
@@ -515,6 +516,16 @@ async fn cancel_job(State(s): State<AppState>, c: Caller, Path(id): Path<String>
 
 async fn retry_job(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Response> {
     Ok((StatusCode::CREATED, Json(json!(s.engine.retry(&c.user_id, &id).await?))).into_response())
+}
+
+async fn job_preview(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Response> {
+    let (bytes, mime) = s.engine.job_preview(&c.user_id, &id).await?;
+    let mut resp = Response::new(Body::from(bytes));
+    let h = resp.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("image/jpeg")));
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    Ok(resp)
 }
 
 async fn delete_job(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<StatusCode> {

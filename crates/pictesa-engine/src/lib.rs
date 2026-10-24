@@ -128,6 +128,8 @@ pub(crate) struct Inner {
     pub events: broadcast::Sender<Event>,
     pub wake: Notify,
     pub cancels: Mutex<HashMap<String, CancellationToken>>,
+    /// Latest live preview per running job: (bytes, MIME type, version).
+    pub previews: Mutex<HashMap<String, (Vec<u8>, String, u64)>>,
     pub running: Mutex<HashMap<String, usize>>,
     /// This process's id, written on the jobs it runs.
     pub instance: String,
@@ -187,6 +189,7 @@ impl Engine {
             events,
             wake: Notify::new(),
             cancels: Mutex::new(HashMap::new()),
+            previews: Mutex::new(HashMap::new()),
             running: Mutex::new(HashMap::new()),
             scoped: std::sync::atomic::AtomicBool::new(false),
             owned_batches: Mutex::new(std::collections::HashSet::new()),
@@ -236,6 +239,12 @@ impl Engine {
     }
     pub fn db(&self) -> &SqlitePool {
         &self.inner.db
+    }
+
+    /// Latest live preview of a running job of this user.
+    pub async fn job_preview(&self, user: &str, job_id: &str) -> Result<(Vec<u8>, String)> {
+        self.job(user, job_id).await?;
+        self.inner.previews.lock().unwrap().get(job_id).map(|(b, m, _)| (b.clone(), m.clone())).ok_or_else(|| EngineError::not_found("preview"))
     }
 
     pub(crate) fn emit(&self, user_id: &str, kind: &'static str, data: serde_json::Value) {

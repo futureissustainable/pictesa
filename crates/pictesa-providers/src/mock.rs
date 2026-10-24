@@ -257,6 +257,22 @@ impl Provider for Mock {
         ))
     }
 
+    /// A coarse picture that sharpens as the fake run progresses, like a sampler preview.
+    fn preview(&self, handle: &RemoteHandle) -> Option<(Vec<u8>, String)> {
+        if handle.data_str("model") == Some("video") {
+            return None;
+        }
+        let started: u128 = handle.data_str("started").and_then(|s| s.parse().ok())?;
+        let progress = (now_ms().saturating_sub(started) as f32 / RUN_MS as f32).clamp(0.0, 1.0);
+        let (w, h) = (
+            handle.data.get("w").and_then(|v| v.as_u64()).unwrap_or(768) as u32 / 4,
+            handle.data.get("h").and_then(|v| v.as_u64()).unwrap_or(768) as u32 / 4,
+        );
+        // Changes a few times per run, so each poll can deliver a new frame.
+        let stage = (progress * 5.0) as u32;
+        Some((png(&format!("{}{stage}", handle.data_str("prompt").unwrap_or("")), w, h), "image/png".into()))
+    }
+
     fn poll_interval(&self, _attempt: u32) -> std::time::Duration {
         std::time::Duration::from_millis(400)
     }
