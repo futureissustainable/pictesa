@@ -32,6 +32,8 @@ export interface ComposerState {
   presetByMode: Partial<Record<MediaKind, string | null>>;
   /** Extra models for a side-by-side compare run, per mode. */
   compareByMode: Partial<Record<MediaKind, string[]>>;
+  /** A character whose images join as references, per mode. */
+  characterByMode: Partial<Record<MediaKind, string | null>>;
   count: number;
   /** Bumped when settings arrive from elsewhere, so the prompt can take focus. */
   revision: number;
@@ -47,6 +49,7 @@ const initial: ComposerState = {
   inputsByMode: { image: [], video: [], audio: [] },
   presetByMode: {},
   compareByMode: {},
+  characterByMode: {},
   count: 1,
   revision: 0,
 };
@@ -152,6 +155,10 @@ export const setNegativePrompt = (negativePrompt: string) => update(() => ({ neg
 export const setCount = (count: number) => update(() => ({ count }));
 export const setPreset = (mode: MediaKind, preset: string | null) => update((state) => ({ presetByMode: { ...state.presetByMode, [mode]: preset } }));
 export const setCompare = (mode: MediaKind, models: string[]) => update((state) => ({ compareByMode: { ...state.compareByMode, [mode]: models } }));
+export const setCharacter = (mode: MediaKind, character: string | null) => update((state) => ({ characterByMode: { ...state.characterByMode, [mode]: character } }));
+
+/** Whether a model can take a character: it needs an image reference slot. */
+export const takesCharacter = (model: ModelSpec | undefined) => Boolean(model?.inputs.some((slot) => slot.role === "reference" && slot.kind === "image"));
 
 /** Selects a model. A model used for the first time inherits fitting choices from the previous one. */
 export function selectModel(mode: MediaKind, next: ModelSpec, previous?: ModelSpec) {

@@ -1,8 +1,8 @@
-import { errorMessage, uploadFiles } from "./api";
+import { ApiError, errorMessage, uploadFiles } from "./api";
 import { addInput, inputKey, patchInput, removeInput, slotInputs, type AttachedInput } from "./composer";
 import { emitLocal } from "./events";
 import { kindLabel, roleLabel } from "./format";
-import { notifyError } from "./notices";
+import { createStore } from "./store";
 import type { Asset, InputRole, InputSlot, MediaKind, ModelSpec } from "./types";
 
 export function fileKind(file: File): MediaKind | null {
@@ -12,8 +12,37 @@ export function fileKind(file: File): MediaKind | null {
 
 export const acceptFor = (kind: MediaKind) => `${kind}/*`;
 
+/** Files the server refused, shown next to the drop zone they were meant for. */
+export interface UploadError {
+  id: number;
+  scope: string;
+  name: string;
+  error: string;
+}
+
+export const uploadErrors = createStore<UploadError[]>([]);
+let errorId = 1;
+
+export const slotScope = (mode: MediaKind, role: InputRole) => `${mode}:${role}`;
+
+export function reportUploadError(scope: string, name: string, error: string) {
+  const id = errorId++;
+  uploadErrors.set((list) => [...list.filter((item) => !(item.scope === scope && item.name === name)), { id, scope, name, error }]);
+  setTimeout(() => uploadErrors.set((list) => list.filter((item) => item.id !== id)), 12000);
+}
+
+export const clearUploadErrors = (scope: string) => uploadErrors.set((list) => (list.some((item) => item.scope === scope) ? list.filter((item) => item.scope !== scope) : list));
+
+/** The server's reason for one refused file, from `errors` when it sent the list. */
+export function refusal(error: unknown, name: string): string {
+  if (error instanceof ApiError) return error.errors?.find((item) => item.name === name)?.error ?? error.errors?.[0]?.error ?? error.message;
+  return errorMessage(error);
+}
+
 /** Uploads files into one slot of the composer, showing real upload progress on each tile. */
 export async function uploadInto(mode: MediaKind, role: InputRole, files: File[]) {
+  const scope = slotScope(mode, role);
+  clearUploadErrors(scope);
   await Promise.all(
     files.map(async (file) => {
       const kind = fileKind(file);
@@ -23,13 +52,14 @@ export async function uploadInto(mode: MediaKind, role: InputRole, files: File[]
       const pending = { name: file.name, kind, progress: null, preview };
       addInput(mode, { key, role, upload: pending });
       try {
-        const [asset] = await uploadFiles([file], (progress) => patchInput(key, { upload: { ...pending, progress } }));
-        if (!asset) throw new Error(`${file.name} did not upload.`);
+        const { assets, errors } = await uploadFiles([file], (progress) => patchInput(key, { upload: { ...pending, progress } }));
+        const asset = assets[0];
+        if (!asset) throw new Error(errors[0]?.error ?? `${file.name} did not upload.`);
         patchInput(key, { asset, upload: undefined });
         emitLocal({ asset });
       } catch (error) {
         removeInput(key);
-        notifyError(`${file.name}: ${errorMessage(error)}`);
+        reportUploadError(scope, file.name, refusal(error, file.name));
       } finally {
         if (preview) setTimeout(() => URL.revokeObjectURL(preview), 5000);
       }

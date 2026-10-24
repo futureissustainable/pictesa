@@ -12,6 +12,7 @@ import { cliCommand, curlCommand, requestFromJob } from "../../lib/snippets";
 import { useStore } from "../../lib/store";
 import type { Asset, AssetDetail, Job, ModelSpec } from "../../lib/types";
 import { closeViewer, sequence, stepViewer } from "../../lib/viewer";
+import { assetTitle } from "../../lib/names";
 import { CodeBlock, CopyButton } from "../../ui/code";
 import { Choice, Control } from "../../ui/control";
 import { Dialog } from "../../ui/dialog";
@@ -86,7 +87,7 @@ export default function Viewer({ id }: { id: string }) {
     if (dx < 0 && next) stepViewer(next.id);
   };
 
-  const title = job?.model_name ?? (asset ? (asset.source === "generated" ? fallbackModelName(asset.model ?? "") : asset.source === "upload" ? `Uploaded ${asset.kind}` : `Imported ${asset.kind}`) : "Loading");
+  const title = job?.model_name ?? (asset ? assetTitle(asset, (id) => fallbackModelName(id ?? "")) : "Loading");
 
   return (
     <Dialog title={title} size="full" hideTitle onClose={closeViewer} onKeyDown={onKeyDown} className="viewer">
@@ -249,7 +250,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
           {request && (
             <Control label="Copy for agents" icon="terminal" value="Copy for agents" caret={false} size="large" className="text-control" panelClassName="agent-panel">
               <p className="control-help">Run this generation again from a terminal or an agent.</p>
-              <CodeBlock code={cliCommand(request)} label="CLI command" caption={request.inputs.length ? "Pictesa CLI. It uploads inputs from disk, so replace the example paths." : "Pictesa CLI"} />
+              <CodeBlock code={cliCommand(request)} label="CLI command" caption="Pictesa CLI" />
               <CodeBlock code={curlCommand(request, hosted)} label="curl command" caption="HTTP API" />
             </Control>
           )}

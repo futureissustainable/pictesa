@@ -13,6 +13,7 @@ import {
   selectModel,
   setCompare,
   setCount,
+  takesCharacter,
   setNegativePrompt,
   setParam,
   setPrompt,
@@ -58,6 +59,7 @@ export function Composer() {
   const attached = activeInputs(model, inputs);
   const uploading = attached.some((input) => input.upload);
   const compare = (draft.compareByMode[mode] ?? []).filter((id) => id !== model?.id);
+  const characterId = draft.characterByMode[mode] ?? null;
   const compareModels = compare.map((id) => list.find((item) => item.id === id)).filter((item): item is ModelSpec => Boolean(item));
   // With compare models the total is the sum of every model's estimate, when all can be computed.
   const estimate = useMemo(() => {
@@ -206,6 +208,7 @@ export function Composer() {
       count: draft.count,
       ...(preset ? { preset: preset.id } : {}),
       ...(compare.length ? { compare } : {}),
+      ...(characterId && takesCharacter(model) ? { character: characterId } : {}),
     };
     try {
       const { batch_id: batchId, jobs } = await api.generate(body);
@@ -263,7 +266,7 @@ export function Composer() {
         onDrop={onDrop}
       >
         <div className="composer-main">
-        {model && model.inputs.length > 0 && <InputSlots model={model} mode={mode} inputs={inputs} invalidRole={invalid?.startsWith("inputs.") ? invalid.slice(7) : null} />}
+        {model && (model.inputs.length > 0 || characterId) && <InputSlots model={model} mode={mode} inputs={inputs} invalidRole={invalid?.startsWith("inputs.") ? invalid.slice(7) : null} />}
         <div className="prompt-line">
           {model?.prompt === false ? (
             <p className="prompt-off">

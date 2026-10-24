@@ -2,6 +2,7 @@ import type {
   ApiToken,
   Asset,
   Billing,
+  Character,
   AssetDetail,
   AssetQuery,
   GenerationRequest,
@@ -15,18 +16,27 @@ import type {
   Recipe,
   RecipeRun,
   User,
+  WorkflowImport,
 } from "./types";
+
+export interface FileError {
+  name: string;
+  error: string;
+}
 
 /** A failed API call. `field` points at the offending input ("params.duration", "prompt"). */
 export class ApiError extends Error {
   readonly status: number;
   readonly kind?: string;
   readonly field?: string;
-  constructor(message: string, status: number, kind?: string, field?: string) {
+  /** Uploads: the files the server refused, with its reason for each. */
+  readonly errors?: FileError[];
+  constructor(message: string, status: number, kind?: string, field?: string, errors?: FileError[]) {
     super(message);
     this.status = status;
     this.kind = kind;
     this.field = field;
+    this.errors = errors;
   }
 }
 
@@ -52,9 +62,10 @@ export function onUnauthorized(listener: () => void): () => void {
 }
 
 function errorFrom(status: number, data: unknown): ApiError {
-  const body = (data && typeof data === "object" ? data : {}) as { error?: unknown; kind?: unknown; field?: unknown };
+  const body = (data && typeof data === "object" ? data : {}) as { error?: unknown; kind?: unknown; field?: unknown; errors?: unknown };
   const message = typeof body.error === "string" && body.error ? body.error : `The request failed (${status}).`;
-  return new ApiError(message, status, typeof body.kind === "string" ? body.kind : undefined, typeof body.field === "string" ? body.field : undefined);
+  const errors = Array.isArray(body.errors) ? (body.errors as FileError[]) : undefined;
+  return new ApiError(message, status, typeof body.kind === "string" ? body.kind : undefined, typeof body.field === "string" ? body.field : undefined, errors);
 }
 
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -111,6 +122,7 @@ export const api = {
   /** Full spec of one model. Ids contain ":" and "/", which the server expects as they are. */
   model: (modelId: string) => request<ModelSpec>("GET", `/api/models/${encodeURI(modelId).replaceAll("?", "%3F").replaceAll("#", "%23")}`),
   refreshModels: () => request<{ models: number }>("POST", "/api/models/refresh"),
+  importWorkflow: (name: string, workflow: unknown) => request<WorkflowImport>("POST", "/api/workflows/import", { name, workflow }),
   presets: (output: MediaKind) => request<{ presets: Preset[] }>("GET", withQuery("/api/presets", { output })),
   enhancePrompt: (prompt: string, output: MediaKind) => request<{ prompt: string }>("POST", "/api/prompt/enhance", { prompt, output }),
 
@@ -137,15 +149,21 @@ export const api = {
   recipeRun: (runId: string) => request<RecipeRun>("GET", `/api/recipes/runs/${id(runId)}`),
   cancelRun: (runId: string) => request<RecipeRun>("POST", `/api/recipes/runs/${id(runId)}/cancel`),
 
+  characters: () => request<{ characters: Character[] }>("GET", "/api/characters"),
+  createCharacter: (body: { name: string; description?: string; asset_ids: string[] }) => request<Character>("POST", "/api/characters", body),
+  updateCharacter: (characterId: string, patch: { name?: string; description?: string; asset_ids?: string[] }) =>
+    request<Character>("PATCH", `/api/characters/${id(characterId)}`, patch),
+  deleteCharacter: (characterId: string) => request<void>("DELETE", `/api/characters/${id(characterId)}`),
+
   billing: () => request<Billing>("GET", "/api/billing"),
   checkout: (amountCents: number, requestId: string) => request<{ url: string }>("POST", "/api/billing/checkout", { amount_cents: amountCents, request_id: requestId }),
 };
 
 /**
  * Uploads files as multipart `file` fields. Uses XHR because fetch has no upload progress,
- * and the UI shows real progress rather than a guess.
+ * and the UI shows real progress rather than a guess. Refused files come back in `errors`.
  */
-export function uploadFiles(files: File[], onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<Asset[]> {
+export function uploadFiles(files: File[], onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<{ assets: Asset[]; errors: FileError[] }> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     for (const file of files) form.append("file", file, file.name);
@@ -164,8 +182,10 @@ export function uploadFiles(files: File[], onProgress?: (fraction: number) => vo
         data = null;
       }
       if (xhr.status === 401) unauthorized.forEach((listener) => listener());
-      if (xhr.status >= 200 && xhr.status < 300) resolve((data as { assets: Asset[] }).assets ?? []);
-      else reject(errorFrom(xhr.status, data));
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const body = (data ?? {}) as { assets?: Asset[]; errors?: FileError[] };
+        resolve({ assets: body.assets ?? [], errors: body.errors ?? [] });
+      } else reject(errorFrom(xhr.status, data));
     };
     xhr.onerror = () => reject(new ApiError(OFFLINE_MESSAGE, 0, "network"));
     xhr.onabort = () => reject(new DOMException("Upload canceled", "AbortError"));

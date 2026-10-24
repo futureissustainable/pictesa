@@ -91,7 +91,7 @@ export function ParamControl({ spec, value, onChange, invalid }: { spec: ParamSp
     );
   }
 
-  const shown = value === null || value === undefined || value === "" ? (spec.type === "seed" ? "Random" : "Default") : String(value);
+  const shown = value === null || value === undefined || value === "" ? (spec.type === "seed" ? "Random" : "Default") : optionLabel(spec, value);
   return (
     <Control
       label={spec.label}
@@ -218,7 +218,7 @@ function NumberField({
     <div className="field">
       <label className="field-top" htmlFor={id}>
         <span>{spec.label}</span>
-        <output>{numeric ?? "Default"}</output>
+        <output>{optionLabel(spec, numeric ?? undefined)}</output>
       </label>
       {sliding && (
         <input

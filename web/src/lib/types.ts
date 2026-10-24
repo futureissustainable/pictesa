@@ -165,6 +165,8 @@ export interface Asset {
   url: string;
   thumb_url: string | null;
   source: AssetSource;
+  /** Original file name of uploads and imports. */
+  name?: string | null;
   job_id: string | null;
   model: string | null;
   prompt: string | null;
@@ -217,6 +219,37 @@ export interface GenerationRequest {
   preset?: string;
   /** Up to 7 more models that run the same prompt, inputs and params in the same batch. */
   compare?: string[];
+  /** A character id: its images join as reference inputs, up to what the model takes. */
+  character?: string;
+}
+
+/** What Pictesa read from an imported ComfyUI workflow (the manifest it wrote). */
+export interface WorkflowManifest {
+  name?: string;
+  description?: string;
+  output?: MediaKind;
+  tasks?: Task[];
+  prompt?: [string, string][];
+  negative_prompt?: [string, string][];
+  inputs?: { role: string; kind: MediaKind; min?: number; label?: string }[];
+  params?: { key: string; label?: string; type?: string }[];
+  requires?: { models?: { directory?: string; name: string }[] };
+}
+
+export interface WorkflowImport {
+  model: string;
+  manifest: WorkflowManifest;
+  notes: string[];
+}
+
+/** A named set of 1 to 14 library images (a person, a product, a style). */
+export interface Character {
+  id: string;
+  name: string;
+  description: string | null;
+  assets: Asset[];
+  created_at: number;
+  updated_at: number;
 }
 
 export interface RecipeField {

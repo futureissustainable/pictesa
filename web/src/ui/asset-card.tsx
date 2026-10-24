@@ -1,4 +1,4 @@
-import { memo, useState, type DragEvent } from "react";
+import { memo, useState, type CSSProperties, type DragEvent } from "react";
 import { ASSET_DRAG_TYPE } from "../lib/attach";
 import { clock, dimensions, kindIcon } from "../lib/format";
 import { prefersReducedMotion } from "../lib/prefs";
@@ -41,6 +41,8 @@ export interface CardProps {
   selectable?: boolean;
   onOpen(asset: Asset, index: number): void;
   onFavorite?(asset: Asset): void;
+  /** Position and size from the masonry layout. */
+  style?: CSSProperties;
 }
 
 function startDrag(event: DragEvent, asset: Asset) {
@@ -49,12 +51,12 @@ function startDrag(event: DragEvent, asset: Asset) {
   event.dataTransfer.setData("text/uri-list", new URL(asset.url, location.origin).href);
 }
 
-export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, selected, selectable, onOpen, onFavorite }: CardProps) {
+export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, selected, selectable, onOpen, onFavorite, style }: CardProps) {
   const [playing, setPlaying] = useState(false);
   const detail = asset.kind === "image" ? dimensions(asset.width, asset.height) : asset.duration_ms ? clock(asset.duration_ms) : null;
   const label = asset.prompt ? `${title}: ${asset.prompt.slice(0, 120)}` : title;
   return (
-    <div role="listitem" className={`asset ${fresh ? "asset-fresh" : ""} ${selected ? "asset-selected" : ""}`} data-index={index}>
+    <div role="listitem" className={`asset ${fresh ? "asset-fresh" : ""} ${selected ? "asset-selected" : ""}`} data-index={index} style={style}>
       <button
         type="button"
         className="asset-open"

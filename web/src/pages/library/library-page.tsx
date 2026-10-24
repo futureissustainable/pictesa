@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toggleFavorite, useAssetList } from "../../lib/assets";
 import { useModelNames, useModels } from "../../lib/catalog";
 import { kindIcon } from "../../lib/format";
 import { Link, navigate, useLocation, withParams } from "../../lib/router";
-import type { AssetQuery, AssetSource, MediaKind } from "../../lib/types";
+import { MAX_CHARACTER_IMAGES } from "../../lib/characters";
+import { assetTitle } from "../../lib/names";
+import { notify } from "../../lib/notices";
+import type { Asset, AssetQuery, AssetSource, MediaKind } from "../../lib/types";
 import { openViewer, useSequence } from "../../lib/viewer";
 import { Choice, Control } from "../../ui/control";
 import { AssetGrid } from "../../ui/grid";
 import { Icon, Spinner } from "../../ui/icon";
 import { SizeSlider, useImageSize } from "../../ui/size-slider";
+
+const CharacterEditor = lazy(() => import("../characters/characters-page").then((module) => ({ default: module.CharacterEditor })));
 
 const kindLabelPlural: Record<MediaKind, string> = { image: "Images", video: "Videos", audio: "Audio" };
 
@@ -42,6 +47,24 @@ export default function LibraryPage() {
   const audio = useModels("audio");
   const [search, setSearch] = useState(query.q ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
+  // Selecting images to save them as a character.
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Map<string, Asset>>(new Map());
+  const [saving, setSaving] = useState(false);
+  const stopSelecting = () => {
+    setSelecting(false);
+    setPicked(new Map());
+  };
+  const togglePick = (asset: Asset) => {
+    if (asset.kind !== "image") return notify("Characters are made of images.");
+    setPicked((current) => {
+      const next = new Map(current);
+      if (next.has(asset.id)) next.delete(asset.id);
+      else if (next.size < MAX_CHARACTER_IMAGES) next.set(asset.id, asset);
+      else notify(`A character holds up to ${MAX_CHARACTER_IMAGES} images.`);
+      return next;
+    });
+  };
   useSequence(list.items, list.hasMore, list.loadMore);
 
   // Typing updates the URL after a short pause; the URL is the source of truth for filters.
@@ -114,9 +137,23 @@ export default function LibraryPage() {
           </Control>
         )}
         <ModelFilter value={query.model} nameOf={nameOf} onChange={(model) => set({ model })} />
-        <Link to={query.trash ? "/library" : "/library?trash=true"} className={`icon-button mobile-only ${query.trash ? "selected" : ""}`} aria-label={query.trash ? "Leave trash" : "Open trash"}>
-          <Icon name="delete" />
-        </Link>
+        {!query.trash && (
+          <button type="button" className={`filter-button ${selecting ? "active" : ""}`} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))} title="Select images to save as a character">
+            <Icon name="checklist" />
+            <span className="segmented-label">Select</span>
+          </button>
+        )}
+        {/* Phones have no sidebar: characters and trash sit behind one button. */}
+        <span className="mobile-only">
+          <Control label="More" icon="more_horiz" caret={false} placement="below">
+            <Choice icon="face" onPick={() => navigate("/characters")}>
+              Characters
+            </Choice>
+            <Choice icon="delete" selected={Boolean(query.trash)} onPick={() => navigate(query.trash ? "/library" : "/library?trash=true")}>
+              Trash
+            </Choice>
+          </Control>
+        </span>
         <label className="search">
           <Icon name="search" />
           <span className="sr-only">Search prompts</span>
@@ -141,12 +178,14 @@ export default function LibraryPage() {
           items={list.items}
           size={size}
           label={title}
-          titleOf={(asset) => (asset.source === "generated" ? nameOf(asset.model) : asset.source === "upload" ? "Upload" : "Import")}
+          titleOf={(asset) => assetTitle(asset, nameOf)}
           fresh={list.fresh}
           hasMore={list.hasMore}
           loading={list.loading}
           onEndReached={list.loadMore}
-          onOpen={(asset) => openViewer(asset)}
+          selectable={selecting}
+          selected={selecting ? new Set(picked.keys()) : undefined}
+          onOpen={(asset) => (selecting ? togglePick(asset) : openViewer(asset))}
           onFavorite={query.trash ? undefined : (asset) => void toggleFavorite(asset)}
         />
       ) : list.loading ? (
@@ -191,6 +230,33 @@ export default function LibraryPage() {
             )
           )}
         </div>
+      )}
+      {selecting && (
+        <div className="selection-bar" role="region" aria-label="Selection">
+          <p>
+            {picked.size ? `${picked.size} selected` : "Select images"}
+            <span className="selection-limit">, up to {MAX_CHARACTER_IMAGES}</span>
+          </p>
+          <button type="button" className="text-button" onClick={stopSelecting}>
+            Cancel
+          </button>
+          <button type="button" className="primary-button" disabled={!picked.size} onClick={() => setSaving(true)}>
+            <Icon name="face" />
+            Save as character
+          </button>
+        </div>
+      )}
+      {saving && (
+        <Suspense fallback={null}>
+          <CharacterEditor
+            character={null}
+            initial={[...picked.values()]}
+            onClose={(saved) => {
+              setSaving(false);
+              if (saved) stopSelecting();
+            }}
+          />
+        </Suspense>
       )}
       {list.loading && list.items.length > 0 && (
         <div className="load-more" role="status">

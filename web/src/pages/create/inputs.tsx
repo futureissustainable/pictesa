@@ -1,8 +1,11 @@
 import { useRef, useState, type DragEvent } from "react";
-import { acceptFor, ASSET_DRAG_TYPE, readDraggedAsset, rejectionMessage, routeFiles, uploadInto } from "../../lib/attach";
-import { addInput, inputKey, removeInput, slotInputs, type AttachedInput } from "../../lib/composer";
-import { kindPlural, roleIcon, roleLabel } from "../../lib/format";
+import { acceptFor, ASSET_DRAG_TYPE, readDraggedAsset, rejectionMessage, routeFiles, slotScope, uploadErrors, uploadInto, type UploadError } from "../../lib/attach";
+import { useCharacters } from "../../lib/characters";
+import { addInput, inputKey, removeInput, setCharacter, slotInputs, takesCharacter, useComposer, type AttachedInput } from "../../lib/composer";
+import { kindPlural, plural, roleIcon, roleLabel } from "../../lib/format";
+import { Link } from "../../lib/router";
 import { notifyError } from "../../lib/notices";
+import { useStore } from "../../lib/store";
 import type { Asset, InputSlot, MediaKind, ModelSpec } from "../../lib/types";
 import { Thumb } from "../../ui/asset-card";
 import { Choice, Control } from "../../ui/control";
@@ -17,29 +20,52 @@ const hasPayload = (event: DragEvent) => event.dataTransfer.types.includes("File
 export function InputSlots({ model, mode, inputs, invalidRole }: { model: ModelSpec; mode: MediaKind; inputs: AttachedInput[]; invalidRole: string | null }) {
   const [picking, setPicking] = useState<InputSlot | null>(null);
   const pickRoom = picking ? picking.max - slotInputs(picking, inputs).length : 0;
+  const scopes = new Set(model.inputs.map((slot) => slotScope(mode, slot.role)));
+  const refused = useStore(uploadErrors).filter((item) => scopes.has(item.scope));
   return (
-    <div className="slots" role="group" aria-label="Inputs">
-      {model.inputs.map((slot) => (
-        <SlotGroup
-          key={`${slot.role}-${slot.kind}`}
-          slot={slot}
-          model={model}
-          mode={mode}
-          inputs={inputs}
-          invalid={invalidRole === slot.role}
-          onPick={() => setPicking(slot)}
-        />
-      ))}
-      {picking && (
-        <LibraryPicker
-          kind={picking.kind}
-          room={Math.max(1, pickRoom)}
-          title={`Choose ${pickRoom > 1 ? kindPlural[picking.kind] : `a ${picking.kind}`} for ${slotLabel(picking).toLowerCase()}`}
-          onClose={() => setPicking(null)}
-          onPick={(assets) => assets.forEach((asset) => addInput(mode, { key: inputKey(), role: picking.role, asset }))}
-        />
-      )}
+    <div className="slots-area">
+      <div className="slots" role="group" aria-label="Inputs">
+        {model.inputs.map((slot) => (
+          <SlotGroup
+            key={`${slot.role}-${slot.kind}`}
+            slot={slot}
+            model={model}
+            mode={mode}
+            inputs={inputs}
+            invalid={invalidRole === slot.role}
+            onPick={() => setPicking(slot)}
+          />
+        ))}
+        <CharacterSlot model={model} mode={mode} invalid={invalidRole === "character"} />
+        {picking && (
+          <LibraryPicker
+            kind={picking.kind}
+            room={Math.max(1, pickRoom)}
+            title={`Choose ${pickRoom > 1 ? kindPlural[picking.kind] : `a ${picking.kind}`} for ${slotLabel(picking).toLowerCase()}`}
+            onClose={() => setPicking(null)}
+            onPick={(assets) => assets.forEach((asset) => addInput(mode, { key: inputKey(), role: picking.role, asset }))}
+          />
+        )}
+      </div>
+      <UploadErrors errors={refused} />
     </div>
+  );
+}
+
+/** Refused uploads, next to the drop zones. Each line names the file and the server's reason. */
+export function UploadErrors({ errors }: { errors: UploadError[] }) {
+  if (!errors.length) return null;
+  return (
+    <ul className="upload-errors" role="alert">
+      {errors.map((item) => (
+        <li key={item.id}>
+          <Icon name="error" />
+          <span>
+            <strong>{item.name}</strong> {item.error}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -153,6 +179,71 @@ function InputTile({ input, label }: { input: AttachedInput; label: string }) {
       <button type="button" className="slot-remove" aria-label={`Remove ${label.toLowerCase()}`} onClick={() => removeInput(input.key)}>
         <Icon name="close" />
       </button>
+    </div>
+  );
+}
+
+/** The character next to the reference zone. Models without image references cannot use one. */
+function CharacterSlot({ model, mode, invalid }: { model: ModelSpec; mode: MediaKind; invalid: boolean }) {
+  const selectedId = useComposer().characterByMode[mode] ?? null;
+  const { data } = useCharacters();
+  const selected = data?.find((character) => character.id === selectedId) ?? null;
+  const usable = takesCharacter(model);
+  const reason = `${model.name} takes no reference images, so it cannot use a character.`;
+  const cover = selected?.assets[0];
+  const remove = selected && (
+    <button type="button" className="slot-remove" aria-label="Remove the character" onClick={() => setCharacter(mode, null)}>
+      <Icon name="close" />
+    </button>
+  );
+  return (
+    <div className={`slot-group character-slot ${invalid ? "invalid" : ""}`} role="group" aria-label="Character">
+      {usable ? (
+        <Control
+          label={selected ? `Character: ${selected.name}` : "Add a character"}
+          className={`slot-add ${selected ? "chosen" : ""}`}
+          showTitle={false}
+          placement="above"
+          size="wide"
+          trigger={
+            <>
+              {cover ? <Thumb asset={cover} /> : <Icon name="face" />}
+              <span className="slot-label">{selected?.name ?? "Character"}</span>
+            </>
+          }
+        >
+          <p className="control-title">Character</p>
+          <div className="control-list">
+            {selected && (
+              <Choice icon="close" onPick={() => setCharacter(mode, null)}>
+                No character
+              </Choice>
+            )}
+            {(data ?? []).map((character) => (
+              <Choice key={character.id} selected={character.id === selectedId} onPick={() => setCharacter(mode, character.id)} className="character-choice">
+                <span className="character-choice-row">
+                  {character.assets[0] ? <Thumb asset={character.assets[0]} /> : <Icon name="face" />}
+                  <span>
+                    {character.name}
+                    <small>{plural(character.assets.length, "image", "images")}</small>
+                  </span>
+                </span>
+              </Choice>
+            ))}
+          </div>
+          {data && !data.length && <p className="control-help">No characters yet. Select images in the library and save them as a character.</p>}
+          <p className="control-help">
+            <Link to="/characters">Manage characters</Link>
+          </p>
+        </Control>
+      ) : (
+        <span className="control-trigger slot-add disabled" title={reason} aria-disabled="true">
+          {cover ? <Thumb asset={cover} /> : <Icon name="face" />}
+          <span className="slot-label">{selected ? "Not used" : "Character"}</span>
+          <span className="sr-only">{reason}</span>
+        </span>
+      )}
+      {remove}
     </div>
   );
 }

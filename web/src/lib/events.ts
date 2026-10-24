@@ -1,5 +1,5 @@
 import { createStore } from "./store";
-import type { Asset, Job, RecipeRun } from "./types";
+import type { Asset, Character, Job, RecipeRun } from "./types";
 
 // One EventSource for the whole app (GET /api/events). Lists and the job tray subscribe here.
 
@@ -7,10 +7,20 @@ export type ConnectionState = "idle" | "connecting" | "open" | "reconnecting";
 
 export const connection = createStore<ConnectionState>("idle");
 
+/** A newer in-progress image of a running job, at `url` (ComfyUI and other streaming backends). */
+export interface PreviewEvent {
+  job_id: string;
+  version: number;
+  url: string;
+}
+
 interface Handlers {
   job?: (job: Job) => void;
   asset?: (asset: Asset) => void;
   recipe?: (run: RecipeRun) => void;
+  /** A saved or changed character, or `{ id, deleted: true }`. */
+  character?: (character: Character | { id: string; deleted: true }) => void;
+  preview?: (preview: PreviewEvent) => void;
   /** Local only: an asset deleted permanently. */
   removed?: (id: string) => void;
 }
@@ -20,6 +30,15 @@ const reconnectListeners = new Set<() => void>();
 let source: EventSource | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let retryDelay = 2000;
+let lastRefetch = 0;
+
+/** Events are not replayed, so lists refetch after a drop. The reopened stream and the server's
+ * `resync` both ask for this; one refetch covers both. */
+function refetchAll() {
+  if (Date.now() - lastRefetch < 2000) return;
+  lastRefetch = Date.now();
+  reconnectListeners.forEach((listener) => listener());
+}
 
 function parse<T>(event: MessageEvent): T | null {
   try {
@@ -40,8 +59,7 @@ export function startEvents() {
   stream.addEventListener("open", () => {
     connection.set("open");
     retryDelay = 2000;
-    // The stream has no replay, so anything that changed while it was down is fetched again.
-    if (dropped) reconnectListeners.forEach((listener) => listener());
+    if (dropped) refetchAll();
     dropped = false;
   });
   stream.addEventListener("error", () => {
@@ -62,10 +80,20 @@ export function startEvents() {
     const asset = parse<Asset>(event as MessageEvent);
     if (asset) handlers.forEach((handler) => handler.asset?.(asset));
   });
+  stream.addEventListener("character", (event) => {
+    const character = parse<Character | { id: string; deleted: true }>(event as MessageEvent);
+    if (character) handlers.forEach((handler) => handler.character?.(character));
+  });
   stream.addEventListener("recipe", (event) => {
     const run = parse<RecipeRun>(event as MessageEvent);
     if (run) handlers.forEach((handler) => handler.recipe?.(run));
   });
+  stream.addEventListener("preview", (event) => {
+    const preview = parse<PreviewEvent>(event as MessageEvent);
+    if (preview) handlers.forEach((handler) => handler.preview?.(preview));
+  });
+  // Sent after a reconnect or when this tab fell behind and missed events.
+  stream.addEventListener("resync", refetchAll);
 }
 
 export function stopEvents() {

@@ -25,6 +25,7 @@ interface Asset {
   url: string;
   thumb_url: string | null;
   source: "generated" | "upload" | "import";
+  name?: string | null;
   job_id: string | null;
   model: string | null;
   prompt: string | null;
@@ -482,7 +483,15 @@ function createState(mode: MockMode, mediaDir: string) {
       if (!configured(provider)) throw new HttpError(400, `${provider.name} is not set up. Add it in Settings, Providers.`, { kind: "auth", field: item === model ? "model" : "compare" });
     }
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-    const inputs = Array.isArray(body.inputs) ? (body.inputs as { asset_id: string; role: string }[]) : [];
+    const inputs = Array.isArray(body.inputs) ? [...(body.inputs as { asset_id: string; role: string }[])] : [];
+    if (typeof body.character === "string" && body.character) {
+      const character = characters.get(body.character);
+      if (!character) throw new HttpError(400, "That character no longer exists.", { kind: "validation", field: "character" });
+      const slotSpec = model.inputs.find((item) => item.role === "reference" && item.kind === "image");
+      if (!slotSpec) throw new HttpError(400, `${model.name} does not take reference images, so it cannot use a character.`, { kind: "validation", field: "character" });
+      const room = slotSpec.max - inputs.filter((input) => input.role === "reference").length;
+      for (const id of character.asset_ids.slice(0, Math.max(0, room))) inputs.push({ asset_id: id, role: "reference" });
+    }
     if (model.prompt && !prompt && !inputs.length) throw new HttpError(400, "Add a prompt.", { kind: "validation", field: "prompt" });
     const count = Number(body.count ?? 1);
     if (!Number.isInteger(count) || count < 1 || count > 8) throw new HttpError(400, "Count must be from 1 to 8.", { kind: "validation", field: "count" });
@@ -532,6 +541,30 @@ function createState(mode: MockMode, mediaDir: string) {
     }
     created.forEach((job) => broadcast("job", job));
     return { batch_id: batch, jobs: created };
+  }
+
+  const characters = new Map<string, { id: string; name: string; description: string; asset_ids: string[]; created_at: number; updated_at: number }>();
+  const characterJson = (character: { id: string; name: string; description: string; asset_ids: string[]; created_at: number; updated_at: number }) => ({
+    id: character.id,
+    name: character.name,
+    description: character.description,
+    assets: character.asset_ids.map((id) => assets.get(id)?.asset).filter(Boolean),
+    created_at: character.created_at,
+    updated_at: character.updated_at,
+  });
+  function applyCharacter(character: { name: string; description: string; asset_ids: string[] }, body: Json, creating: boolean) {
+    if (creating || body.name !== undefined) {
+      const name = String(body.name ?? "").trim();
+      if (!name || name.length > 80) throw new HttpError(400, "Give the character a short name.", { kind: "validation", field: "name" });
+      character.name = name;
+    }
+    if (body.description !== undefined) character.description = String(body.description ?? "").slice(0, 500);
+    if (creating || body.asset_ids !== undefined) {
+      const ids = Array.isArray(body.asset_ids) ? (body.asset_ids as string[]) : [];
+      if (!ids.length || ids.length > 14) throw new HttpError(400, "A character needs 1 to 14 images.", { kind: "validation", field: "asset_ids" });
+      if (ids.some((id) => assets.get(id)?.asset.kind !== "image" || assets.get(id)?.asset.deleted_at)) throw new HttpError(400, "Characters use images from the library.", { kind: "validation", field: "asset_ids" });
+      character.asset_ids = ids;
+    }
   }
 
   // Recipes: each step is an ordinary job; a run starts the next step when one finishes.
@@ -878,6 +911,36 @@ function createState(mode: MockMode, mediaDir: string) {
       await sleep(250);
       return sendJson(res, 200, modelJson(model, true));
     }
+    // Workflow import: reads the graph roughly like the server and adds a ComfyUI model.
+    if (path === "/api/workflows/import" && method === "POST") {
+      const body = await readJson(req);
+      const graph = body.workflow as Record<string, { class_type?: string; inputs?: Record<string, unknown> }> | null;
+      if (!graph || typeof graph !== "object" || Array.isArray(graph)) throw new HttpError(400, "The workflow must be a JSON object.", { kind: "validation", field: "workflow" });
+      if ("nodes" in graph && "links" in graph) throw new HttpError(400, "This is the ComfyUI editor format. In ComfyUI use Workflow > Export (API) and import that file.", { kind: "validation", field: "workflow" });
+      const nodes = Object.values(graph);
+      if (!nodes.length || nodes.some((node) => typeof node?.class_type !== "string")) throw new HttpError(400, "This is not a ComfyUI API workflow: every node needs a class_type.", { kind: "validation", field: "workflow" });
+      const name = String(body.name ?? "").trim() || "Imported workflow";
+      const types = nodes.map((node) => node.class_type!);
+      const video = types.some((type) => /Video|VHS_/.test(type));
+      const loads = types.filter((type) => /^LoadImage/.test(type)).length;
+      const seed: ModelSeed = {
+        id: `comfyui:${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+        provider: "comfyui", name, output: video ? "video" : "image", tasks: [video ? (loads ? "image_to_video" : "text_to_video") : loads ? "image_edit" : "text_to_image"],
+        inputs: loads ? [{ role: video ? "start_frame" : "reference", kind: "image", min: 1, max: 1 }] : [],
+        params: [{ key: "seed", label: "Seed", type: "seed", advanced: true }, { key: "steps", label: "Steps", type: "int", min: 1, max: 60, step: 1, default: 20, advanced: true }],
+        prompt: types.some((type) => /TextEncode/.test(type)), negative_prompt: types.filter((type) => /TextEncode/.test(type)).length > 1, max_outputs: 1, pricing: { unit: "local" }, open_weights: true, tags: [],
+        description: `Imported ComfyUI workflow (${nodes.length} nodes).`,
+      };
+      const existing = modelSeeds.findIndex((item) => item.id === seed.id);
+      if (existing >= 0) modelSeeds.splice(existing, 1, seed);
+      else modelSeeds.push(seed);
+      await sleep(600);
+      return sendJson(res, 201, {
+        model: seed.id,
+        manifest: { name, description: seed.description, output: seed.output, tasks: seed.tasks, prompt: seed.prompt ? [["1", "text"]] : [], negative_prompt: seed.negative_prompt ? [["2", "text"]] : [], inputs: seed.inputs, params: seed.params, requires: { models: [] } },
+        notes: ["The mock server runs imported workflows with its fake engine."],
+      });
+    }
     if (path === "/api/models/refresh" && method === "POST") {
       await sleep(700);
       return sendJson(res, 200, { models: modelSeeds.length });
@@ -979,6 +1042,34 @@ function createState(mode: MockMode, mediaDir: string) {
       return sendJson(res, 200, run);
     }
 
+    // Characters: named sets of reference images.
+    if (path === "/api/characters" && method === "GET") return sendJson(res, 200, { characters: [...characters.values()].sort((a, b) => b.updated_at - a.updated_at).map(characterJson) });
+    if (path === "/api/characters" && method === "POST") {
+      const body = await readJson(req);
+      const character = { id: ulid(), name: "", description: "", asset_ids: [] as string[], created_at: Date.now(), updated_at: Date.now() };
+      applyCharacter(character, body, true);
+      characters.set(character.id, character);
+      broadcast("character", characterJson(character));
+      return sendJson(res, 201, characterJson(character));
+    }
+    if ((match = /^\/api\/characters\/([^/]+)$/.exec(path))) {
+      const character = characters.get(decodeURIComponent(match[1]!));
+      if (!character) throw new HttpError(404, "No such character.", { kind: "not_found" });
+      if (method === "GET") return sendJson(res, 200, characterJson(character));
+      if (method === "PATCH") {
+        applyCharacter(character, await readJson(req), false);
+        character.updated_at = Date.now();
+        broadcast("character", characterJson(character));
+        return sendJson(res, 200, characterJson(character));
+      }
+      if (method === "DELETE") {
+        characters.delete(character.id);
+        broadcast("character", { id: character.id, deleted: true });
+        res.writeHead(204);
+        return res.end();
+      }
+    }
+
     // Billing (hosted)
     if (path === "/api/billing" && method === "GET") {
       return sendJson(res, 200, { enabled: wallet.enabled, topups_available: wallet.enabled, balance_usd: wallet.balance, debt_usd: wallet.debt, locked: wallet.balance < 0, markup: wallet.markup, topups_usd: [10, 25, 50], ledger: wallet.ledger.slice(0, 50) });
@@ -1006,23 +1097,29 @@ function createState(mode: MockMode, mediaDir: string) {
       const files = form.getAll("file").filter((entry) => typeof entry !== "string") as unknown as { name: string; type: string; arrayBuffer(): Promise<ArrayBuffer> }[];
       if (!files.length) throw new HttpError(400, "Send at least one file.", { kind: "validation", field: "file" });
       await sleep(300);
-      const created = await Promise.all(
-        files.map(async (file) => {
-          const data = Buffer.from(await file.arrayBuffer());
-          const kind = file.type.split("/")[0] as Kind;
-          if (!["image", "video", "audio"].includes(kind)) throw new HttpError(415, `${file.name} is not an image, video or audio file.`, { kind: "validation", field: "file" });
-          const id = ulid();
-          const size = kind === "image" ? imageSize(data) : null;
-          const asset = addAsset({
-            asset: { id, kind, mime: file.type, width: size?.[0] ?? null, height: size?.[1] ?? null, duration_ms: null, size: data.length, url: `/files/${id}`, thumb_url: kind === "image" ? `/thumbs/${id}` : null, source: "upload", job_id: null, model: null, prompt: null, favorite: false, created_at: Date.now(), deleted_at: null },
-            file: { type: "bytes", data, mime: file.type },
-            thumb: kind === "image" ? { type: "same" } : null,
-          });
-          broadcast("asset", asset);
-          return asset;
-        }),
-      );
-      return sendJson(res, 201, { assets: created });
+      // Like the server: keep every real media file, list the others with a reason.
+      const created: Asset[] = [];
+      const errors: { name: string; error: string }[] = [];
+      for (const file of files) {
+        const data = Buffer.from(await file.arrayBuffer());
+        const kind = file.type.split("/")[0] as Kind;
+        const text = data.subarray(0, 64).toString("utf8").trimStart();
+        if (!["image", "video", "audio"].includes(kind) || file.type === "image/svg+xml" || text.startsWith("<")) {
+          errors.push({ name: file.name, error: "Pictesa can only use image, video and audio files, and this file is something else." });
+          continue;
+        }
+        const id = ulid();
+        const size = kind === "image" ? imageSize(data) : null;
+        const asset = addAsset({
+          asset: { id, kind, mime: file.type, width: size?.[0] ?? null, height: size?.[1] ?? null, duration_ms: null, size: data.length, url: `/files/${id}`, thumb_url: kind === "image" ? `/thumbs/${id}` : null, source: "upload", name: file.name, job_id: null, model: null, prompt: null, favorite: false, created_at: Date.now(), deleted_at: null },
+          file: { type: "bytes", data, mime: file.type },
+          thumb: kind === "image" ? { type: "same" } : null,
+        });
+        broadcast("asset", asset);
+        created.push(asset);
+      }
+      if (!created.length) throw new HttpError(400, errors[0]?.error ?? "No file could be stored.", { kind: "validation", field: "file", errors });
+      return sendJson(res, 201, { assets: created, errors });
     }
     if (path === "/api/assets/import" && method === "POST") {
       const body = await readJson(req);
@@ -1041,7 +1138,7 @@ function createState(mode: MockMode, mediaDir: string) {
       const id = ulid();
       const size = kind === "image" ? imageSize(data) : null;
       const asset = addAsset({
-        asset: { id, kind, mime, width: size?.[0] ?? null, height: size?.[1] ?? null, duration_ms: null, size: data.length, url: `/files/${id}`, thumb_url: kind === "image" ? `/thumbs/${id}` : null, source: "import", job_id: null, model: null, prompt: null, favorite: false, created_at: Date.now(), deleted_at: null },
+        asset: { id, kind, mime, width: size?.[0] ?? null, height: size?.[1] ?? null, duration_ms: null, size: data.length, url: `/files/${id}`, thumb_url: kind === "image" ? `/thumbs/${id}` : null, source: "import", name: decodeURIComponent(new URL(link).pathname.split("/").pop() || "import"), job_id: null, model: null, prompt: null, favorite: false, created_at: Date.now(), deleted_at: null },
         file: { type: "bytes", data, mime },
         thumb: kind === "image" ? { type: "same" } : null,
       });

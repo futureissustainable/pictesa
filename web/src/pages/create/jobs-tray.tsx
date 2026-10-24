@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { clock, kindIcon, kindLabel, money } from "../../lib/format";
 import { compareBatches, comparing, dismissCompare, type CompareBatch } from "../../lib/compare";
-import { cancelJob, dismissJob, isActive, jobs, retryJob } from "../../lib/jobs";
+import { cancelJob, dismissJob, isActive, jobs, previews, retryJob } from "../../lib/jobs";
 import { cancelRun, dismissRun, jobsInRuns, runs, useRecipes } from "../../lib/recipes";
 import { useStore } from "../../lib/store";
 import type { Job, RecipeRun } from "../../lib/types";
@@ -9,6 +9,7 @@ import { openViewer } from "../../lib/viewer";
 import { Thumb } from "../../ui/asset-card";
 import { Dialog } from "../../ui/dialog";
 import { Icon, Spinner } from "../../ui/icon";
+import { LivePreview } from "../../ui/live-preview";
 
 /** Live generation cards above the composer, fed by GET /api/events. */
 export function JobsTray() {
@@ -100,6 +101,7 @@ function JobCard({ job, now }: { job: Job; now: number }) {
   const active = isActive(job);
   const output = job.outputs?.[0];
   const determinate = job.status === "running" && typeof job.progress === "number";
+  const preview = useStore(previews).get(job.id);
   return (
     <li className={`job-card job-${job.status}`} title={job.prompt || undefined}>
       {output ? (
@@ -108,7 +110,7 @@ function JobCard({ job, now }: { job: Job; now: number }) {
         </button>
       ) : (
         <span className="job-visual" aria-hidden="true">
-          {active ? <Spinner /> : <Icon name={job.status === "failed" ? "error" : job.status === "canceled" ? "block" : kindIcon[job.output]} />}
+          {preview ? <LivePreview src={preview} /> : active ? <Spinner /> : <Icon name={job.status === "failed" ? "error" : job.status === "canceled" ? "block" : kindIcon[job.output]} />}
         </span>
       )}
       <div className="job-text">
@@ -151,6 +153,7 @@ function RunCard({ run, now, jobs: list }: { run: RecipeRun; now: number; jobs: 
   const output = run.status === "succeeded" ? finalJob?.outputs?.[0] : undefined;
   const label = recipe?.steps[run.step]?.label ?? `Step ${run.step + 1}`;
   const running = run.status === "running";
+  const preview = useStore(previews).get(stepJob?.id ?? "");
   const jobProgress = stepJob?.status === "running" && typeof stepJob.progress === "number" ? stepJob.progress : null;
   const fraction = running && jobProgress !== null ? (run.step + jobProgress) / Math.max(1, run.steps) : null;
   const status = running
@@ -168,7 +171,7 @@ function RunCard({ run, now, jobs: list }: { run: RecipeRun; now: number; jobs: 
         </button>
       ) : (
         <span className="job-visual" aria-hidden="true">
-          {running ? <Spinner /> : <Icon name={run.status === "failed" ? "error" : run.status === "canceled" ? "block" : "conversion_path"} />}
+          {running && preview ? <LivePreview src={preview} /> : running ? <Spinner /> : <Icon name={run.status === "failed" ? "error" : run.status === "canceled" ? "block" : "conversion_path"} />}
         </span>
       )}
       <div className="job-text">
@@ -234,12 +237,14 @@ function CompareCard({ batch }: { batch: CompareBatch }) {
 
 /** The same prompt on every model, side by side, with the model name under each result. */
 function CompareDialog({ batch, now }: { batch: CompareBatch; now: number }) {
+  const frames = useStore(previews);
   return (
     <Dialog title="Compare models" size="wide" onClose={() => comparing.set(null)} className="compare-dialog">
       {batch.prompt && <p className="compare-prompt">{batch.prompt}</p>}
       <ul className="compare-grid" style={{ gridTemplateColumns: `repeat(${Math.min(batch.jobs.length, 4)}, minmax(0, 1fr))` }}>
         {batch.jobs.map((job) => {
           const outputs = job.outputs ?? [];
+          const frame = frames.get(job.id);
           return (
             <li key={job.id} className="compare-cell">
               <div className="compare-media">
@@ -250,8 +255,8 @@ function CompareDialog({ batch, now }: { batch: CompareBatch; now: number }) {
                     </button>
                   ))
                 ) : (
-                  <div className="compare-state" role="status">
-                    {isActive(job) ? <Spinner /> : <Icon name={job.status === "failed" ? "error" : "block"} />}
+                  <div className={`compare-state${frame ? " has-preview" : ""}`} role="status">
+                    {frame ? <LivePreview src={frame} /> : isActive(job) ? <Spinner /> : <Icon name={job.status === "failed" ? "error" : "block"} />}
                     <span>{statusText(job, now)}</span>
                   </div>
                 )}

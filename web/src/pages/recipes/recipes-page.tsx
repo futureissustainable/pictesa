@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { ApiError, errorMessage, uploadFiles } from "../../lib/api";
-import { acceptFor, ASSET_DRAG_TYPE, fileKind, readDraggedAsset } from "../../lib/attach";
+import { acceptFor, ASSET_DRAG_TYPE, clearUploadErrors, fileKind, readDraggedAsset, refusal, reportUploadError, uploadErrors } from "../../lib/attach";
 import { toggleFavorite } from "../../lib/assets";
 import { fallbackModelName, useModelNames, useModels, usePresets } from "../../lib/catalog";
 import { emitLocal } from "../../lib/events";
@@ -17,6 +17,7 @@ import { AssetGrid } from "../../ui/grid";
 import { Icon, Spinner, type IconName } from "../../ui/icon";
 import { SizeSlider, useImageSize } from "../../ui/size-slider";
 import { JobsTray } from "../create/jobs-tray";
+import { UploadErrors } from "../create/inputs";
 import { LibraryPicker } from "../create/library-picker";
 import { ModeSwitch } from "../create/mode-switch";
 
@@ -156,6 +157,7 @@ function RecipeComposer({ recipe, models }: { recipe: Recipe; models: Map<string
   const [busy, setBusy] = useState(false);
   const [invalid, setInvalid] = useState<string | null>(null);
   const primary = recipe.fields.find((field) => field.type === "text");
+  const refused = useStore(uploadErrors).filter((item) => item.scope.startsWith(`recipe:${recipe.id}:`));
   const others = recipe.fields.filter((field) => field !== primary);
   const uploading = Object.values(draft.inputs).some((list) => list.some((item) => !item.asset));
 
@@ -230,10 +232,13 @@ function RecipeComposer({ recipe, models }: { recipe: Recipe; models: Map<string
       <div className="composer recipe-composer">
         <div className="composer-main">
           {recipe.inputs.length > 0 && (
-            <div className="slots" role="group" aria-label="Inputs">
-              {recipe.inputs.map((input) => (
-                <RecipeInputSlot key={input.key} recipe={recipe} input={input} draft={draft} invalid={invalid === input.key} />
-              ))}
+            <div className="slots-area">
+              <div className="slots" role="group" aria-label="Inputs">
+                {recipe.inputs.map((input) => (
+                  <RecipeInputSlot key={input.key} recipe={recipe} input={input} draft={draft} invalid={invalid === input.key} />
+                ))}
+              </div>
+              <UploadErrors errors={refused} />
             </div>
           )}
           <div className="prompt-line">
@@ -279,7 +284,7 @@ function RecipeComposer({ recipe, models }: { recipe: Recipe; models: Map<string
               const current = stepModel(recipe, index, draft, models);
               const options = step.models.map((id) => models.get(id)).filter((model): model is ModelSpec => Boolean(model?.configured));
               return (
-                <Control key={step.id} label={`Model for ${step.label.toLowerCase()}`} icon={kindIcon[step.output]} value={current?.name ?? "No model"} size="wide">
+                <Control key={step.id} label={`Model for ${step.label.toLowerCase()}`} icon={kindIcon[step.output]} value={current?.name ?? "No model"} invalid={invalid === `models.${step.id}`} size="wide">
                   {options.length ? (
                     options.map((model) => (
                       <Choice key={model.id} selected={model.id === current?.id} onPick={() => updateDraft(recipe, (draftNow) => ({ ...draftNow, models: { ...draftNow.models, [step.id]: model.id } }))}>
@@ -364,7 +369,9 @@ function RecipeInputSlot({ recipe, input, draft, invalid }: { recipe: Recipe; in
     setItems((list) => [...list, ...fitting.filter((asset) => !list.some((item) => item.asset?.id === asset.id)).map((asset) => ({ key: asset.id, asset }))].slice(0, input.max));
   };
 
+  const scope = `recipe:${recipe.id}:${input.key}`;
   const upload = (files: File[]) => {
+    clearUploadErrors(scope);
     const fitting = files.filter((file) => fileKind(file) === input.kind).slice(0, Math.max(0, room));
     if (fitting.length < files.length) notifyError(`${input.label} takes up to ${input.max} ${kindPlural[input.kind]}.`);
     for (const file of fitting) {
@@ -372,14 +379,15 @@ function RecipeInputSlot({ recipe, input, draft, invalid }: { recipe: Recipe; in
       const preview = input.kind === "image" ? URL.createObjectURL(file) : null;
       setItems((list) => [...list, { key, name: file.name, progress: null, preview }]);
       uploadFiles([file], (progress) => setItems((list) => list.map((item) => (item.key === key ? { ...item, progress } : item))))
-        .then(([asset]) => {
-          if (!asset) throw new Error(`${file.name} did not upload.`);
+        .then(({ assets, errors }) => {
+          const asset = assets[0];
+          if (!asset) throw new Error(errors[0]?.error ?? `${file.name} did not upload.`);
           emitLocal({ asset });
           setItems((list) => list.map((item) => (item.key === key ? { key, asset } : item)));
         })
         .catch((reason: unknown) => {
           setItems((list) => list.filter((item) => item.key !== key));
-          notifyError(`${file.name}: ${errorMessage(reason)}`);
+          reportUploadError(scope, file.name, refusal(reason, file.name));
         })
         .finally(() => {
           if (preview) setTimeout(() => URL.revokeObjectURL(preview), 5000);

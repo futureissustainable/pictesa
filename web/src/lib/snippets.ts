@@ -2,8 +2,8 @@ import type { GenerationRequest, Job } from "./types";
 
 // Commands and configuration snippets that let agents repeat or drive a generation.
 
-/** The address agents should use. The dev server proxies to the default server address. */
-export const serverOrigin = () => (import.meta.env.DEV ? "http://127.0.0.1:4747" : location.origin);
+/** The address agents should use: this origin, or in development the server behind the proxy. */
+export const serverOrigin = () => (import.meta.env.DEV ? __PICTESA_SERVER__ : location.origin);
 
 export const shellQuote = (value: string) => (/^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`);
 
@@ -20,21 +20,13 @@ export function requestFromJob(job: Job): GenerationRequest {
   return request;
 }
 
-const exampleExtension: Record<string, string> = { video: "mp4", audio: "mp3" };
-
-/**
- * `pictesa generate ...` as the CLI takes it: the prompt is positional and `--input` reads a
- * local file, so library inputs become example paths to replace.
- */
+/** `pictesa generate ...` as the CLI takes it: the prompt is positional, library inputs are `role=asset:<id>`. */
 export function cliCommand(request: GenerationRequest): string {
   const parts = ["pictesa generate", `--model ${shellQuote(request.model)}`];
   for (const [key, value] of Object.entries(request.params)) {
     if (value !== null) parts.push(`--param ${shellQuote(`${key}=${value}`)}`);
   }
-  request.inputs.forEach((input, index) => {
-    const name = `${input.role}${request.inputs.filter((item) => item.role === input.role).length > 1 ? `-${index + 1}` : ""}`;
-    parts.push(`--input ${shellQuote(`${input.role}=./${name}.${exampleExtension[input.role] ?? "png"}`)}`);
-  });
+  for (const input of request.inputs) parts.push(`--input ${shellQuote(`${input.role}=asset:${input.asset_id}`)}`);
   if (request.count > 1) parts.push(`--count ${request.count}`);
   if (request.negative_prompt) parts.push(`--negative ${shellQuote(request.negative_prompt)}`);
   if (request.preset) parts.push(`--preset ${shellQuote(request.preset)}`);

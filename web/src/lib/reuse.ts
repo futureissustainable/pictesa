@@ -1,10 +1,10 @@
 import { api } from "./api";
 import { loadFullModel, loadModels, peekModels } from "./catalog";
-import { composer, loadSettings, placeAsset, selectModel } from "./composer";
+import { composer, loadSettings, placeAsset, selectModel, setCharacter, setMode, takesCharacter } from "./composer";
 import { kindLabel, roleLabel } from "./format";
 import { notify } from "./notices";
 import { navigate } from "./router";
-import type { Asset, AssetDetail, InputRole, MediaKind, ModelSpec } from "./types";
+import type { Asset, AssetDetail, Character, InputRole, MediaKind, ModelSpec } from "./types";
 
 // Moves library items into Create: reuse a job's settings, or use an asset as an input.
 
@@ -72,4 +72,24 @@ export async function reuseSettings(detail: AssetDetail) {
   if (!model) notify(`${job.model_name} is not available any more. The prompt and inputs are loaded.`, { tone: "error" });
   else if (inputs.length < (job.inputs?.length ?? 0)) notify("Settings loaded. Some original inputs are no longer in the library.");
   navigate("/", { replace: true });
+}
+
+/** "Use in Create": picks the character for images, switching to a model that takes references if needed. */
+export async function sendCharacterToCreate(character: Character) {
+  const mode: MediaKind = "image";
+  await loadModels(mode);
+  const models = peekModels(mode) ?? [];
+  const listed = models.find((model) => model.id === composer.get().modelByMode[mode]);
+  const current = (listed && (await loadFullModel(listed))) ?? undefined;
+  if (!takesCharacter(current)) {
+    const usable = models.filter((model) => model.configured && takesCharacter(model));
+    const target = usable.find((model) => model.tags?.includes("featured")) ?? usable[0];
+    if (target) {
+      selectModel(mode, target, current);
+      notify(`Switched to ${target.name}, which takes reference images.`);
+    }
+  }
+  setCharacter(mode, character.id);
+  setMode(mode);
+  navigate("/");
 }

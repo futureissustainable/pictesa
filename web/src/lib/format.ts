@@ -154,6 +154,7 @@ export function optionLabel(spec: ParamSpec, value: ParamValue | undefined): str
     if (option) return option.label;
   }
   if (spec.type === "bool") return value ? "On" : "Off";
+  if (spec.key === "duration" && typeof value === "number") return `${value}s`;
   return String(value);
 }
 
@@ -180,4 +181,29 @@ export function plural(count: number, one: string, many: string) {
 
 export function dimensions(width: number | null, height: number | null): string | null {
   return width && height ? `${width} × ${height}` : null;
+}
+
+/** "landscape_16_9" -> 16/9, "portrait_4_3" -> 3/4, "square_hd" -> 1 (gateway size names). */
+function namedRatio(text: string): number | null {
+  const match = /(landscape|portrait)_(\d+)_(\d+)/.exec(text);
+  if (match) {
+    const a = Number(match[2]);
+    const b = Number(match[3]);
+    return match[1] === "landscape" ? a / b : b / a;
+  }
+  return /square/.test(text) ? 1 : null;
+}
+
+/** Width over height a run asked for, from its params; 1 when they do not say. */
+export function requestedRatio(params: ParamValues): number {
+  const width = numeric(params.width);
+  const height = numeric(params.height);
+  if (width && height) return width / height;
+  for (const key of ["aspect_ratio", "image_size", "size", "ratio"]) {
+    const value = params[key];
+    if (typeof value !== "string") continue;
+    const ratio = ratioOf(value) ?? namedRatio(value);
+    if (ratio) return ratio;
+  }
+  return 1;
 }

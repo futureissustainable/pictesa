@@ -1,10 +1,12 @@
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { lazy, Suspense, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useProviders } from "../../lib/catalog";
 import { priceHint, taskName } from "../../lib/format";
 import { Link } from "../../lib/router";
 import type { ModelSpec, ProviderKind, ProviderState } from "../../lib/types";
 import { Control } from "../../ui/control";
 import { Icon } from "../../ui/icon";
+
+const WorkflowImportDialog = lazy(() => import("../workflows/import-dialog"));
 
 type Where = "all" | "local" | "cloud";
 
@@ -48,8 +50,10 @@ function rank(model: ModelSpec): number {
 /** The model trigger on the control line and its searchable, filterable list. */
 export function ModelPicker({ models, model, onSelect, loading }: { models: ModelSpec[]; model?: ModelSpec; onSelect(model: ModelSpec): void; loading: boolean }) {
   const [filters, setFilters] = useState<PickerFilters | null>(null);
+  const [importing, setImporting] = useState(false);
   const current = filters ?? { q: "", provider: "", task: "", where: "all", configuredOnly: models.some((item) => item.configured) };
   return (
+    <>
     <Control
       label="Model"
       size="large"
@@ -70,9 +74,19 @@ export function ModelPicker({ models, model, onSelect, loading }: { models: Mode
             setFilters({ ...current, q: "" });
             close();
           }}
+          onImport={() => {
+            close();
+            setImporting(true);
+          }}
         />
       )}
     </Control>
+    {importing && (
+      <Suspense fallback={null}>
+        <WorkflowImportDialog onClose={() => setImporting(false)} />
+      </Suspense>
+    )}
+    </>
   );
 }
 
@@ -113,12 +127,14 @@ function ModelList({
   filters,
   setFilters,
   onSelect,
+  onImport,
 }: {
   models: ModelSpec[];
   selected?: ModelSpec;
   filters: PickerFilters;
   setFilters(filters: PickerFilters): void;
   onSelect(model: ModelSpec): void;
+  onImport?(): void;
 }) {
   const providers = useProviders().data;
   const listRef = useRef<HTMLDivElement>(null);
@@ -250,10 +266,18 @@ function ModelList({
         <span>
           {found.length > LIMIT ? `${LIMIT} of ${found.length} shown. Search to narrow.` : `${found.length} of ${models.length} models`}
         </span>
-        <Link to="/settings" className="text-button">
-          <Icon name="key" />
-          Providers
-        </Link>
+        <span className="model-footer-actions">
+          {onImport && (
+            <button type="button" className="text-button" onClick={onImport}>
+              <Icon name="add" />
+              Add ComfyUI workflow
+            </button>
+          )}
+          <Link to="/settings" className="text-button">
+            <Icon name="key" />
+            Providers
+          </Link>
+        </span>
       </div>
     </div>
   );

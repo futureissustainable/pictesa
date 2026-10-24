@@ -15,12 +15,13 @@ import { Notices } from "./ui/notices";
 const CreatePage = lazy(() => import("./pages/create/create-page"));
 const LibraryPage = lazy(() => import("./pages/library/library-page"));
 const RecipesPage = lazy(() => import("./pages/recipes/recipes-page"));
+const CharactersPage = lazy(() => import("./pages/characters/characters-page"));
 const SettingsPage = lazy(() => import("./pages/settings/settings-page"));
 const AuthPage = lazy(() => import("./pages/auth/auth-page"));
 const TokenPage = lazy(() => import("./pages/auth/auth-page").then((module) => ({ default: module.TokenPage })));
 const Viewer = lazy(() => import("./pages/viewer/viewer"));
 
-type Section = "create" | "library" | "favorites" | "uploads" | "trash" | "settings" | "none";
+type Section = "create" | "library" | "favorites" | "uploads" | "characters" | "trash" | "settings" | "none";
 
 interface NavItem {
   id: Section;
@@ -36,6 +37,7 @@ const primary: NavItem[] = [
 const collections: NavItem[] = [
   { id: "favorites", label: "Favorites", icon: "favorite", to: "/library?favorite=true" },
   { id: "uploads", label: "Uploads", icon: "upload", to: "/library?source=upload" },
+  { id: "characters", label: "Characters", icon: "face", to: "/characters" },
   { id: "trash", label: "Trash", icon: "delete", to: "/library?trash=true" },
 ];
 const settingsItem: NavItem = { id: "settings", label: "Settings", icon: "tune", to: "/settings" };
@@ -44,6 +46,7 @@ const mobileItems = [primary[0]!, primary[1]!, collections[0]!, settingsItem];
 function sectionOf(url: URL): Section {
   if (url.pathname === "/" || url.pathname === "/recipes") return "create";
   if (url.pathname.startsWith("/settings")) return "settings";
+  if (url.pathname === "/characters") return "characters";
   if (url.pathname === "/library") {
     if (url.searchParams.get("trash") === "true") return "trash";
     if (url.searchParams.get("favorite") === "true") return "favorites";
@@ -58,6 +61,7 @@ const titles: Record<Section, string> = {
   library: "Library",
   favorites: "Favorites",
   uploads: "Uploads",
+  characters: "Characters",
   trash: "Trash",
   settings: "Settings",
   none: "Not found",
@@ -186,6 +190,8 @@ function Shell({ me }: { me: Me }) {
               <CreatePage />
             ) : section === "settings" ? (
               <SettingsPage />
+            ) : section === "characters" ? (
+              <CharactersPage />
             ) : section === "none" ? (
               <NotFound />
             ) : (

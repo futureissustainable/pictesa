@@ -1,6 +1,6 @@
 import { api, errorMessage } from "./api";
 import { refreshBillingSoon } from "./catalog";
-import { onReconnect, subscribeEvents } from "./events";
+import { onReconnect, subscribeEvents, type PreviewEvent } from "./events";
 import { notifyError } from "./notices";
 import { createStore } from "./store";
 import type { Job, JobStatus } from "./types";
@@ -17,6 +17,46 @@ const READY_MS = 4000;
 
 export const isActive = (job: Job) => job.status === "queued" || job.status === "running";
 
+/** The latest in-progress image per running job, as an object URL fetched once for every view. */
+export const previews = createStore<ReadonlyMap<string, string>>(new Map());
+const previewVersions = new Map<string, number>();
+/** Old frames stay valid a moment so a crossfade can finish on them. */
+const releaseUrl = (url: string) => setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+async function loadPreview({ job_id: id, version, url }: PreviewEvent) {
+  const job = jobs.get().find((item) => item.id === id);
+  if ((job && !isActive(job)) || (previewVersions.get(id) ?? 0) >= version) return;
+  previewVersions.set(id, version);
+  // A newer frame or the end of the job can arrive while this one loads.
+  const current = () => previewVersions.get(id) === version;
+  try {
+    const response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok || !current()) return;
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const image = new Image();
+    image.src = objectUrl;
+    await image.decode().catch(() => undefined);
+    if (!current()) return URL.revokeObjectURL(objectUrl);
+    const previous = previews.get().get(id);
+    previews.set((map) => new Map(map).set(id, objectUrl));
+    if (previous) releaseUrl(previous);
+  } catch {
+    // A missed frame is harmless: the next one replaces it.
+  }
+}
+
+function dropPreview(id: string) {
+  previewVersions.delete(id);
+  const previous = previews.get().get(id);
+  if (!previous) return;
+  previews.set((map) => {
+    const next = new Map(map);
+    next.delete(id);
+    return next;
+  });
+  releaseUrl(previous);
+}
+
 /** `track` adds the job even when it already finished (a POST answer that failed at once). */
 export function upsertJob(job: Job, track = false) {
   if (dismissed.has(job.id)) return;
@@ -32,6 +72,7 @@ export function upsertJob(job: Job, track = false) {
     if (rank[job.status] < rank[current.status]) return;
     jobs.set(list.map((item) => (item.id === job.id ? job : item)));
   }
+  if (!isActive(job)) dropPreview(job.id);
   if (job.status === "succeeded" && !doneTimers.has(job.id)) {
     doneTimers.set(job.id, setTimeout(() => removeJob(job.id), READY_MS));
     refreshBillingSoon();
@@ -40,6 +81,7 @@ export function upsertJob(job: Job, track = false) {
 
 function removeJob(id: string) {
   doneTimers.delete(id);
+  dropPreview(id);
   jobs.set((list) => list.filter((item) => item.id !== id));
 }
 
@@ -88,5 +130,5 @@ export function loadActiveJobs(): Promise<void> {
   return loading;
 }
 
-subscribeEvents({ job: upsertJob });
+subscribeEvents({ job: upsertJob, preview: (preview) => void loadPreview(preview) });
 onReconnect(() => void loadActiveJobs());

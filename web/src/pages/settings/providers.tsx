@@ -1,10 +1,12 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useId, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
 import { invalidateModels, loadProviders, replaceProvider, useProviders } from "../../lib/catalog";
 import { plural, providerKindIcon } from "../../lib/format";
 import { notify, notifyError } from "../../lib/notices";
 import type { CredentialField, FieldValue, ProviderKind, ProviderState } from "../../lib/types";
 import { Icon, Spinner } from "../../ui/icon";
+
+const WorkflowImportDialog = lazy(() => import("../workflows/import-dialog"));
 
 const groups: { kind: ProviderKind; title: string; text: string }[] = [
   { kind: "local", title: "Local", text: "Runs on your own hardware. No key, no per-run cost." },
@@ -102,6 +104,7 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [confirmForget, setConfirmForget] = useState(false);
+  const [importing, setImporting] = useState(false);
   const dirty = Object.keys(edits).length > 0;
   const busy = status.kind === "busy";
   const stored = Object.values(provider.values ?? {}).some((value) => value.source === "stored");
@@ -199,6 +202,12 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
               Get a key
             </a>
           )}
+          {provider.id === "comfyui" && (
+            <button type="button" className="text-button" onClick={() => setImporting(true)}>
+              <Icon name="add" />
+              Import workflow
+            </button>
+          )}
           {provider.docs_url && (
             <a className="text-button" href={provider.docs_url} target="_blank" rel="noreferrer">
               <Icon name="open_in_new" />
@@ -213,6 +222,11 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
           </p>
         )}
       </form>
+      {importing && (
+        <Suspense fallback={null}>
+          <WorkflowImportDialog onClose={() => setImporting(false)} />
+        </Suspense>
+      )}
     </article>
   );
 }

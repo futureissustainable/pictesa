@@ -14,6 +14,8 @@ export default defineConfig(({ command, mode }) => {
   const proxy = Object.fromEntries(["/api", "/files", "/thumbs", "/mcp"].map((path) => [path, { target, changeOrigin: true }]));
 
   return {
+    // The address agents should use while developing: the server behind the proxy.
+    define: { __PICTESA_SERVER__: JSON.stringify(target) },
     plugins: [react(), tailwindcss(), ...(mock ? [mockApi({ mode: (["hosted", "token"].includes(mock) ? mock : "local") as MockMode })] : [])],
     server: {
       port: Number(env.PORT) || 5173,

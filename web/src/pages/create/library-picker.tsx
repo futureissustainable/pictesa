@@ -8,6 +8,7 @@ import { notifyError } from "../../lib/notices";
 import type { Asset, MediaKind } from "../../lib/types";
 import { Dialog } from "../../ui/dialog";
 import { AssetGrid } from "../../ui/grid";
+import { assetTitle } from "../../lib/names";
 import { Icon, Spinner } from "../../ui/icon";
 
 /** Pick inputs from the library, or import one from a link. */
@@ -87,7 +88,7 @@ export function LibraryPicker({ kind, room, title, onPick, onClose }: { kind: Me
             size={150}
             scroller={scrollRef}
             label={`Your ${kindPlural[kind]}`}
-            titleOf={(asset) => (asset.source === "generated" ? nameOf(asset.model) : asset.source === "upload" ? "Upload" : "Import")}
+            titleOf={(asset) => assetTitle(asset, nameOf)}
             selectable={multiple}
             selected={new Set(selected.keys())}
             hasMore={list.hasMore}

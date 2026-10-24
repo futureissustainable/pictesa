@@ -1,12 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { toggleFavorite, useAssetList } from "../../lib/assets";
 import { useModelNames, useModels } from "../../lib/catalog";
 import { useComposer } from "../../lib/composer";
-import { kindPlural } from "../../lib/format";
+import { kindPlural, requestedRatio } from "../../lib/format";
+import { isActive, jobs, previews } from "../../lib/jobs";
+import { useStore } from "../../lib/store";
 import { Link } from "../../lib/router";
 import { openViewer, useSequence } from "../../lib/viewer";
 import { PixelMark } from "../../ui/brand";
-import { AssetGrid } from "../../ui/grid";
+import { AssetGrid, type GridPlaceholder } from "../../ui/grid";
 import { Icon, Spinner } from "../../ui/icon";
 import { SizeSlider, useImageSize } from "../../ui/size-slider";
 import { Composer } from "./composer";
@@ -21,6 +23,24 @@ export default function CreatePage() {
   const list = useAssetList({ kind: mode, source: "generated" });
   const nameOf = useModelNames([mode]);
   const models = useModels(mode);
+  const jobList = useStore(jobs);
+  const frames = useStore(previews);
+  // Runs in progress hold their place at the top of the feed, at the shape they asked for.
+  const placeholders = useMemo<GridPlaceholder[]>(
+    () =>
+      jobList
+        .filter((job) => isActive(job) && job.output === mode)
+        .flatMap((job) =>
+          Array.from({ length: Math.max(1, job.count || 1) }, (_, index) => ({
+            key: `${job.id}-${index}`,
+            ratio: requestedRatio(job.params ?? {}),
+            progress: job.status === "running" ? job.progress : null,
+            // Backends stream the first image of a batch only.
+            preview: index === 0 ? frames.get(job.id) : undefined,
+          })),
+        ),
+    [jobList, frames, mode],
+  );
   const noneConfigured = Boolean(models.data && models.data.length && !models.data.some((model) => model.configured));
   useSequence(list.items, list.hasMore, list.loadMore);
 
@@ -46,9 +66,10 @@ export default function CreatePage() {
           <ModeSwitch active={mode} />
           <SizeSlider />
         </div>
-        {list.items.length ? (
+        {list.items.length || placeholders.length ? (
           <AssetGrid
             items={list.items}
+            placeholders={placeholders}
             size={size}
             scroller={feedRef}
             label={`Your ${kindPlural[mode]}`}
