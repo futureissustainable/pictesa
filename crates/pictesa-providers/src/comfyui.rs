@@ -21,9 +21,9 @@ use std::{
 
 use async_trait::async_trait;
 use pictesa_core::{
-    json_response, keys, CredentialField, Ctx, GenerationRequest, InputRole, InputSlot, MediaInput, MediaKind, ModelSpec, Output,
-    ParamSpec, PollStatus, Pricing, Provider, ProviderError, ProviderInfo, ProviderKind, ProviderResult, RemoteHandle, Submission,
-    Task,
+    json_response, keys, CredentialField, Ctx, GenerationRequest, InputRole, InputSlot, MediaInput,
+    MediaKind, ModelSpec, Output, ParamSpec, PollStatus, Pricing, Provider, ProviderError,
+    ProviderInfo, ProviderKind, ProviderResult, RemoteHandle, Submission, Task,
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -248,20 +248,44 @@ pub(crate) struct Template {
 }
 
 /// Parses and checks one template: the graph must be API format and every bound node must exist.
-pub(crate) fn parse_template(id: &str, manifest: &str, workflow: &str, dir: Option<PathBuf>) -> Result<Template, String> {
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.')) {
-        return Err(format!("template id {id:?} must use lowercase letters, digits, '-', '_' or '.'"));
+pub(crate) fn parse_template(
+    id: &str,
+    manifest: &str,
+    workflow: &str,
+    dir: Option<PathBuf>,
+) -> Result<Template, String> {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(format!(
+            "template id {id:?} must use lowercase letters, digits, '-', '_' or '.'"
+        ));
     }
-    let manifest: Manifest = serde_json::from_str(manifest).map_err(|e| format!("manifest.json: {e}"))?;
+    let manifest: Manifest =
+        serde_json::from_str(manifest).map_err(|e| format!("manifest.json: {e}"))?;
     if manifest.schema != 1 {
-        return Err(format!("manifest schema {} is not supported (expected 1)", manifest.schema));
+        return Err(format!(
+            "manifest schema {} is not supported (expected 1)",
+            manifest.schema
+        ));
     }
-    let workflow: Value = serde_json::from_str(workflow).map_err(|e| format!("workflow.json: {e}"))?;
+    let workflow: Value =
+        serde_json::from_str(workflow).map_err(|e| format!("workflow.json: {e}"))?;
     if workflow.get("nodes").is_some() && workflow.get("links").is_some() {
-        return Err("workflow.json is in UI format; export it with Workflow > Export (API) in ComfyUI".into());
+        return Err(
+            "workflow.json is in UI format; export it with Workflow > Export (API) in ComfyUI"
+                .into(),
+        );
     }
-    let Value::Object(workflow) = workflow else { return Err("workflow.json must be a JSON object".into()) };
-    if let Some((k, _)) = workflow.iter().find(|(_, n)| n.get("class_type").and_then(Value::as_str).is_none()) {
+    let Value::Object(workflow) = workflow else {
+        return Err("workflow.json must be a JSON object".into());
+    };
+    if let Some((k, _)) = workflow
+        .iter()
+        .find(|(_, n)| n.get("class_type").and_then(Value::as_str).is_none())
+    {
         return Err(format!("workflow.json node {k} has no class_type"));
     }
     let mut missing = Vec::new();
@@ -270,7 +294,12 @@ pub(crate) fn parse_template(id: &str, manifest: &str, workflow: &str, dir: Opti
             missing.push(format!("{what} -> node {node}"));
         }
     };
-    for b in manifest.prompt.iter().chain(&manifest.negative_prompt).chain(&manifest.batch) {
+    for b in manifest
+        .prompt
+        .iter()
+        .chain(&manifest.negative_prompt)
+        .chain(&manifest.batch)
+    {
         check(b.node(), b.input());
     }
     for d in &manifest.inputs {
@@ -280,13 +309,24 @@ pub(crate) fn parse_template(id: &str, manifest: &str, workflow: &str, dir: Opti
         p.bind.iter().for_each(|b| check(b.node(), &p.spec.key));
     }
     if let Some(s) = &manifest.size {
-        s.width.iter().chain(&s.height).for_each(|b| check(b.node(), "size"));
+        s.width
+            .iter()
+            .chain(&s.height)
+            .for_each(|b| check(b.node(), "size"));
     }
     manifest.outputs.iter().for_each(|n| check(n, "output"));
     if !missing.is_empty() {
-        return Err(format!("manifest binds nodes the workflow does not have: {}", missing.join(", ")));
+        return Err(format!(
+            "manifest binds nodes the workflow does not have: {}",
+            missing.join(", ")
+        ));
     }
-    Ok(Template { id: id.to_string(), manifest, workflow, dir })
+    Ok(Template {
+        id: id.to_string(),
+        manifest,
+        workflow,
+        dir,
+    })
 }
 
 fn builtins() -> &'static [Template] {
@@ -311,17 +351,23 @@ fn user_dir(ctx: &Ctx) -> Option<PathBuf> {
     if let Some(d) = ctx.get("workflows_dir") {
         return Some(PathBuf::from(d));
     }
-    let data = std::env::var_os("PICTESA_DATA_DIR").map(PathBuf::from).or_else(|| {
-        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
-        if cfg!(windows) {
-            std::env::var_os("APPDATA").map(PathBuf::from)
-        } else if cfg!(target_os = "macos") {
-            home.map(|h| h.join("Library/Application Support"))
-        } else {
-            std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| home.map(|h| h.join(".local/share")))
-        }
-        .map(|d| d.join("pictesa"))
-    })?;
+    let data = std::env::var_os("PICTESA_DATA_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from);
+            if cfg!(windows) {
+                std::env::var_os("APPDATA").map(PathBuf::from)
+            } else if cfg!(target_os = "macos") {
+                home.map(|h| h.join("Library/Application Support"))
+            } else {
+                std::env::var_os("XDG_DATA_HOME")
+                    .map(PathBuf::from)
+                    .or_else(|| home.map(|h| h.join(".local/share")))
+            }
+            .map(|d| d.join("pictesa"))
+        })?;
     Some(data.join("workflows").join("comfy"))
 }
 
@@ -331,7 +377,10 @@ fn load_dir(dir: &Path) -> Option<Template> {
     let workflow = match std::fs::read_to_string(dir.join("workflow.json")) {
         Ok(w) => w,
         Err(e) => {
-            tracing::warn!("ComfyUI template {}: cannot read workflow.json: {e}", dir.display());
+            tracing::warn!(
+                "ComfyUI template {}: cannot read workflow.json: {e}",
+                dir.display()
+            );
             return None;
         }
     };
@@ -345,9 +394,17 @@ fn load_dir(dir: &Path) -> Option<Template> {
 }
 
 fn user_templates(ctx: &Ctx) -> Vec<Template> {
-    let Some(dir) = user_dir(ctx) else { return Vec::new() };
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
-    let mut dirs: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    let Some(dir) = user_dir(ctx) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
     dirs.sort();
     dirs.iter().filter_map(|d| load_dir(d)).collect()
 }
@@ -355,7 +412,11 @@ fn user_templates(ctx: &Ctx) -> Vec<Template> {
 /// Built-ins plus user templates; a user template with a built-in's id replaces it.
 fn all_templates(ctx: &Ctx) -> Vec<Template> {
     let user = user_templates(ctx);
-    let mut out: Vec<Template> = builtins().iter().filter(|b| !user.iter().any(|u| u.id == b.id)).cloned().collect();
+    let mut out: Vec<Template> = builtins()
+        .iter()
+        .filter(|b| !user.iter().any(|u| u.id == b.id))
+        .cloned()
+        .collect();
     out.extend(user);
     out
 }
@@ -370,7 +431,11 @@ fn find_template(ctx: &Ctx, model: &ModelSpec) -> ProviderResult<Template> {
     all_templates(ctx)
         .into_iter()
         .find(|t| t.id == id)
-        .ok_or_else(|| ProviderError::NotSupported(format!("ComfyUI template {id} was not found; refresh the model list")))
+        .ok_or_else(|| {
+            ProviderError::NotSupported(format!(
+                "ComfyUI template {id} was not found; refresh the model list"
+            ))
+        })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -388,12 +453,29 @@ fn spec_for(t: &Template) -> ModelSpec {
     s.inputs = m
         .inputs
         .iter()
-        .map(|d| InputSlot { role: d.role, kind: d.kind, min: d.min, max: d.nodes.len() as u32, label: d.label.clone() })
+        .map(|d| InputSlot {
+            role: d.role,
+            kind: d.kind,
+            min: d.min,
+            max: d.nodes.len() as u32,
+            label: d.label.clone(),
+        })
         .collect();
     s.params = m.params.iter().map(|p| p.spec.clone()).collect();
-    s.max_outputs = if m.batch.is_empty() { 1 } else { m.max_outputs.max(1) };
+    s.max_outputs = if m.batch.is_empty() {
+        1
+    } else {
+        m.max_outputs.max(1)
+    };
     s.tags = m.tags.clone();
-    s.tags.push(if t.dir.is_some() { "user-workflow" } else { "workflow" }.into());
+    s.tags.push(
+        if t.dir.is_some() {
+            "user-workflow"
+        } else {
+            "workflow"
+        }
+        .into(),
+    );
     let mut meta = json!({ "template": t.id, "license": m.license, "sources": m.sources });
     if let Some(d) = &t.dir {
         meta["dir"] = json!(d.to_string_lossy());
@@ -406,7 +488,13 @@ fn spec_for(t: &Template) -> ModelSpec {
 /// missing ones and where to download them when a server check found some.
 fn describe(t: &Template, missing: Option<&[String]>) -> Option<String> {
     let m = &t.manifest;
-    let place = |name: &str| match m.requires.models.iter().find(|f| f.name == name).and_then(|f| f.directory.as_deref()) {
+    let place = |name: &str| match m
+        .requires
+        .models
+        .iter()
+        .find(|f| f.name == name)
+        .and_then(|f| f.directory.as_deref())
+    {
         Some(dir) => format!("models/{dir}/{name}"),
         None => name.to_string(),
     };
@@ -421,8 +509,15 @@ fn describe(t: &Template, missing: Option<&[String]>) -> Option<String> {
                 .filter_map(|f| f.url.as_deref().map(download_source))
                 .collect();
             sources.dedup();
-            let from = if sources.is_empty() { String::new() } else { format!(" Download from {}.", sources.join(", ")) };
-            Some(format!("Missing on the server: {}.{from}", files.join(", ")))
+            let from = if sources.is_empty() {
+                String::new()
+            } else {
+                format!(" Download from {}.", sources.join(", "))
+            };
+            Some(format!(
+                "Missing on the server: {}.{from}",
+                files.join(", ")
+            ))
         }
         _ if !m.requires.models.is_empty() => {
             let files: Vec<String> = m.requires.models.iter().map(|f| place(&f.name)).collect();
@@ -439,7 +534,9 @@ fn describe(t: &Template, missing: Option<&[String]>) -> Option<String> {
 
 /// `huggingface.co/<org>/<repo>` for Hugging Face file links, else the host.
 fn download_source(url: &str) -> String {
-    let Ok(u) = url::Url::parse(url) else { return url.to_string() };
+    let Ok(u) = url::Url::parse(url) else {
+        return url.to_string();
+    };
     let host = u.host_str().unwrap_or_default();
     let segs: Vec<&str> = u.path_segments().map(|s| s.collect()).unwrap_or_default();
     if host == "huggingface.co" && segs.len() >= 2 {
@@ -449,7 +546,16 @@ fn download_source(url: &str) -> String {
     }
 }
 
-const MODEL_EXTS: &[&str] = &[".safetensors", ".sft", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".onnx"];
+const MODEL_EXTS: &[&str] = &[
+    ".safetensors",
+    ".sft",
+    ".ckpt",
+    ".pt",
+    ".pth",
+    ".bin",
+    ".gguf",
+    ".onnx",
+];
 
 /// The choices of a COMBO input in `/object_info`, in either the V1 (`[[..], {}]`) or V3
 /// (`["COMBO", {"options": [..]}]`) shape.
@@ -465,7 +571,10 @@ fn combo_options(spec: &Value) -> Option<Vec<&str>> {
 
 fn input_spec<'a>(info: &'a Value, class: &str, input: &str) -> Option<&'a Value> {
     let inputs = info.get(class)?.get("input")?;
-    inputs.get("required").and_then(|r| r.get(input)).or_else(|| inputs.get("optional").and_then(|o| o.get(input)))
+    inputs
+        .get("required")
+        .and_then(|r| r.get(input))
+        .or_else(|| inputs.get("optional").and_then(|o| o.get(input)))
 }
 
 /// What one server lacks for a template, and model files it keeps under another folder.
@@ -479,34 +588,57 @@ pub(crate) struct Availability {
 
 pub(crate) fn availability(t: &Template, info: &Value) -> Availability {
     let mut a = Availability::default();
-    let mut classes: Vec<&str> = t.workflow.values().filter_map(|n| n.get("class_type").and_then(Value::as_str)).collect();
+    let mut classes: Vec<&str> = t
+        .workflow
+        .values()
+        .filter_map(|n| n.get("class_type").and_then(Value::as_str))
+        .collect();
     classes.extend(t.manifest.requires.nodes.iter().map(String::as_str));
     classes.sort_unstable();
     classes.dedup();
-    a.missing_nodes = classes.into_iter().filter(|c| info.get(*c).is_none()).map(String::from).collect();
-    let input_nodes: Vec<&str> = t.manifest.inputs.iter().flat_map(|d| d.nodes.iter().map(String::as_str)).collect();
+    a.missing_nodes = classes
+        .into_iter()
+        .filter(|c| info.get(*c).is_none())
+        .map(String::from)
+        .collect();
+    let input_nodes: Vec<&str> = t
+        .manifest
+        .inputs
+        .iter()
+        .flat_map(|d| d.nodes.iter().map(String::as_str))
+        .collect();
     for (id, node) in &t.workflow {
         if input_nodes.contains(&id.as_str()) {
             continue;
         }
-        let Some(class) = node.get("class_type").and_then(Value::as_str) else { continue };
-        let Some(inputs) = node.get("inputs").and_then(Value::as_object) else { continue };
+        let Some(class) = node.get("class_type").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(inputs) = node.get("inputs").and_then(Value::as_object) else {
+            continue;
+        };
         for (name, value) in inputs {
             let Some(file) = value.as_str() else { continue };
             let lower = file.to_ascii_lowercase();
             if !MODEL_EXTS.iter().any(|e| lower.ends_with(e)) {
                 continue;
             }
-            let Some(options) = input_spec(info, class, name).and_then(combo_options) else { continue };
+            let Some(options) = input_spec(info, class, name).and_then(combo_options) else {
+                continue;
+            };
             if options.contains(&file) {
                 continue;
             }
-            let nested = options.iter().find(|o| o.ends_with(&format!("/{file}")) || o.ends_with(&format!("\\{file}")));
+            let nested = options
+                .iter()
+                .find(|o| o.ends_with(&format!("/{file}")) || o.ends_with(&format!("\\{file}")));
             match nested {
                 Some(path) => {
                     a.rename.insert(file.to_string(), path.to_string());
                 }
-                None if !a.missing_models.iter().any(|m| m == file) => a.missing_models.push(file.to_string()),
+                None if !a.missing_models.iter().any(|m| m == file) => {
+                    a.missing_models.push(file.to_string())
+                }
                 None => {}
             }
         }
@@ -532,7 +664,11 @@ fn remove_node(g: &mut Graph, node: &str) {
     g.remove(node);
     for n in g.values_mut() {
         if let Some(inputs) = n.get_mut("inputs").and_then(Value::as_object_mut) {
-            inputs.retain(|_, v| !(v.as_array().is_some_and(|a| a.len() == 2 && a[0].as_str() == Some(node) && a[1].is_number())));
+            inputs.retain(|_, v| {
+                !(v.as_array().is_some_and(|a| {
+                    a.len() == 2 && a[0].as_str() == Some(node) && a[1].is_number()
+                }))
+            });
         }
     }
 }
@@ -547,14 +683,30 @@ fn value_key(v: &Value) -> String {
 fn transform(bind: &Bind, value: &Value, req: &GenerationRequest) -> Value {
     match bind {
         Bind::At(..) => value.clone(),
-        Bind::With { frames: Some(f), .. } => {
-            let seconds = value.as_f64().or_else(|| value.as_str().and_then(|s| s.trim_end_matches('s').parse().ok())).unwrap_or(0.0);
-            let fps = f.fps_param.as_deref().and_then(|k| req.f64(k).or_else(|| req.i64(k).map(|n| n as f64))).unwrap_or(f.fps);
+        Bind::With {
+            frames: Some(f), ..
+        } => {
+            let seconds = value
+                .as_f64()
+                .or_else(|| {
+                    value
+                        .as_str()
+                        .and_then(|s| s.trim_end_matches('s').parse().ok())
+                })
+                .unwrap_or(0.0);
+            let fps = f
+                .fps_param
+                .as_deref()
+                .and_then(|k| req.f64(k).or_else(|| req.i64(k).map(|n| n as f64)))
+                .unwrap_or(f.fps);
             let step = f.step.max(1) as f64;
             let frames = ((seconds * fps) / step).floor() * step + f.offset as f64;
             json!(frames.max(1.0) as u64)
         }
-        Bind::With { map: Some(m), .. } => m.get(&value_key(value)).cloned().unwrap_or_else(|| value.clone()),
+        Bind::With { map: Some(m), .. } => m
+            .get(&value_key(value))
+            .cloned()
+            .unwrap_or_else(|| value.clone()),
         Bind::With { .. } => value.clone(),
     }
 }
@@ -571,17 +723,37 @@ fn round_to(x: f64, multiple: u32) -> u32 {
 }
 
 /// Output width and height for a request.
-pub(crate) fn compute_size(size: &SizeDef, output: MediaKind, req: &GenerationRequest, dims: &HashMap<InputRole, (u32, u32)>) -> (u32, u32) {
+pub(crate) fn compute_size(
+    size: &SizeDef,
+    output: MediaKind,
+    req: &GenerationRequest,
+    dims: &HashMap<InputRole, (u32, u32)>,
+) -> (u32, u32) {
     if let (Some(w), Some(h)) = (req.i64(keys::WIDTH), req.i64(keys::HEIGHT)) {
-        return (round_to(w as f64, size.multiple), round_to(h as f64, size.multiple));
+        return (
+            round_to(w as f64, size.multiple),
+            round_to(h as f64, size.multiple),
+        );
     }
-    let from_input = size.match_input.and_then(|r| dims.get(&r)).filter(|(w, h)| *w > 0 && *h > 0).map(|(w, h)| *w as f64 / *h as f64);
+    let from_input = size
+        .match_input
+        .and_then(|r| dims.get(&r))
+        .filter(|(w, h)| *w > 0 && *h > 0)
+        .map(|(w, h)| *w as f64 / *h as f64);
     let ratio = match req.str(keys::ASPECT_RATIO) {
         Some(r) if r != "auto" => parse_ratio(r).or(from_input),
         _ => from_input,
     }
-    .unwrap_or(if output == MediaKind::Video { 16.0 / 9.0 } else { 1.0 });
-    let (w, h) = match req.str(keys::RESOLUTION).and_then(|r| size.resolutions.get(r)).copied() {
+    .unwrap_or(if output == MediaKind::Video {
+        16.0 / 9.0
+    } else {
+        1.0
+    });
+    let (w, h) = match req
+        .str(keys::RESOLUTION)
+        .and_then(|r| size.resolutions.get(r))
+        .copied()
+    {
         Some(short) if ratio >= 1.0 => (short * ratio, short),
         Some(short) => (short, short / ratio),
         None => {
@@ -611,7 +783,11 @@ pub(crate) fn build_graph(
         for node in g.values_mut() {
             if let Some(inputs) = node.get_mut("inputs").and_then(Value::as_object_mut) {
                 for v in inputs.values_mut() {
-                    if let Some(new) = v.as_str().and_then(|s| rename.get(s)).filter(|n| n.is_string()) {
+                    if let Some(new) = v
+                        .as_str()
+                        .and_then(|s| rename.get(s))
+                        .filter(|n| n.is_string())
+                    {
                         *v = new.clone();
                     }
                 }
@@ -621,8 +797,14 @@ pub(crate) fn build_graph(
     for d in &m.inputs {
         let names = uploads.get(&d.role).map(Vec::as_slice).unwrap_or_default();
         if (names.len() as u32) < d.min {
-            let what = d.label.clone().unwrap_or_else(|| format!("{:?}", d.role).to_lowercase());
-            return Err(ProviderError::InvalidInput(format!("{} needs at least {} file(s)", what, d.min)));
+            let what = d
+                .label
+                .clone()
+                .unwrap_or_else(|| format!("{:?}", d.role).to_lowercase());
+            return Err(ProviderError::InvalidInput(format!(
+                "{} needs at least {} file(s)",
+                what, d.min
+            )));
         }
         for (i, node) in d.nodes.iter().enumerate() {
             match names.get(i) {
@@ -634,7 +816,11 @@ pub(crate) fn build_graph(
     for b in &m.prompt {
         set_input(&mut g, b.node(), b.input(), json!(req.prompt))?;
     }
-    if let Some(neg) = req.negative_prompt.as_deref().filter(|n| !n.trim().is_empty()) {
+    if let Some(neg) = req
+        .negative_prompt
+        .as_deref()
+        .filter(|n| !n.trim().is_empty())
+    {
         for b in &m.negative_prompt {
             set_input(&mut g, b.node(), b.input(), json!(neg))?;
         }
@@ -659,7 +845,12 @@ pub(crate) fn build_graph(
         }
     }
     for b in &m.batch {
-        set_input(&mut g, b.node(), b.input(), json!(req.num_outputs.clamp(1, m.max_outputs.max(1))))?;
+        set_input(
+            &mut g,
+            b.node(),
+            b.input(),
+            json!(req.num_outputs.clamp(1, m.max_outputs.max(1))),
+        )?;
     }
     Ok(g)
 }
@@ -668,11 +859,22 @@ pub(crate) fn build_graph(
 fn image_dims(path: &Path) -> Option<(u32, u32)> {
     use std::io::Read;
     let mut buf = Vec::with_capacity(65536);
-    std::fs::File::open(path).ok()?.take(262_144).read_to_end(&mut buf).ok()?;
+    std::fs::File::open(path)
+        .ok()?
+        .take(262_144)
+        .read_to_end(&mut buf)
+        .ok()?;
     let b = buf.as_slice();
     let be16 = |i: usize| Some(u16::from_be_bytes([*b.get(i)?, *b.get(i + 1)?]) as u32);
     let le16 = |i: usize| Some(u16::from_le_bytes([*b.get(i)?, *b.get(i + 1)?]) as u32);
-    let be32 = |i: usize| Some(u32::from_be_bytes([*b.get(i)?, *b.get(i + 1)?, *b.get(i + 2)?, *b.get(i + 3)?]));
+    let be32 = |i: usize| {
+        Some(u32::from_be_bytes([
+            *b.get(i)?,
+            *b.get(i + 1)?,
+            *b.get(i + 2)?,
+            *b.get(i + 3)?,
+        ]))
+    };
     if b.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Some((be32(16)?, be32(20)?));
     }
@@ -746,18 +948,30 @@ fn authed(ctx: &Ctx, mut rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder
 }
 
 async fn get(ctx: &Ctx, url: &str) -> ProviderResult<Value> {
-    let resp = authed(ctx, ctx.http.get(url)).send().await.map_err(net_error)?;
+    let resp = authed(ctx, ctx.http.get(url))
+        .send()
+        .await
+        .map_err(net_error)?;
     json_response(resp).await
 }
 
 /// A stable id for this process, so the event stream and the prompts it sends match.
 fn client_id() -> &'static str {
     static ID: OnceLock<String> = OnceLock::new();
-    ID.get_or_init(|| format!("pictesa-{}", ulid::Ulid::new().to_string().to_ascii_lowercase()))
+    ID.get_or_init(|| {
+        format!(
+            "pictesa-{}",
+            ulid::Ulid::new().to_string().to_ascii_lowercase()
+        )
+    })
 }
 
 fn extension(input: &MediaInput) -> String {
-    let from_name = input.path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).filter(|e| !e.is_empty() && e.len() <= 5);
+    let from_name = input
+        .path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .filter(|e| !e.is_empty() && e.len() <= 5);
     from_name.unwrap_or_else(|| {
         match input.mime.as_str() {
             "image/jpeg" => "jpg",
@@ -793,13 +1007,27 @@ async fn upload(ctx: &Ctx, base: &str, input: &MediaInput) -> ProviderResult<Str
         .text("type", "input")
         .text("subfolder", "pictesa")
         .text("overwrite", "true");
-    let resp = authed(ctx, ctx.http.post(format!("{base}/api/upload/image"))).timeout(UPLOAD_TIMEOUT).multipart(form).send().await.map_err(net_error)?;
+    let resp = authed(ctx, ctx.http.post(format!("{base}/api/upload/image")))
+        .timeout(UPLOAD_TIMEOUT)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(net_error)?;
     let v = json_response(resp).await?;
-    let name = v.get("name").and_then(Value::as_str).ok_or_else(|| ProviderError::Failed(format!("ComfyUI upload returned no name: {v}")))?;
-    Ok(match v.get("subfolder").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-        Some(sub) => format!("{sub}/{name}"),
-        None => name.to_string(),
-    })
+    let name = v
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ProviderError::Failed(format!("ComfyUI upload returned no name: {v}")))?;
+    Ok(
+        match v
+            .get("subfolder")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            Some(sub) => format!("{sub}/{name}"),
+            None => name.to_string(),
+        },
+    )
 }
 
 /// Turns a `/prompt` rejection into a readable error. Missing model files become `NotSupported`.
@@ -809,17 +1037,38 @@ pub(crate) fn prompt_error(status: u16, body: &str) -> ProviderError {
     let mut missing_files = 0;
     if let Some(errors) = v.get("node_errors").and_then(Value::as_object) {
         for (node, e) in errors {
-            let class = e.get("class_type").and_then(Value::as_str).unwrap_or("node");
-            for x in e.get("errors").and_then(Value::as_array).into_iter().flatten() {
-                let details = x.get("details").and_then(Value::as_str).filter(|d| !d.is_empty());
-                let message = x.get("message").and_then(Value::as_str).unwrap_or("invalid");
+            let class = e
+                .get("class_type")
+                .and_then(Value::as_str)
+                .unwrap_or("node");
+            for x in e
+                .get("errors")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let details = x
+                    .get("details")
+                    .and_then(Value::as_str)
+                    .filter(|d| !d.is_empty());
+                let message = x
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("invalid");
                 let kind = x.get("type").and_then(Value::as_str).unwrap_or("");
-                let file = details.is_some_and(|d| MODEL_EXTS.iter().any(|ext| d.contains(&format!("{ext}'"))));
+                let file = details
+                    .is_some_and(|d| MODEL_EXTS.iter().any(|ext| d.contains(&format!("{ext}'"))));
                 if kind == "value_not_in_list" && file {
                     missing_files += 1;
-                    parts.push(format!("missing model file: {} ({class}, node {node})", details.unwrap_or(message)));
+                    parts.push(format!(
+                        "missing model file: {} ({class}, node {node})",
+                        details.unwrap_or(message)
+                    ));
                 } else {
-                    parts.push(format!("{class} (node {node}): {}", details.unwrap_or(message)));
+                    parts.push(format!(
+                        "{class} (node {node}): {}",
+                        details.unwrap_or(message)
+                    ));
                 }
             }
         }
@@ -828,16 +1077,24 @@ pub(crate) fn prompt_error(status: u16, body: &str) -> ProviderError {
         let top = v.get("error").map(|e| {
             let msg = e.get("message").and_then(Value::as_str).unwrap_or("");
             let det = e.get("details").and_then(Value::as_str).unwrap_or("");
-            if det.is_empty() { msg.to_string() } else { format!("{msg}: {det}") }
+            if det.is_empty() {
+                msg.to_string()
+            } else {
+                format!("{msg}: {det}")
+            }
         });
         return match top {
-            Some(t) if status < 500 && !t.is_empty() => ProviderError::InvalidInput(format!("ComfyUI rejected the workflow: {t}")),
+            Some(t) if status < 500 && !t.is_empty() => {
+                ProviderError::InvalidInput(format!("ComfyUI rejected the workflow: {t}"))
+            }
             _ => ProviderError::from_http(status, body, None),
         };
     }
     let text = pictesa_core::error::truncate(&parts.join("; "), 900);
     if missing_files == parts.len() {
-        ProviderError::NotSupported(format!("the ComfyUI server lacks files this template needs: {text}"))
+        ProviderError::NotSupported(format!(
+            "the ComfyUI server lacks files this template needs: {text}"
+        ))
     } else {
         ProviderError::InvalidInput(format!("ComfyUI rejected the workflow: {text}"))
     }
@@ -850,17 +1107,32 @@ async fn node_info(ctx: &Ctx, base: &str, templates: &[Template]) -> ProviderRes
     use futures::StreamExt;
     let mut classes: Vec<String> = templates
         .iter()
-        .flat_map(|t| t.workflow.values().filter_map(|n| n.get("class_type").and_then(Value::as_str).map(String::from)).chain(t.manifest.requires.nodes.iter().cloned()))
+        .flat_map(|t| {
+            t.workflow
+                .values()
+                .filter_map(|n| {
+                    n.get("class_type")
+                        .and_then(Value::as_str)
+                        .map(String::from)
+                })
+                .chain(t.manifest.requires.nodes.iter().cloned())
+        })
         .collect();
     classes.sort();
     classes.dedup();
     if classes.is_empty() {
-        return get(ctx, &format!("{base}/api/system_stats")).await.map(|_| json!({}));
+        return get(ctx, &format!("{base}/api/system_stats"))
+            .await
+            .map(|_| json!({}));
     }
     let answers: Vec<ProviderResult<Value>> = futures::stream::iter(classes)
         .map(|c| async move {
-            let mut url = url::Url::parse(&format!("{base}/api/object_info/")).map_err(|e| ProviderError::Failed(e.to_string()))?;
-            url.path_segments_mut().map_err(|_| ProviderError::Failed("bad server URL".into()))?.pop_if_empty().push(&c);
+            let mut url = url::Url::parse(&format!("{base}/api/object_info/"))
+                .map_err(|e| ProviderError::Failed(e.to_string()))?;
+            url.path_segments_mut()
+                .map_err(|_| ProviderError::Failed("bad server URL".into()))?
+                .pop_if_empty()
+                .push(&c);
             get(ctx, url.as_str()).await
         })
         .buffer_unordered(8)
@@ -871,7 +1143,8 @@ async fn node_info(ctx: &Ctx, base: &str, templates: &[Template]) -> ProviderRes
         match a {
             Ok(Value::Object(m)) => merged.extend(m),
             Ok(_) => {}
-            Err(e) if matches!(&e, ProviderError::InvalidInput(m) | ProviderError::Failed(m) if m.starts_with("HTTP 404") || m.starts_with("HTTP 405")) => {
+            Err(e) if matches!(&e, ProviderError::InvalidInput(m) | ProviderError::Failed(m) if m.starts_with("HTTP 404") || m.starts_with("HTTP 405")) =>
+            {
                 return get(ctx, &format!("{base}/api/object_info")).await;
             }
             Err(e) => return Err(e),
@@ -894,7 +1167,9 @@ fn kind_of(filename: &str) -> Option<MediaKind> {
     let lower = filename.to_ascii_lowercase();
     let ext = lower.rsplit('.').next().unwrap_or("");
     match ext {
-        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" | "exr" | "avif" => Some(MediaKind::Image),
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" | "exr" | "avif" => {
+            Some(MediaKind::Image)
+        }
         "mp4" | "webm" | "mov" | "mkv" | "m4v" | "gif" | "avi" => Some(MediaKind::Video),
         "mp3" | "wav" | "flac" | "ogg" | "opus" | "m4a" | "aac" => Some(MediaKind::Audio),
         _ => None,
@@ -903,20 +1178,40 @@ fn kind_of(filename: &str) -> Option<MediaKind> {
 
 /// Picks the result files from a prompt's `outputs` (history or jobs API): saved files of the
 /// wanted kind, from the template's output nodes when it names them.
-pub(crate) fn output_files(outputs: &Value, want: Option<MediaKind>, nodes: &[String]) -> Vec<FileRef> {
-    let Some(map) = outputs.as_object() else { return Vec::new() };
+pub(crate) fn output_files(
+    outputs: &Value,
+    want: Option<MediaKind>,
+    nodes: &[String],
+) -> Vec<FileRef> {
+    let Some(map) = outputs.as_object() else {
+        return Vec::new();
+    };
     let collect = |only: &[String], allow_temp: bool| -> Vec<FileRef> {
-        let mut ids: Vec<&String> = map.keys().filter(|k| only.is_empty() || only.contains(k)).collect();
-        ids.sort_by_key(|k| k.split(':').map(|p| p.parse::<u64>().unwrap_or(u64::MAX)).collect::<Vec<_>>());
+        let mut ids: Vec<&String> = map
+            .keys()
+            .filter(|k| only.is_empty() || only.contains(k))
+            .collect();
+        ids.sort_by_key(|k| {
+            k.split(':')
+                .map(|p| p.parse::<u64>().unwrap_or(u64::MAX))
+                .collect::<Vec<_>>()
+        });
         let mut out = Vec::new();
         for id in ids {
-            let Some(node) = map[id].as_object() else { continue };
+            let Some(node) = map[id].as_object() else {
+                continue;
+            };
             for (key, items) in node {
-                if !matches!(key.as_str(), "images" | "gifs" | "videos" | "video" | "audio" | "animated_images") {
+                if !matches!(
+                    key.as_str(),
+                    "images" | "gifs" | "videos" | "video" | "audio" | "animated_images"
+                ) {
                     continue;
                 }
                 for item in items.as_array().into_iter().flatten() {
-                    let Some(filename) = item.get("filename").and_then(Value::as_str) else { continue };
+                    let Some(filename) = item.get("filename").and_then(Value::as_str) else {
+                        continue;
+                    };
                     let kind = item.get("type").and_then(Value::as_str).unwrap_or("output");
                     if kind != "output" && !allow_temp {
                         continue;
@@ -928,7 +1223,11 @@ pub(crate) fn output_files(outputs: &Value, want: Option<MediaKind>, nodes: &[St
                     }
                     let f = FileRef {
                         filename: filename.to_string(),
-                        subfolder: item.get("subfolder").and_then(Value::as_str).unwrap_or("").to_string(),
+                        subfolder: item
+                            .get("subfolder")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
                         kind: kind.to_string(),
                     };
                     if !out.contains(&f) {
@@ -949,8 +1248,12 @@ pub(crate) fn output_files(outputs: &Value, want: Option<MediaKind>, nodes: &[St
 }
 
 fn view_url(base: &str, f: &FileRef) -> String {
-    let mut url = url::Url::parse(&format!("{base}/api/view")).unwrap_or_else(|_| url::Url::parse("http://127.0.0.1:8188/api/view").unwrap());
-    url.query_pairs_mut().append_pair("filename", &f.filename).append_pair("subfolder", &f.subfolder).append_pair("type", &f.kind);
+    let mut url = url::Url::parse(&format!("{base}/api/view"))
+        .unwrap_or_else(|_| url::Url::parse("http://127.0.0.1:8188/api/view").unwrap());
+    url.query_pairs_mut()
+        .append_pair("filename", &f.filename)
+        .append_pair("subfolder", &f.subfolder)
+        .append_pair("type", &f.kind);
     url.to_string()
 }
 
@@ -963,7 +1266,11 @@ async fn output_for(ctx: &Ctx, url: String) -> ProviderResult<Output> {
     }
     static NO_REDIRECT: OnceLock<reqwest::Client> = OnceLock::new();
     let client = NO_REDIRECT.get_or_init(|| {
-        reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(std::time::Duration::from_secs(15)).build().unwrap_or_default()
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_default()
     });
     let mut rb = client.get(&url).timeout(API_TIMEOUT);
     for (k, v) in &headers {
@@ -971,8 +1278,15 @@ async fn output_for(ctx: &Ctx, url: String) -> ProviderResult<Output> {
     }
     let resp = rb.send().await.map_err(net_error)?;
     if resp.status().is_redirection() {
-        if let Some(loc) = resp.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok()) {
-            let target = url::Url::parse(&url).and_then(|u| u.join(loc)).map(|u| u.to_string()).unwrap_or_else(|_| loc.to_string());
+        if let Some(loc) = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|l| l.to_str().ok())
+        {
+            let target = url::Url::parse(&url)
+                .and_then(|u| u.join(loc))
+                .map(|u| u.to_string())
+                .unwrap_or_else(|_| loc.to_string());
             return Ok(Output::url(target));
         }
     }
@@ -989,9 +1303,17 @@ fn run_error(messages: Option<&Value>, job_error: Option<&Value>) -> ProviderErr
     let mut interrupted = false;
     let mut detail: Option<String> = None;
     let mut from_event = |data: &Value| {
-        let msg = data.get("exception_message").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let msg = data
+            .get("exception_message")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
         let node = data.get("node_type").and_then(Value::as_str).unwrap_or("");
-        let kind = data.get("exception_type").and_then(Value::as_str).unwrap_or("");
+        let kind = data
+            .get("exception_type")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let text = match (node.is_empty(), kind.is_empty()) {
             (false, false) => format!("{node}: {kind}: {msg}"),
             (false, true) => format!("{node}: {msg}"),
@@ -1017,7 +1339,9 @@ fn run_error(messages: Option<&Value>, job_error: Option<&Value>) -> ProviderErr
     let text = detail.unwrap_or_else(|| "the ComfyUI run failed".into());
     match failure(pictesa_core::error::truncate(&text, 900)) {
         ProviderError::Failed(m) if m.contains("OutOfMemory") || m.contains("out of memory") => {
-            ProviderError::Failed(format!("{m} (the GPU ran out of memory; try a smaller size or duration)"))
+            ProviderError::Failed(format!(
+                "{m} (the GPU ran out of memory; try a smaller size or duration)"
+            ))
         }
         other => other,
     }
@@ -1027,7 +1351,13 @@ fn run_error(messages: Option<&Value>, job_error: Option<&Value>) -> ProviderErr
 /// `[number, prompt_id, ...]`), and whether it is running.
 pub(crate) fn queue_state(queue: &Value, prompt_id: &str) -> Option<Result<u32, ()>> {
     let id_of = |item: &Value| item.get(1).and_then(Value::as_str).map(String::from);
-    if queue.get("queue_running").and_then(Value::as_array).into_iter().flatten().any(|i| id_of(i).as_deref() == Some(prompt_id)) {
+    if queue
+        .get("queue_running")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|i| id_of(i).as_deref() == Some(prompt_id))
+    {
         return Some(Err(()));
     }
     let mut pending: Vec<(f64, String)> = queue
@@ -1038,28 +1368,59 @@ pub(crate) fn queue_state(queue: &Value, prompt_id: &str) -> Option<Result<u32, 
         .filter_map(|i| Some((i.get(0)?.as_f64()?, id_of(i)?)))
         .collect();
     pending.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let running = queue.get("queue_running").and_then(Value::as_array).map_or(0, Vec::len) as u32;
-    pending.iter().position(|(_, id)| id == prompt_id).map(|p| Ok(p as u32 + running))
+    let running = queue
+        .get("queue_running")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len) as u32;
+    pending
+        .iter()
+        .position(|(_, id)| id == prompt_id)
+        .map(|p| Ok(p as u32 + running))
 }
 
 fn running(handle: &RemoteHandle) -> PollStatus {
     match live::get(&handle.id) {
         Some(step) if step.max > 0 => {
-            let class = step.node.as_deref().and_then(|n| handle.data.pointer(&format!("/classes/{n}"))).and_then(Value::as_str).unwrap_or("");
-            let what = if class.contains("Sampler") { "Sampling" } else { "Step" };
+            let class = step
+                .node
+                .as_deref()
+                .and_then(|n| handle.data.pointer(&format!("/classes/{n}")))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let what = if class.contains("Sampler") {
+                "Sampling"
+            } else {
+                "Step"
+            };
             PollStatus::Running {
                 progress: Some((step.value as f32 / step.max as f32).clamp(0.0, 1.0)),
                 message: Some(format!("{what} {}/{}", step.value, step.max)),
             }
         }
-        _ => PollStatus::Running { progress: None, message: None },
+        _ => PollStatus::Running {
+            progress: None,
+            message: None,
+        },
     }
 }
 
 impl ComfyUi {
-    async fn finish(&self, ctx: &Ctx, base: &str, handle: &RemoteHandle, outputs: &Value) -> ProviderResult<PollStatus> {
-        let want = handle.data.get("output").and_then(|o| serde_json::from_value::<MediaKind>(o.clone()).ok());
-        let nodes: Vec<String> = handle.data.get("outputs").and_then(|o| serde_json::from_value(o.clone()).ok()).unwrap_or_default();
+    async fn finish(
+        &self,
+        ctx: &Ctx,
+        base: &str,
+        handle: &RemoteHandle,
+        outputs: &Value,
+    ) -> ProviderResult<PollStatus> {
+        let want = handle
+            .data
+            .get("output")
+            .and_then(|o| serde_json::from_value::<MediaKind>(o.clone()).ok());
+        let nodes: Vec<String> = handle
+            .data
+            .get("outputs")
+            .and_then(|o| serde_json::from_value(o.clone()).ok())
+            .unwrap_or_default();
         let files = output_files(outputs, want, &nodes);
         if files.is_empty() {
             return Ok(PollStatus::Failed(ProviderError::Failed(format!(
@@ -1076,15 +1437,25 @@ impl ComfyUi {
     }
 
     /// Servers before the jobs API: `/api/history/{id}` then `/api/queue`.
-    async fn poll_legacy(&self, ctx: &Ctx, base: &str, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
+    async fn poll_legacy(
+        &self,
+        ctx: &Ctx,
+        base: &str,
+        handle: &RemoteHandle,
+    ) -> ProviderResult<PollStatus> {
         let id = &handle.id;
         let history = get(ctx, &format!("{base}/api/history/{id}")).await?;
         if let Some(entry) = history.get(id.as_str()) {
             let status = entry.get("status");
-            let ok = status.and_then(|s| s.get("status_str")).and_then(Value::as_str);
+            let ok = status
+                .and_then(|s| s.get("status_str"))
+                .and_then(Value::as_str);
             if ok == Some("error") {
                 live::forget(id);
-                return Ok(PollStatus::Failed(run_error(status.and_then(|s| s.get("messages")), None)));
+                return Ok(PollStatus::Failed(run_error(
+                    status.and_then(|s| s.get("messages")),
+                    None,
+                )));
             }
             let outputs = entry.get("outputs").cloned().unwrap_or(Value::Null);
             return self.finish(ctx, base, handle, &outputs).await;
@@ -1092,9 +1463,15 @@ impl ComfyUi {
         let queue = get(ctx, &format!("{base}/api/queue")).await?;
         Ok(match queue_state(&queue, id) {
             Some(Err(())) => running(handle),
-            Some(Ok(position)) => PollStatus::Queued { position: Some(position) },
-            None if live::was_cancelled(id) => PollStatus::Failed(ProviderError::Failed("cancelled".into())),
-            None => PollStatus::Failed(ProviderError::Failed("the ComfyUI server no longer knows this job (was it restarted or cleared?)".into())),
+            Some(Ok(position)) => PollStatus::Queued {
+                position: Some(position),
+            },
+            None if live::was_cancelled(id) => {
+                PollStatus::Failed(ProviderError::Failed("cancelled".into()))
+            }
+            None => PollStatus::Failed(ProviderError::Failed(
+                "the ComfyUI server no longer knows this job (was it restarted or cleared?)".into(),
+            )),
         })
     }
 }
@@ -1193,7 +1570,12 @@ impl Provider for ComfyUi {
         Ok(())
     }
 
-    async fn submit(&self, ctx: &Ctx, model: &ModelSpec, req: &GenerationRequest) -> ProviderResult<Submission> {
+    async fn submit(
+        &self,
+        ctx: &Ctx,
+        model: &ModelSpec,
+        req: &GenerationRequest,
+    ) -> ProviderResult<Submission> {
         let base = base(ctx, None);
         let t = find_template(ctx, model)?;
         let mut uploads: HashMap<InputRole, Vec<String>> = HashMap::new();
@@ -1207,17 +1589,30 @@ impl Provider for ComfyUi {
                 uploads.entry(d.role).or_default().push(name);
             }
         }
-        let rename = model.meta.get("rename").and_then(Value::as_object).cloned().unwrap_or_default();
+        let rename = model
+            .meta
+            .get("rename")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         let graph = build_graph(&t, req, &uploads, &dims, &rename)?;
-        let classes: Map<String, Value> =
-            graph.iter().filter_map(|(k, n)| Some((k.clone(), n.get("class_type")?.clone()))).collect();
+        let classes: Map<String, Value> = graph
+            .iter()
+            .filter_map(|(k, n)| Some((k.clone(), n.get("class_type")?.clone())))
+            .collect();
         let cid = client_id();
+        // Open the event stream first so short runs do not finish before it listens.
+        live::watch(ctx, &base, cid);
         let mut body = json!({ "prompt": graph, "client_id": cid });
         if let Some(k) = ctx.get("api_key").filter(|k| k.starts_with("comfyui-")) {
             // Lets partner (API) nodes inside a workflow bill the same Comfy account.
             body["extra_data"] = json!({ "api_key_comfy_org": k });
         }
-        let resp = authed(ctx, ctx.http.post(format!("{base}/api/prompt"))).json(&body).send().await.map_err(net_error)?;
+        let resp = authed(ctx, ctx.http.post(format!("{base}/api/prompt")))
+            .json(&body)
+            .send()
+            .await
+            .map_err(net_error)?;
         let status = resp.status();
         let text = resp.text().await.map_err(net_error)?;
         if !status.is_success() {
@@ -1227,8 +1622,12 @@ impl Provider for ComfyUi {
         let id = answer
             .get("prompt_id")
             .and_then(Value::as_str)
-            .ok_or_else(|| ProviderError::Failed(format!("ComfyUI returned no prompt id: {}", pictesa_core::error::truncate(&text, 300))))?;
-        live::watch(ctx, &base, cid);
+            .ok_or_else(|| {
+                ProviderError::Failed(format!(
+                    "ComfyUI returned no prompt id: {}",
+                    pictesa_core::error::truncate(&text, 300)
+                ))
+            })?;
         Ok(Submission::Pending(RemoteHandle::with(
             id,
             json!({
@@ -1244,13 +1643,24 @@ impl Provider for ComfyUi {
     async fn poll(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
         let base = base(ctx, Some(handle));
         let id = &handle.id;
-        live::watch(ctx, &base, handle.data_str("client_id").unwrap_or(client_id()));
-        let resp = authed(ctx, ctx.http.get(format!("{base}/api/jobs/{id}"))).send().await.map_err(net_error)?;
+        live::watch(
+            ctx,
+            &base,
+            handle.data_str("client_id").unwrap_or(client_id()),
+        );
+        let resp = authed(ctx, ctx.http.get(format!("{base}/api/jobs/{id}")))
+            .send()
+            .await
+            .map_err(net_error)?;
         if matches!(resp.status().as_u16(), 404 | 405) {
             return self.poll_legacy(ctx, &base, handle).await;
         }
         let job = json_response(resp).await?;
-        let status = job.get("status").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
+        let status = job
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
         match status.as_str() {
             "completed" | "success" | "succeeded" => {
                 let outputs = job.get("outputs").cloned().unwrap_or(Value::Null);
@@ -1264,15 +1674,23 @@ impl Provider for ComfyUi {
             "failed" | "error" | "non_retryable_error" | "lost" => {
                 live::forget(id);
                 let messages = job.pointer("/execution_status/messages");
-                Ok(PollStatus::Failed(run_error(messages, job.get("execution_error"))))
+                Ok(PollStatus::Failed(run_error(
+                    messages,
+                    job.get("execution_error"),
+                )))
             }
             "cancelled" | "canceled" | "interrupted" => {
                 live::forget(id);
-                Ok(PollStatus::Failed(ProviderError::Failed("cancelled on the ComfyUI server".into())))
+                Ok(PollStatus::Failed(ProviderError::Failed(
+                    "cancelled on the ComfyUI server".into(),
+                )))
             }
             "pending" | "queued" | "submitted" | "queued_waiting" | "preparing" => {
                 let queue = get(ctx, &format!("{base}/api/queue")).await.ok();
-                let position = queue.as_ref().and_then(|q| queue_state(q, id)).and_then(Result::ok);
+                let position = queue
+                    .as_ref()
+                    .and_then(|q| queue_state(q, id))
+                    .and_then(Result::ok);
                 Ok(PollStatus::Queued { position })
             }
             _ => Ok(running(handle)),
@@ -1284,10 +1702,16 @@ impl Provider for ComfyUi {
         let id = &handle.id;
         // Dequeue when pending; interrupt only when this prompt is the one running, so another
         // user's job on a shared server is never stopped (older servers interrupt globally).
-        let _ = authed(ctx, ctx.http.post(format!("{base}/api/queue"))).json(&json!({ "delete": [id] })).send().await;
+        let _ = authed(ctx, ctx.http.post(format!("{base}/api/queue")))
+            .json(&json!({ "delete": [id] }))
+            .send()
+            .await;
         if let Ok(queue) = get(ctx, &format!("{base}/api/queue")).await {
             if queue_state(&queue, id) == Some(Err(())) {
-                let _ = authed(ctx, ctx.http.post(format!("{base}/api/interrupt"))).json(&json!({ "prompt_id": id })).send().await;
+                let _ = authed(ctx, ctx.http.post(format!("{base}/api/interrupt")))
+                    .json(&json!({ "prompt_id": id }))
+                    .send()
+                    .await;
             }
         }
         live::forget(id);
@@ -1362,7 +1786,9 @@ mod live {
     }
 
     pub fn was_cancelled(prompt_id: &str) -> bool {
-        cancelled().lock().is_ok_and(|c| c.iter().any(|x| x == prompt_id))
+        cancelled()
+            .lock()
+            .is_ok_and(|c| c.iter().any(|x| x == prompt_id))
     }
 
     const IDLE: Duration = Duration::from_secs(120);
@@ -1371,16 +1797,26 @@ mod live {
     pub fn watch(ctx: &Ctx, base: &str, client_id: &str) {
         let key = format!("{base}|{client_id}");
         let fresh = {
-            let Ok(mut l) = listeners().lock() else { return };
+            let Ok(mut l) = listeners().lock() else {
+                return;
+            };
             l.insert(key.clone(), Instant::now()).is_none()
         };
         if fresh && tokio::runtime::Handle::try_current().is_ok() {
-            tokio::spawn(run(ctx.clone(), base.to_string(), client_id.to_string(), key));
+            tokio::spawn(run(
+                ctx.clone(),
+                base.to_string(),
+                client_id.to_string(),
+                key,
+            ));
         }
     }
 
     fn idle(key: &str) -> bool {
-        listeners().lock().map(|l| l.get(key).is_none_or(|t| t.elapsed() > IDLE)).unwrap_or(true)
+        listeners()
+            .lock()
+            .map(|l| l.get(key).is_none_or(|t| t.elapsed() > IDLE))
+            .unwrap_or(true)
     }
 
     async fn run(ctx: Ctx, base: String, client_id: String, key: String) {
@@ -1418,15 +1854,18 @@ mod live {
                 rb = rb.bearer_auth(k);
             }
         }
-        let key = base64::engine::general_purpose::STANDARD.encode(ulid::Ulid::new().0.to_le_bytes());
-        let resp = rb
+        let key =
+            base64::engine::general_purpose::STANDARD.encode(ulid::Ulid::new().0.to_le_bytes());
+        let handshake = rb
             .header(reqwest::header::CONNECTION, "Upgrade")
             .header(reqwest::header::UPGRADE, "websocket")
             .header("Sec-WebSocket-Version", "13")
             .header("Sec-WebSocket-Key", key)
-            .timeout(Duration::from_secs(20))
-            .send()
+            .send();
+        // Bound only the handshake: a request timeout would also end the long-lived socket.
+        let resp = tokio::time::timeout(Duration::from_secs(20), handshake)
             .await
+            .map_err(|_| "handshake timed out".to_string())?
             .map_err(|e| e.to_string())?;
         if resp.status() != reqwest::StatusCode::SWITCHING_PROTOCOLS {
             return Err(format!("HTTP {}", resp.status()));
@@ -1454,12 +1893,17 @@ mod live {
                     0x9 => io.write_all(&client_frame(0xA, &frame.payload)).await?,
                     _ => continue,
                 }
-                if frame.fin && frame.opcode != 0x9 && text {
-                    if let Ok(v) = serde_json::from_slice::<Value>(&message) {
-                        apply(&v);
+                if frame.fin {
+                    if text {
+                        if let Ok(v) = serde_json::from_slice::<Value>(&message) {
+                            apply(&v);
+                        }
                     }
                     message.clear();
                 }
+            }
+            if buf.len() > 64 << 20 || message.len() > 64 << 20 {
+                return Err(std::io::Error::other("ComfyUI sent an oversized event frame"));
             }
             match tokio::time::timeout(Duration::from_secs(30), io.read(&mut chunk)).await {
                 Err(_) if idle(key) => return Ok(()),
@@ -1510,10 +1954,17 @@ mod live {
         }
         let mut payload = buf[pos..pos + len].to_vec();
         if let Some(m) = mask {
-            payload.iter_mut().enumerate().for_each(|(i, b)| *b ^= m[i % 4]);
+            payload
+                .iter_mut()
+                .enumerate()
+                .for_each(|(i, b)| *b ^= m[i % 4]);
         }
         buf.drain(..pos + len);
-        Some(Frame { fin, opcode, payload })
+        Some(Frame {
+            fin,
+            opcode,
+            payload,
+        })
     }
 
     /// A masked client frame, as RFC 6455 requires for client-to-server traffic.
@@ -1539,15 +1990,32 @@ mod live {
     /// Records one ComfyUI event.
     pub fn apply(v: &Value) {
         let data = v.get("data").unwrap_or(&Value::Null);
-        let Some(prompt) = data.get("prompt_id").and_then(Value::as_str) else { return };
+        let Some(prompt) = data.get("prompt_id").and_then(Value::as_str) else {
+            return;
+        };
         let Ok(mut s) = steps().lock() else { return };
         match v.get("type").and_then(Value::as_str).unwrap_or("") {
             "progress" => {
-                let (Some(value), Some(max)) = (data.get("value").and_then(Value::as_u64), data.get("max").and_then(Value::as_u64)) else {
+                let (Some(value), Some(max)) = (
+                    data.get("value").and_then(Value::as_u64),
+                    data.get("max").and_then(Value::as_u64),
+                ) else {
                     return;
                 };
-                let node = data.get("node").and_then(|n| n.as_str().map(String::from).or_else(|| n.as_u64().map(|x| x.to_string())));
-                s.insert(prompt.to_string(), Step { value, max, node, at: Some(Instant::now()) });
+                let node = data.get("node").and_then(|n| {
+                    n.as_str()
+                        .map(String::from)
+                        .or_else(|| n.as_u64().map(|x| x.to_string()))
+                });
+                s.insert(
+                    prompt.to_string(),
+                    Step {
+                        value,
+                        max,
+                        node,
+                        at: Some(Instant::now()),
+                    },
+                );
             }
             "execution_success" | "execution_error" | "execution_interrupted" => {
                 s.remove(prompt);
@@ -1556,7 +2024,10 @@ mod live {
         }
         // Drop entries of prompts nobody polls any more.
         if s.len() > 256 {
-            s.retain(|_, st| st.at.is_some_and(|t| t.elapsed() < Duration::from_secs(3600)));
+            s.retain(|_, st| {
+                st.at
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(3600))
+            });
         }
     }
 }
@@ -1580,47 +2051,101 @@ mod tests {
     }
 
     fn builtin(id: &str) -> Template {
-        builtins().iter().find(|t| t.id == id).cloned().unwrap_or_else(|| panic!("no built-in {id}"))
+        builtins()
+            .iter()
+            .find(|t| t.id == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("no built-in {id}"))
     }
 
     #[test]
     fn every_builtin_template_parses_and_binds_existing_nodes() {
-        assert_eq!(builtins().len(), BUILTIN.len(), "a built-in template failed to parse (see the error log)");
+        assert_eq!(
+            builtins().len(),
+            BUILTIN.len(),
+            "a built-in template failed to parse (see the error log)"
+        );
         for t in builtins() {
             let s = spec_for(t);
             assert!(s.open_weights, "{}", t.id);
-            assert_eq!(s.pricing.as_ref().map(|p| matches!(p, Pricing::Local)), Some(true));
+            assert_eq!(
+                s.pricing.as_ref().map(|p| matches!(p, Pricing::Local)),
+                Some(true)
+            );
             for b in t.manifest.params.iter().flat_map(|p| &p.bind) {
                 let node = &t.workflow[b.node()];
-                assert!(node["inputs"].get(b.input()).is_some(), "{}: node {} has no input {}", t.id, b.node(), b.input());
+                assert!(
+                    node["inputs"].get(b.input()).is_some(),
+                    "{}: node {} has no input {}",
+                    t.id,
+                    b.node(),
+                    b.input()
+                );
             }
             // The manifest lists what the graph loads.
-            let mut classes: Vec<&str> = t.workflow.values().filter_map(|n| n["class_type"].as_str()).collect();
+            let mut classes: Vec<&str> = t
+                .workflow
+                .values()
+                .filter_map(|n| n["class_type"].as_str())
+                .collect();
             classes.sort_unstable();
             classes.dedup();
-            assert_eq!(classes, t.manifest.requires.nodes.iter().map(String::as_str).collect::<Vec<_>>(), "{}", t.id);
+            assert_eq!(
+                classes,
+                t.manifest
+                    .requires
+                    .nodes
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                "{}",
+                t.id
+            );
         }
     }
 
     #[test]
     fn rejects_ui_format_and_unknown_nodes() {
-        let manifest = r#"{"name":"x","output":"image","tasks":["text_to_image"],"prompt":[["9","text"]]}"#;
+        let manifest =
+            r#"{"name":"x","output":"image","tasks":["text_to_image"],"prompt":[["9","text"]]}"#;
         let ui = r#"{"nodes":[],"links":[]}"#;
-        assert!(parse_template("x", manifest, ui, None).unwrap_err().contains("Export (API)"));
+        assert!(parse_template("x", manifest, ui, None)
+            .unwrap_err()
+            .contains("Export (API)"));
         let graph = r#"{"1":{"class_type":"CLIPTextEncode","inputs":{"text":""}}}"#;
-        assert!(parse_template("x", manifest, graph, None).unwrap_err().contains("node 9"));
+        assert!(parse_template("x", manifest, graph, None)
+            .unwrap_err()
+            .contains("node 9"));
         assert!(parse_template("Bad Id", manifest, graph, None).is_err());
     }
 
     #[test]
     fn text_to_image_graph_gets_prompt_size_seed_and_batch() {
         let t = builtin("flux3-klein-t2i");
-        let g = build_graph(&t, &req(json!({"aspect_ratio": "16:9", "seed": 7, "steps": 12})), &HashMap::new(), &HashMap::new(), &Map::new()).unwrap();
-        let find = |class: &str| g.values().find(|n| n["class_type"] == class).unwrap().clone();
+        let g = build_graph(
+            &t,
+            &req(json!({"aspect_ratio": "16:9", "seed": 7, "steps": 12})),
+            &HashMap::new(),
+            &HashMap::new(),
+            &Map::new(),
+        )
+        .unwrap();
+        let find = |class: &str| {
+            g.values()
+                .find(|n| n["class_type"] == class)
+                .unwrap()
+                .clone()
+        };
         let positive = t.manifest.prompt[0].node().to_string();
         assert_eq!(g[&positive]["inputs"]["text"], "a red fox");
         let latent = find("EmptyFlux2LatentImage");
-        assert_eq!((latent["inputs"]["width"].clone(), latent["inputs"]["height"].clone()), (json!(1360), json!(768)));
+        assert_eq!(
+            (
+                latent["inputs"]["width"].clone(),
+                latent["inputs"]["height"].clone()
+            ),
+            (json!(1360), json!(768))
+        );
         assert_eq!(latent["inputs"]["batch_size"], 2);
         let sampler = find("KSampler");
         assert_eq!(sampler["inputs"]["seed"], 7);
@@ -1630,46 +2155,110 @@ mod tests {
     #[test]
     fn missing_seed_is_randomized_and_defaults_apply() {
         let t = builtin("flux3-klein-t2i");
-        let a = build_graph(&t, &req(json!({})), &HashMap::new(), &HashMap::new(), &Map::new()).unwrap();
-        let b = build_graph(&t, &req(json!({})), &HashMap::new(), &HashMap::new(), &Map::new()).unwrap();
-        let seed = |g: &Graph| g.values().find(|n| n["class_type"] == "KSampler").unwrap()["inputs"]["seed"].clone();
+        let a = build_graph(
+            &t,
+            &req(json!({})),
+            &HashMap::new(),
+            &HashMap::new(),
+            &Map::new(),
+        )
+        .unwrap();
+        let b = build_graph(
+            &t,
+            &req(json!({})),
+            &HashMap::new(),
+            &HashMap::new(),
+            &Map::new(),
+        )
+        .unwrap();
+        let seed = |g: &Graph| {
+            g.values().find(|n| n["class_type"] == "KSampler").unwrap()["inputs"]["seed"].clone()
+        };
         assert!(seed(&a).is_u64());
         assert_ne!(seed(&a), seed(&b));
-        let steps = a.values().find(|n| n["class_type"] == "KSampler").unwrap()["inputs"]["steps"].clone();
+        let steps =
+            a.values().find(|n| n["class_type"] == "KSampler").unwrap()["inputs"]["steps"].clone();
         assert_eq!(steps, 16, "manifest default");
     }
 
     #[test]
     fn optional_input_nodes_are_removed_with_their_links() {
         let t = builtin("wan22-5b");
-        let g = build_graph(&t, &req(json!({"duration": 3})), &HashMap::new(), &HashMap::new(), &Map::new()).unwrap();
+        let g = build_graph(
+            &t,
+            &req(json!({"duration": 3})),
+            &HashMap::new(),
+            &HashMap::new(),
+            &Map::new(),
+        )
+        .unwrap();
         assert!(!g.values().any(|n| n["class_type"] == "LoadImage"));
-        let latent = g.values().find(|n| n["class_type"] == "Wan22ImageToVideoLatent").unwrap();
+        let latent = g
+            .values()
+            .find(|n| n["class_type"] == "Wan22ImageToVideoLatent")
+            .unwrap();
         assert!(latent["inputs"].get("start_image").is_none());
         assert_eq!(latent["inputs"]["length"], 73, "3 s at 24 fps, 4n+1 frames");
-        assert_eq!((latent["inputs"]["width"].clone(), latent["inputs"]["height"].clone()), (json!(1280), json!(704)));
+        assert_eq!(
+            (
+                latent["inputs"]["width"].clone(),
+                latent["inputs"]["height"].clone()
+            ),
+            (json!(1280), json!(704))
+        );
 
         let uploads = HashMap::from([(InputRole::StartFrame, vec!["pictesa/abc.png".to_string()])]);
         let dims = HashMap::from([(InputRole::StartFrame, (720u32, 1280u32))]);
         let g = build_graph(&t, &req(json!({})), &uploads, &dims, &Map::new()).unwrap();
         let load = g.values().find(|n| n["class_type"] == "LoadImage").unwrap();
         assert_eq!(load["inputs"]["image"], "pictesa/abc.png");
-        let latent = g.values().find(|n| n["class_type"] == "Wan22ImageToVideoLatent").unwrap();
+        let latent = g
+            .values()
+            .find(|n| n["class_type"] == "Wan22ImageToVideoLatent")
+            .unwrap();
         assert!(latent["inputs"]["start_image"].is_array());
-        assert_eq!((latent["inputs"]["width"].clone(), latent["inputs"]["height"].clone()), (json!(704), json!(1280)), "portrait from the image");
+        assert_eq!(
+            (
+                latent["inputs"]["width"].clone(),
+                latent["inputs"]["height"].clone()
+            ),
+            (json!(704), json!(1280)),
+            "portrait from the image"
+        );
     }
 
     #[test]
     fn required_inputs_are_enforced_and_extra_references_fill_more_loaders() {
         let t = builtin("flux3-klein-edit");
-        let err = build_graph(&t, &req(json!({})), &HashMap::new(), &HashMap::new(), &Map::new()).unwrap_err();
+        let err = build_graph(
+            &t,
+            &req(json!({})),
+            &HashMap::new(),
+            &HashMap::new(),
+            &Map::new(),
+        )
+        .unwrap_err();
         assert!(matches!(err, ProviderError::InvalidInput(_)));
-        let uploads = HashMap::from([(InputRole::Reference, vec!["pictesa/a.png".to_string(), "pictesa/b.png".to_string()])]);
+        let uploads = HashMap::from([(
+            InputRole::Reference,
+            vec!["pictesa/a.png".to_string(), "pictesa/b.png".to_string()],
+        )]);
         let g = build_graph(&t, &req(json!({})), &uploads, &HashMap::new(), &Map::new()).unwrap();
-        let loads: Vec<&Value> = g.values().filter(|n| n["class_type"] == "LoadImage").collect();
+        let loads: Vec<&Value> = g
+            .values()
+            .filter(|n| n["class_type"] == "LoadImage")
+            .collect();
         assert_eq!(loads.len(), 2);
-        let refs = g.values().find(|n| n["class_type"] == "ReferenceMultiLatent").unwrap();
-        let linked = refs["inputs"].as_object().unwrap().keys().filter(|k| k.starts_with("images.")).count();
+        let refs = g
+            .values()
+            .find(|n| n["class_type"] == "ReferenceMultiLatent")
+            .unwrap();
+        let linked = refs["inputs"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|k| k.starts_with("images."))
+            .count();
         assert_eq!(linked, 2);
     }
 
@@ -1691,15 +2280,31 @@ mod tests {
     fn mapped_params_and_resolution_presets() {
         let t = builtin("esrgan-upscale");
         let uploads = HashMap::from([(InputRole::Reference, vec!["x.png".to_string()])]);
-        let g = build_graph(&t, &req(json!({"scale": 2})), &uploads, &HashMap::new(), &Map::new()).unwrap();
-        let scale = g.values().find(|n| n["class_type"] == "ImageScaleBy").unwrap();
+        let g = build_graph(
+            &t,
+            &req(json!({"scale": 2})),
+            &uploads,
+            &HashMap::new(),
+            &Map::new(),
+        )
+        .unwrap();
+        let scale = g
+            .values()
+            .find(|n| n["class_type"] == "ImageScaleBy")
+            .unwrap();
         assert_eq!(scale["inputs"]["scale_by"], 0.5);
 
         let size = t_size("ltx25-t2v");
         let r = req(json!({"aspect_ratio": "9:16", "resolution": "1080p"}));
-        assert_eq!(compute_size(&size, MediaKind::Video, &r, &HashMap::new()), (1088, 1920));
+        assert_eq!(
+            compute_size(&size, MediaKind::Video, &r, &HashMap::new()),
+            (1088, 1920)
+        );
         let r = req(json!({"width": 1000, "height": 500}));
-        assert_eq!(compute_size(&size, MediaKind::Video, &r, &HashMap::new()), (1024, 512));
+        assert_eq!(
+            compute_size(&size, MediaKind::Video, &r, &HashMap::new()),
+            (1024, 512)
+        );
     }
 
     fn t_size(id: &str) -> SizeDef {
@@ -1717,30 +2322,67 @@ mod tests {
         let a = availability(&t, &info);
         assert_eq!(a.missing_nodes, vec!["SaveImage".to_string()]);
         assert!(a.missing_models.is_empty());
-        assert_eq!(a.rename.get("RealESRGAN_x4plus.safetensors").map(String::as_str), Some("upscale/RealESRGAN_x4plus.safetensors"));
-        let rename: Map<String, Value> = a.rename.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+        assert_eq!(
+            a.rename
+                .get("RealESRGAN_x4plus.safetensors")
+                .map(String::as_str),
+            Some("upscale/RealESRGAN_x4plus.safetensors")
+        );
+        let rename: Map<String, Value> = a
+            .rename
+            .iter()
+            .map(|(k, v)| (k.clone(), json!(v)))
+            .collect();
         let uploads = HashMap::from([(InputRole::Reference, vec!["x.png".to_string()])]);
         let g = build_graph(&t, &req(json!({})), &uploads, &HashMap::new(), &rename).unwrap();
-        let loader = g.values().find(|n| n["class_type"] == "UpscaleModelLoader").unwrap();
-        assert_eq!(loader["inputs"]["model_name"], "upscale/RealESRGAN_x4plus.safetensors");
+        let loader = g
+            .values()
+            .find(|n| n["class_type"] == "UpscaleModelLoader")
+            .unwrap();
+        assert_eq!(
+            loader["inputs"]["model_name"],
+            "upscale/RealESRGAN_x4plus.safetensors"
+        );
     }
 
     #[test]
     fn availability_against_recorded_object_info() {
         // Trimmed from a CPU-only ComfyUI 0.42.1 with no model files installed.
-        let info: Value = serde_json::from_str(include_str!("../tests/fixtures/comfyui_object_info.json")).unwrap();
+        let info: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/comfyui_object_info.json"))
+                .unwrap();
         for t in builtins() {
             let a = availability(t, &info);
-            assert!(a.missing_nodes.is_empty(), "{} needs nodes ComfyUI 0.42.1 lacks: {:?}", t.id, a.missing_nodes);
-            let required: Vec<&str> = t.manifest.requires.models.iter().map(|m| m.name.as_str()).collect();
+            assert!(
+                a.missing_nodes.is_empty(),
+                "{} needs nodes ComfyUI 0.42.1 lacks: {:?}",
+                t.id,
+                a.missing_nodes
+            );
+            let required: Vec<&str> = t
+                .manifest
+                .requires
+                .models
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect();
             assert!(!a.missing_models.is_empty(), "{}", t.id);
             for m in &a.missing_models {
-                assert!(required.contains(&m.as_str()), "{}: {m} is loaded but not listed in requires.models", t.id);
+                assert!(
+                    required.contains(&m.as_str()),
+                    "{}: {m} is loaded but not listed in requires.models",
+                    t.id
+                );
             }
         }
         let a = availability(&builtin("wan22-i2v"), &info);
-        assert!(a.missing_models.contains(&"wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors".to_string()));
-        assert!(!a.missing_models.iter().any(|m| m.ends_with(".png")), "uploaded inputs are not model files");
+        assert!(a
+            .missing_models
+            .contains(&"wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors".to_string()));
+        assert!(
+            !a.missing_models.iter().any(|m| m.ends_with(".png")),
+            "uploaded inputs are not model files"
+        );
     }
 
     #[test]
@@ -1748,14 +2390,22 @@ mod tests {
         let body = r#"{"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}},
             "node_errors": {"2": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "unet_name: 'flux3-image-klein-int8-convrot.safetensors' not in []", "extra_info": {}}], "dependent_outputs": ["9"], "class_type": "UNETLoader"}}}"#;
         match prompt_error(400, body) {
-            ProviderError::NotSupported(m) => assert!(m.contains("flux3-image-klein-int8-convrot.safetensors") && m.contains("UNETLoader"), "{m}"),
+            ProviderError::NotSupported(m) => assert!(
+                m.contains("flux3-image-klein-int8-convrot.safetensors")
+                    && m.contains("UNETLoader"),
+                "{m}"
+            ),
             other => panic!("{other:?}"),
         }
         let body = r#"{"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": ""},
             "node_errors": {"7": {"errors": [{"type": "value_bigger_than_max", "message": "Value bigger than max", "details": "steps: 20000 bigger than max of 10000"}], "class_type": "KSampler"}}}"#;
-        assert!(matches!(prompt_error(400, body), ProviderError::InvalidInput(m) if m.contains("KSampler")));
+        assert!(
+            matches!(prompt_error(400, body), ProviderError::InvalidInput(m) if m.contains("KSampler"))
+        );
         let body = r#"{"error": {"type": "invalid_prompt", "message": "Cannot execute because a node is missing the class_type property.", "details": "Node ID '#5'"}, "node_errors": {}}"#;
-        assert!(matches!(prompt_error(400, body), ProviderError::InvalidInput(m) if m.contains("class_type")));
+        assert!(
+            matches!(prompt_error(400, body), ProviderError::InvalidInput(m) if m.contains("class_type"))
+        );
     }
 
     #[test]
@@ -1766,13 +2416,24 @@ mod tests {
             "15": {"images": [{"filename": "frame.png", "subfolder": "pictesa", "type": "output"}]}
         });
         let v = output_files(&outputs, Some(MediaKind::Video), &[]);
-        assert_eq!(v, vec![FileRef { filename: "upscale-video_00001_.mp4".into(), subfolder: "pictesa".into(), kind: "output".into() }]);
+        assert_eq!(
+            v,
+            vec![FileRef {
+                filename: "upscale-video_00001_.mp4".into(),
+                subfolder: "pictesa".into(),
+                kind: "output".into()
+            }]
+        );
         let i = output_files(&outputs, Some(MediaKind::Image), &["15".to_string()]);
         assert_eq!(i.len(), 1);
         assert_eq!(i[0].filename, "frame.png");
         // Only previews: fall back to temp files rather than failing.
-        let only_temp = json!({"3": {"images": [{"filename": "p.png", "subfolder": "", "type": "temp"}]}});
-        assert_eq!(output_files(&only_temp, Some(MediaKind::Image), &[]).len(), 1);
+        let only_temp =
+            json!({"3": {"images": [{"filename": "p.png", "subfolder": "", "type": "temp"}]}});
+        assert_eq!(
+            output_files(&only_temp, Some(MediaKind::Image), &[]).len(),
+            1
+        );
         assert_eq!(
             view_url("http://127.0.0.1:8188", &v[0]),
             "http://127.0.0.1:8188/api/view?filename=upscale-video_00001_.mp4&subfolder=pictesa&type=output"
@@ -1795,11 +2456,15 @@ mod tests {
             ["execution_error", {"prompt_id": "p", "node_type": "KSampler", "exception_type": "torch.OutOfMemoryError", "exception_message": "CUDA out of memory."}]
         ]);
         match run_error(Some(&messages), None) {
-            ProviderError::Failed(m) => assert!(m.contains("KSampler") && m.contains("smaller"), "{m}"),
+            ProviderError::Failed(m) => {
+                assert!(m.contains("KSampler") && m.contains("smaller"), "{m}")
+            }
             other => panic!("{other:?}"),
         }
         let interrupted = json!([["execution_interrupted", {"prompt_id": "p"}]]);
-        assert!(matches!(run_error(Some(&interrupted), None), ProviderError::Failed(m) if m.contains("cancelled")));
+        assert!(
+            matches!(run_error(Some(&interrupted), None), ProviderError::Failed(m) if m.contains("cancelled"))
+        );
     }
 
     #[test]
@@ -1808,7 +2473,10 @@ mod tests {
         let f = live::parse_frame(&mut buf).unwrap();
         assert!(f.fin);
         assert_eq!((f.opcode, f.payload.as_slice()), (1, &b"hello"[..]));
-        assert!(live::parse_frame(&mut buf).is_none(), "incomplete frame waits for more bytes");
+        assert!(
+            live::parse_frame(&mut buf).is_none(),
+            "incomplete frame waits for more bytes"
+        );
         buf.push(0);
         assert_eq!(live::parse_frame(&mut buf).unwrap().opcode, 9);
 
@@ -1818,12 +2486,20 @@ mod tests {
         assert_eq!(f.payload, big, "masked client frames decode back");
         assert!(framed.is_empty());
 
-        live::apply(&json!({"type": "progress", "data": {"value": 3, "max": 20, "prompt_id": "pid-test", "node": "7"}}));
+        live::apply(
+            &json!({"type": "progress", "data": {"value": 3, "max": 20, "prompt_id": "pid-test", "node": "7"}}),
+        );
         let step = live::get("pid-test").unwrap();
-        assert_eq!((step.value, step.max, step.node.as_deref()), (3, 20, Some("7")));
+        assert_eq!(
+            (step.value, step.max, step.node.as_deref()),
+            (3, 20, Some("7"))
+        );
         let handle = RemoteHandle::with("pid-test", json!({"classes": {"7": "KSampler"}}));
         match running(&handle) {
-            PollStatus::Running { progress: Some(p), message: Some(m) } => {
+            PollStatus::Running {
+                progress: Some(p),
+                message: Some(m),
+            } => {
                 assert!((p - 0.15).abs() < 1e-6);
                 assert_eq!(m, "Sampling 3/20");
             }
@@ -1845,7 +2521,10 @@ mod tests {
         std::fs::write(&png, &bytes).unwrap();
         assert_eq!(image_dims(&png), Some((640, 360)));
         let jpg = dir.join("a.jpg");
-        let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0xE0, 0x02, 0x80, 0x03, 0x01];
+        let jpeg = [
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01,
+            0xE0, 0x02, 0x80, 0x03, 0x01,
+        ];
         std::fs::write(&jpg, jpeg).unwrap();
         assert_eq!(image_dims(&jpg), Some((640, 480)));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1864,7 +2543,13 @@ mod tests {
         std::fs::create_dir_all(root.join("broken")).unwrap();
         std::fs::write(root.join("broken/manifest.json"), "{").unwrap();
         std::fs::write(root.join("broken/workflow.json"), "{}").unwrap();
-        let ctx = Ctx { http: reqwest::Client::new(), creds: HashMap::from([("workflows_dir".to_string(), root.to_string_lossy().into_owned())]) };
+        let ctx = Ctx {
+            http: reqwest::Client::new(),
+            creds: HashMap::from([(
+                "workflows_dir".to_string(),
+                root.to_string_lossy().into_owned(),
+            )]),
+        };
         let all = all_templates(&ctx);
         let mine: Vec<&Template> = all.iter().filter(|t| t.id == "esrgan-upscale").collect();
         assert_eq!(mine.len(), 1);

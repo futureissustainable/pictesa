@@ -5,8 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use pictesa_core::{
-    common, CredentialField, Ctx, GenerationRequest, InputRole, InputSlot, MediaKind, ModelSpec, Output, PollStatus, Pricing,
-    Provider, ProviderError, ProviderInfo, ProviderKind, ProviderResult, RemoteHandle, Submission, Task,
+    common, CredentialField, Ctx, GenerationRequest, InputRole, InputSlot, MediaKind, ModelSpec,
+    Output, PollStatus, Pricing, Provider, ProviderError, ProviderInfo, ProviderKind,
+    ProviderResult, RemoteHandle, Submission, Task,
 };
 use serde_json::json;
 
@@ -16,13 +17,22 @@ pub struct Mock;
 const RUN_MS: u128 = 4000;
 
 fn now_ms() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 /// A small PNG gradient whose colours depend on the prompt, so outputs differ.
 fn png(prompt: &str, w: u32, h: u32) -> Vec<u8> {
-    let seed = prompt.bytes().fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
-    let (r0, g0, b0) = ((seed & 0xff) as f32, ((seed >> 8) & 0xff) as f32, ((seed >> 16) & 0xff) as f32);
+    let seed = prompt
+        .bytes()
+        .fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+    let (r0, g0, b0) = (
+        (seed & 0xff) as f32,
+        ((seed >> 8) & 0xff) as f32,
+        ((seed >> 16) & 0xff) as f32,
+    );
     let mut raw = Vec::with_capacity(((w * 3 + 1) * h) as usize);
     for y in 0..h {
         raw.push(0);
@@ -43,7 +53,11 @@ fn encode_png(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
         for &b in data {
             c ^= b as u32;
             for _ in 0..8 {
-                c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xedb8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
             }
         }
         !c
@@ -88,19 +102,43 @@ fn size_for(req: &GenerationRequest) -> (u32, u32) {
 
 async fn video(prompt: &str, seconds: u32) -> ProviderResult<Vec<u8>> {
     let dir = std::env::temp_dir().join(format!("pictesa-mock-{}", ulid::Ulid::new()));
-    tokio::fs::create_dir_all(&dir).await.map_err(|e| ProviderError::Failed(e.to_string()))?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| ProviderError::Failed(e.to_string()))?;
     let out = dir.join("out.mp4");
     let hue = prompt.len() * 37 % 360;
     let status = tokio::process::Command::new("ffmpeg")
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i", &format!("testsrc2=size=640x360:rate=24:duration={seconds}"), "-vf", &format!("hue=h={hue}"), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast"])
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("testsrc2=size=640x360:rate=24:duration={seconds}"),
+            "-vf",
+            &format!("hue=h={hue}"),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+        ])
         .arg(&out)
         .status()
         .await
-        .map_err(|e| ProviderError::NotSupported(format!("the mock video model needs ffmpeg: {e}")))?;
+        .map_err(|e| {
+            ProviderError::NotSupported(format!("the mock video model needs ffmpeg: {e}"))
+        })?;
     if !status.success() {
-        return Err(ProviderError::Failed("ffmpeg could not render the mock video".into()));
+        return Err(ProviderError::Failed(
+            "ffmpeg could not render the mock video".into(),
+        ));
     }
-    let bytes = tokio::fs::read(&out).await.map_err(|e| ProviderError::Failed(e.to_string()))?;
+    let bytes = tokio::fs::read(&out)
+        .await
+        .map_err(|e| ProviderError::Failed(e.to_string()))?;
     let _ = tokio::fs::remove_dir_all(&dir).await;
     Ok(bytes)
 }
@@ -113,7 +151,10 @@ impl Provider for Mock {
             name: "Mock (development)".into(),
             kind: ProviderKind::Local,
             // An optional fake key lets tests exercise hosted billing (platform keys are charged).
-            fields: vec![CredentialField { optional: true, ..CredentialField::api_key(&["PICTESA_MOCK_KEY"]) }],
+            fields: vec![CredentialField {
+                optional: true,
+                ..CredentialField::api_key(&["PICTESA_MOCK_KEY"])
+            }],
             signup_url: None,
             docs_url: None,
             max_concurrency: 4,
@@ -145,9 +186,16 @@ impl Provider for Mock {
         Ok(())
     }
 
-    async fn submit(&self, _ctx: &Ctx, model: &ModelSpec, req: &GenerationRequest) -> ProviderResult<Submission> {
+    async fn submit(
+        &self,
+        _ctx: &Ctx,
+        model: &ModelSpec,
+        req: &GenerationRequest,
+    ) -> ProviderResult<Submission> {
         if req.prompt.to_lowercase().contains("fail please") {
-            return Err(ProviderError::ContentPolicy("the mock refuses prompts containing 'fail please'".into()));
+            return Err(ProviderError::ContentPolicy(
+                "the mock refuses prompts containing 'fail please'".into(),
+            ));
         }
         let (w, h) = size_for(req);
         Ok(Submission::Pending(RemoteHandle::with(
@@ -160,25 +208,50 @@ impl Provider for Mock {
     }
 
     async fn poll(&self, _ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
-        let started: u128 = handle.data_str("started").and_then(|s| s.parse().ok()).unwrap_or(0);
+        let started: u128 = handle
+            .data_str("started")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let elapsed = now_ms().saturating_sub(started);
         if elapsed < 800 {
             return Ok(PollStatus::Queued { position: Some(0) });
         }
         if elapsed < RUN_MS {
-            return Ok(PollStatus::Running { progress: Some(elapsed as f32 / RUN_MS as f32), message: Some("Painting".into()) });
+            return Ok(PollStatus::Running {
+                progress: Some(elapsed as f32 / RUN_MS as f32),
+                message: Some("Painting".into()),
+            });
         }
         let prompt = handle.data_str("prompt").unwrap_or("");
         if handle.data_str("model") == Some("video") {
-            let secs = handle.data.get("seconds").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
-            return Ok(PollStatus::Done(vec![Output::Bytes { data: video(prompt, secs).await?, mime: "video/mp4".into() }]));
+            let secs = handle
+                .data
+                .get("seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2) as u32;
+            return Ok(PollStatus::Done(vec![Output::Bytes {
+                data: video(prompt, secs).await?,
+                mime: "video/mp4".into(),
+            }]));
         }
         let (w, h) = (
             handle.data.get("w").and_then(|v| v.as_u64()).unwrap_or(768) as u32,
             handle.data.get("h").and_then(|v| v.as_u64()).unwrap_or(768) as u32,
         );
-        let n = handle.data.get("n").and_then(|v| v.as_u64()).unwrap_or(1).max(1);
-        Ok(PollStatus::Done((0..n).map(|i| Output::Bytes { data: png(&format!("{prompt}{i}"), w, h), mime: "image/png".into() }).collect()))
+        let n = handle
+            .data
+            .get("n")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            .max(1);
+        Ok(PollStatus::Done(
+            (0..n)
+                .map(|i| Output::Bytes {
+                    data: png(&format!("{prompt}{i}"), w, h),
+                    mime: "image/png".into(),
+                })
+                .collect(),
+        ))
     }
 
     fn poll_interval(&self, _attempt: u32) -> std::time::Duration {

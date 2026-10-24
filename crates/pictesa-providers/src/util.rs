@@ -14,7 +14,12 @@ pub async fn get_json(req: reqwest::RequestBuilder) -> ProviderResult<Value> {
 }
 
 pub async fn send_json(req: reqwest::RequestBuilder, body: &Value) -> ProviderResult<Value> {
-    let resp = req.timeout(API_TIMEOUT).json(body).send().await.map_err(net_error)?;
+    let resp = req
+        .timeout(API_TIMEOUT)
+        .json(body)
+        .send()
+        .await
+        .map_err(net_error)?;
     json_response(resp).await
 }
 
@@ -34,7 +39,12 @@ pub fn error_message(v: &Value) -> Option<String> {
             Value::Array(a) => {
                 let parts: Vec<String> = a
                     .iter()
-                    .filter_map(|e| e.get("msg").or_else(|| e.get("message")).and_then(Value::as_str).map(String::from))
+                    .filter_map(|e| {
+                        e.get("msg")
+                            .or_else(|| e.get("message"))
+                            .and_then(Value::as_str)
+                            .map(String::from)
+                    })
                     .collect();
                 (!parts.is_empty()).then(|| parts.join("; "))
             }
@@ -42,16 +52,31 @@ pub fn error_message(v: &Value) -> Option<String> {
             _ => None,
         }
     };
-    v.get("detail").and_then(pick).or_else(|| v.get("error").and_then(pick)).or_else(|| v.get("message").and_then(pick))
+    v.get("detail")
+        .and_then(pick)
+        .or_else(|| v.get("error").and_then(pick))
+        .or_else(|| v.get("message").and_then(pick))
 }
 
 /// Classifies a provider-reported failure message.
 pub fn failure(msg: impl Into<String>) -> ProviderError {
     let msg = msg.into();
     let lower = msg.to_ascii_lowercase();
-    if ["safety", "content policy", "moderation", "nsfw", "flagged", "sensitive"].iter().any(|w| lower.contains(w)) {
+    if [
+        "safety",
+        "content policy",
+        "moderation",
+        "nsfw",
+        "flagged",
+        "sensitive",
+    ]
+    .iter()
+    .any(|w| lower.contains(w))
+    {
         ProviderError::ContentPolicy(msg)
-    } else if lower.contains("insufficient") && (lower.contains("credit") || lower.contains("balance") || lower.contains("quota")) {
+    } else if lower.contains("insufficient")
+        && (lower.contains("credit") || lower.contains("balance") || lower.contains("quota"))
+    {
         ProviderError::InsufficientCredits(msg)
     } else {
         ProviderError::Failed(msg)

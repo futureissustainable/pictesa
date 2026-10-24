@@ -124,7 +124,7 @@ async fn text_to_image() {
     assert!(!spec.tags.iter().any(|t| t.starts_with("needs-")), "server lacks files: {:?}", spec.meta);
 
     // Two images in one run, landscape.
-    let req = request(&spec, "a lighthouse on a cliff at sunset, oil painting", json!({ "aspect_ratio": "16:9", "seed": 42 }), vec![], 2);
+    let req = request(&spec, "a lighthouse on a cliff at sunset, oil painting", json!({ "aspect_ratio": "16:9", "seed": 42, "steps": 4 }), vec![], 2);
     let (out, seen) = run(&p, &ctx, &spec, &req).await;
     assert_eq!(out.len(), 2, "batch of two");
     for o in &out {

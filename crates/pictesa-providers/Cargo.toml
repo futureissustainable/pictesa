@@ -20,3 +20,4 @@ ulid.workspace = true
 url.workspace = true
 hmac = "0.12"
 sha2 = "0.10"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }

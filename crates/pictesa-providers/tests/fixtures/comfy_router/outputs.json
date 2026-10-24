@@ -1,0 +1,148 @@
+{
+ "bfl/flux-2-pro": {
+  "cost": null,
+  "id": "b2e0c1a4-0f2f-4a55-9f2e-2f9a1c0d4e77",
+  "progress": null,
+  "result": {
+   "cost": null,
+   "duration": 3.4,
+   "end_time": 1767225603.4,
+   "prompt": "A watercolor painting of a lighthouse at dawn, soft light on the water",
+   "sample": "https://example.invalid/bfl/flux-pro-1.1/sample.png",
+   "seed": 2784347701,
+   "start_time": 1767225600
+  },
+  "status": "Ready"
+ },
+ "byteplus/dreamina-seedance-2-5-260628": {
+  "content": {
+   "last_frame_url": "https://example.invalid/byteplus/seedance-1-0-pro-250528/last-frame",
+   "video_url": "https://example.invalid/byteplus/seedance-1-0-pro-250528/generated.mp4"
+  },
+  "created_at": 1767225600,
+  "duration": 5,
+  "error": null,
+  "id": "3f7a1b28-5c0d-4e91-8a6f-1b2c3d4e5f60",
+  "model": "seedance-1-0-pro-250528",
+  "output_format": "mp4",
+  "resolution": "1080p",
+  "seed": 1234567890123,
+  "status": "succeeded",
+  "updated_at": 1767225730
+ },
+ "veo/veo-3.1-generate-001": {
+  "done": true,
+  "name": "projects/example-project/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/1a2b3c4d",
+  "response": {
+   "@type": "type.googleapis.com/cloud.ai.large_models.vision.GenerateVideoResponse",
+   "raiMediaFilteredCount": 0,
+   "videos": [
+    {
+     "gcsUri": "https://storage.googleapis.com/EXAMPLE_BUCKET/veo/USER_ID/REQUEST_ID/sample_0.mp4",
+     "mimeType": "video/mp4"
+    }
+   ]
+  }
+ },
+ "wan/wan2.7-i2v": {
+  "output": {
+   "actual_prompt": "a single red maple leaf falling onto still water, slow motion, shallow depth of field",
+   "end_time": "2027-01-01T00:01:04.000Z",
+   "orig_prompt": "a single red maple leaf falling onto still water",
+   "scheduled_time": "2027-01-01T00:00:01.000Z",
+   "submit_time": "2027-01-01T00:00:00.000Z",
+   "task_id": "0385dc79-5ff8-4d82-bcb6-7c1a9f2e4d60",
+   "task_status": "SUCCEEDED",
+   "video_url": "https://example.invalid/wan/wan3.0-video/generated.mp4"
+  },
+  "request_id": "7574ee8f-38a3-4b1e-9280-11c33ab46e51",
+  "usage": {
+   "SR": 720,
+   "duration": 5
+  }
+ },
+ "vertexai/gemini-3.1-flash-image": {
+  "candidates": [
+   {
+    "content": {
+     "parts": [
+      {
+       "inlineData": {
+        "data": "PGJhc2U2ND4=",
+        "mimeType": "image/png"
+       }
+      }
+     ],
+     "role": "model"
+    },
+    "finishReason": "STOP"
+   }
+  ],
+  "modelVersion": "gemini-2.5-flash-image",
+  "responseId": "7c6b5a49-3827-1605-f4e3-d2c1b0a99887",
+  "usageMetadata": {
+   "candidatesTokenCount": 1290,
+   "promptTokenCount": 11,
+   "totalTokenCount": 1301
+  }
+ },
+ "openai/gpt-image-2": {
+  "created": 1767225600,
+  "data": [
+   {
+    "b64_json": "PGJhc2U2ND4="
+   }
+  ],
+  "usage": {
+   "input_tokens": 12,
+   "input_tokens_details": {
+    "image_tokens": 0,
+    "text_tokens": 12
+   },
+   "output_tokens": 1056,
+   "total_tokens": 1068
+  }
+ },
+ "xai/grok-imagine-video-1.5": {
+  "model": "grok-imagine-video",
+  "status": "done",
+  "usage": {
+   "cost_in_usd_ticks": 3500000000
+  },
+  "video": {
+   "duration": 4,
+   "respect_moderation": true,
+   "url": "https://example.invalid/xai/grok-imagine-video/generated.mp4"
+  }
+ },
+ "ltx/ltx-2-5-pro": {
+  "completed_at": "2026-01-01T00:02:10Z",
+  "created_at": "2026-01-01T00:00:00Z",
+  "id": "3f7a1b28-5c0d-4e91-8a6f-1b2c3d4e5f60",
+  "result": {
+   "video_url": "https://example.invalid/ltx/generated.mp4"
+  },
+  "status": "completed"
+ },
+ "kling/kling-v3": {
+  "code": 0,
+  "data": {
+   "created_at": 1798761600000,
+   "task_id": "kling-task-1a2b3c4d5e6f",
+   "task_result": {
+    "videos": [
+     {
+      "duration": "5",
+      "id": "kling-video-6f5e4d3c2b1a",
+      "url": "https://example.invalid/kling/kling-v2-5-turbo/generated.mp4"
+     }
+    ]
+   },
+   "task_status": "succeed",
+   "task_status_msg": "",
+   "updated_at": 1798761840000
+  },
+  "message": "SUCCEED",
+  "request_id": "9f2c1a04-7b6e-4d38-8a51-3c0e7d9b2f46"
+ }
+}
