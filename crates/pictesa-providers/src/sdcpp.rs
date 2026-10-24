@@ -77,10 +77,30 @@ fn uses_ref_images(caps: &Value, stem: &str) -> bool {
 }
 
 /// Builds the Pictesa models for what the server has loaded.
+/// Steps and guidance for few-step distillations, recognized by file name: SDXS takes one step;
+/// Turbo, Lightning, LCM, Hyper, Flash and schnell take the count in the name (`…_8step`) or 4.
+fn few_step_defaults(stem: &str) -> Option<(i64, f64)> {
+    let name = stem.to_lowercase();
+    if name.contains("sdxs") {
+        return Some((1, 1.0));
+    }
+    if !["turbo", "lightning", "lcm", "hyper", "flash", "schnell"].iter().any(|f| name.contains(f)) {
+        return None;
+    }
+    let named = name.match_indices("step").find_map(|(i, _)| {
+        let head = name[..i].trim_end_matches(['-', '_']);
+        let digits = head.len() - head.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+        head[head.len() - digits..].parse::<i64>().ok().filter(|n| (1..=16).contains(n))
+    });
+    Some((named.unwrap_or(4), 1.0))
+}
+
 pub(crate) fn specs_from(caps: &Value) -> Vec<ModelSpec> {
     let mut out = Vec::new();
     let stem = caps.pointer("/model/stem").and_then(Value::as_str).unwrap_or("");
-    let name = caps.pointer("/model/name").and_then(Value::as_str).unwrap_or(stem);
+    // Shown by its stem ("sdxs"); the file name stays in the description.
+    let file = caps.pointer("/model/name").and_then(Value::as_str).unwrap_or(stem);
+    let name = stem;
     let modes = caps.get("supported_modes").and_then(Value::as_array).cloned().unwrap_or_default();
     let modes: Vec<&str> = modes.iter().filter_map(Value::as_str).collect();
     let limits = caps.get("limits").cloned().unwrap_or(Value::Null);
@@ -106,7 +126,7 @@ pub(crate) fn specs_from(caps: &Value) -> Vec<ModelSpec> {
             s.pricing = Some(Pricing::Local);
             s.open_weights = true;
             s.negative_prompt = true;
-            s.description = Some(format!("The model sd-server has loaded ({name}). Load another one in the sd-server web UI, then refresh the model list."));
+            s.description = Some(format!("The model sd-server has loaded ({file}). Load another one in the sd-server web UI, then refresh the model list."));
             let ref_mode = !video && uses_ref_images(caps, stem);
             if video {
                 if has("init_image") {
@@ -138,9 +158,16 @@ pub(crate) fn specs_from(caps: &Value) -> Vec<ModelSpec> {
                 s.params.push(common::duration(&[1, 2, 3, 4, 5, 6, 8, 10], seconds));
                 s.params.push(ParamSpec::int(keys::FPS, "Frame rate", 4, 60).default_value(fps as i64).advanced());
             }
-            let steps = defaults.pointer("/sample_params/sample_steps").and_then(Value::as_i64).unwrap_or(20);
+            let mut steps = defaults.pointer("/sample_params/sample_steps").and_then(Value::as_i64).unwrap_or(20);
+            let mut cfg = num(defaults.pointer("/sample_params/guidance/txt_cfg")).unwrap_or(7.0);
+            // A server started without --steps/--cfg-scale reports 20 and 7 for any model, which
+            // smears few-step distillations; their own settings apply unless the server set others.
+            if steps == 20 && cfg == 7.0 {
+                if let Some((s, g)) = few_step_defaults(stem) {
+                    (steps, cfg) = (s, g);
+                }
+            }
             s.params.push(common::steps(1, 150, steps.clamp(1, 150)));
-            let cfg = num(defaults.pointer("/sample_params/guidance/txt_cfg")).unwrap_or(7.0);
             s.params.push(common::guidance(0.0, 30.0, cfg.clamp(0.0, 30.0)));
             if !video && !ref_mode && has("init_image") {
                 let strength = num(defaults.get("strength")).unwrap_or(0.75);
@@ -518,6 +545,22 @@ mod tests {
         assert_eq!(img.meta["ref_images"], false, "an SD1-class checkpoint does img2img");
         let up = &specs[1];
         assert_eq!((up.tasks.clone(), up.prompt), (vec![Task::Upscale], false));
+    }
+
+    #[test]
+    fn few_step_models_get_their_own_defaults_from_a_stock_server() {
+        let defaults = |stem: &str, steps: i64, cfg: f64| {
+            let mut caps = fixture()["capabilities"].clone();
+            caps["model"] = json!({ "name": format!("{stem}.safetensors"), "stem": stem });
+            caps["defaults_by_mode"]["img_gen"]["sample_params"] = json!({ "sample_steps": steps, "guidance": { "txt_cfg": cfg } });
+            let img = specs_from(&caps).remove(0);
+            (img.param_spec(keys::STEPS).unwrap().default.clone(), img.param_spec(keys::GUIDANCE).unwrap().default.clone())
+        };
+        assert_eq!(defaults("sdxs", 20, 7.0), (Some(json!(1)), Some(json!(1.0))));
+        assert_eq!(defaults("sd_xl_turbo_1.0_fp16", 20, 7.0), (Some(json!(4)), Some(json!(1.0))));
+        assert_eq!(defaults("sdxl_lightning_8step", 20, 7.0), (Some(json!(8)), Some(json!(1.0))));
+        assert_eq!(defaults("v1-5-pruned-emaonly", 20, 7.0), (Some(json!(20)), Some(json!(7.0))), "regular models keep the stock values");
+        assert_eq!(defaults("sdxl_lightning_4step", 6, 2.0), (Some(json!(6)), Some(json!(2.0))), "the server's own settings win");
     }
 
     #[test]

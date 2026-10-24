@@ -93,11 +93,16 @@ export function replaceProvider(next: ProviderState) {
   providerLoader.store.set((state) => ({ ...state, data: state.data?.map((item) => (item.id === next.id ? next : item)) ?? [next] }));
 }
 
-/** Default model for an output: a configured featured one, else any configured one, else the first. */
+/**
+ * Default model for an output: a configured one that makes something from a prompt (not an
+ * upscaler or an editor that needs an input), featured first; else any configured one; else the first.
+ */
 export function defaultModel(models: ModelSpec[]): ModelSpec | undefined {
   const configured = models.filter((model) => model.configured);
   const pool = configured.length ? configured : models;
-  return pool.find((model) => model.tags?.includes("featured")) ?? pool[0];
+  const fromPrompt = pool.filter((model) => model.tasks.some((task) => task.startsWith("text_to_")));
+  const choices = fromPrompt.length ? fromPrompt : pool;
+  return choices.find((model) => model.tags?.includes("featured")) ?? choices[0];
 }
 
 /** Readable name for a model id when its spec is not loaded: "fal:fal-ai/flux-pro/v1.1" -> "flux-pro/v1.1". */
