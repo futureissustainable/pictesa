@@ -348,13 +348,22 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
     publish(engine, &job.id).await;
 }
 
+/// Providers that only accept inputs as public HTTPS links.
+const NEEDS_PUBLIC_LINKS: &[&str] = &["luma", "freepik"];
+
 async fn build_request(engine: &Engine, job: &JobRow, spec: &pictesa_core::ModelSpec) -> Result<GenerationRequest, String> {
     let mut inputs = Vec::new();
     for input in job.inputs_list() {
         let row = store::asset_row(&engine.inner.db, &job.user_id, &input.asset_id).await.map_err(|_| "An input file was deleted.".to_string())?;
         let path = engine.inner.files.path(&row.hash, &row.ext);
-        // Hosted servers hand providers a short-lived signed link; local inputs are sent as bytes.
-        let url = engine.inner.cfg.public_url.as_ref().map(|base| signed_file_url(engine, base, &row.id));
+        // Hosted servers hand providers a short-lived signed link; local inputs are sent as bytes,
+        // or parked on fal's storage for providers that only take links.
+        let mut url = engine.inner.cfg.public_url.as_ref().map(|base| signed_file_url(engine, base, &row.id));
+        if url.is_none() && NEEDS_PUBLIC_LINKS.contains(&job.provider.as_str()) {
+            url = Some(engine.temporary_link(&job.user_id, &path, &row.mime, &row.hash).await.map_err(|e| {
+                format!("{} needs inputs as public links. Set up fal (used to host them temporarily) or run Pictesa with --public-url. ({e})", spec.name)
+            })?);
+        }
         inputs.push(MediaInput {
             role: input.role,
             kind: store::parse_kind(&row.kind),
@@ -428,6 +437,40 @@ async fn save_output(engine: &Engine, job: &JobRow, out: Output) -> anyhow::Resu
 }
 
 impl Engine {
+    /// Uploads a local file to fal's storage (with the user's fal key) and returns its public link.
+    /// Cached per file hash for the life of the process.
+    pub(crate) async fn temporary_link(&self, user: &str, path: &std::path::Path, mime: &str, hash: &str) -> Result<String, String> {
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+        let cache = CACHE.get_or_init(Default::default);
+        if let Some(u) = cache.lock().unwrap().get(hash) {
+            return Ok(u.clone());
+        }
+        let fal = self.inner.catalog.provider("fal").ok_or("fal is not available")?;
+        let ctx = self.ctx_for(user, fal.as_ref()).await.map_err(|e| e.to_string())?;
+        let key = ctx.get("api_key").ok_or("fal is not set up")?.to_string();
+        let init: serde_json::Value = self
+            .inner
+            .http
+            .post("https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3")
+            .header("Authorization", format!("Key {key}"))
+            .json(&json!({ "content_type": mime, "file_name": path.file_name().and_then(|n| n.to_str()).unwrap_or("input") }))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        let (Some(put), Some(file_url)) = (init.get("upload_url").and_then(|v| v.as_str()), init.get("file_url").and_then(|v| v.as_str())) else {
+            return Err("fal storage gave no upload link".into());
+        };
+        let body = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
+        self.inner.download.put(put).header("Content-Type", mime).body(body).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
+        cache.lock().unwrap().insert(hash.to_string(), file_url.to_string());
+        Ok(file_url.to_string())
+    }
+
     /// Adopts running jobs whose process died (stale heartbeat): resumes the ones the provider
     /// accepted, restarts never-submitted ones, and fails the ones interrupted mid-submit without
     /// a refund (the provider may have billed).
