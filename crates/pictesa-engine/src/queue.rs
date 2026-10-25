@@ -418,6 +418,10 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
         let _ = sqlx::query("UPDATE jobs SET status = 'running' WHERE id = ? AND status = 'canceled'").bind(&job.id).execute(&engine.inner.db).await;
         return fail(engine, &job, "download_failed", &format!("Could not download the result: {:#}", last_error.unwrap()), false).await;
     }
+    // Before the job reads as finished, so whoever waits for it sees the real cost.
+    if let Some(usd) = ctx.reported_cost() {
+        record_actual_cost(engine, &job, usd).await;
+    }
     let now = now_ms();
     let _ = sqlx::query("UPDATE jobs SET status = 'succeeded', progress = 1.0, message = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('running', 'canceled') AND owner = ?")
         .bind(now)
@@ -426,9 +430,6 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
         .bind(&engine.inner.instance)
         .execute(&engine.inner.db)
         .await;
-    if let Some(usd) = ctx.reported_cost() {
-        record_actual_cost(engine, &job, usd).await;
-    }
     publish(engine, &job.id).await;
 }
 
