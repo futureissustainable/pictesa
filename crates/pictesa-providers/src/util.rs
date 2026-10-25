@@ -74,9 +74,7 @@ pub fn failure(msg: impl Into<String>) -> ProviderError {
     .any(|w| lower.contains(w))
     {
         ProviderError::ContentPolicy(msg)
-    } else if lower.contains("insufficient")
-        && (lower.contains("credit") || lower.contains("balance") || lower.contains("quota"))
-    {
+    } else if pictesa_core::error::out_of_credit(&lower) {
         ProviderError::InsufficientCredits(msg)
     } else {
         ProviderError::Failed(msg)

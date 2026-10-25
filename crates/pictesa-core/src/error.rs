@@ -59,13 +59,15 @@ impl ProviderError {
     /// Maps an HTTP status and body from a provider API to the right variant.
     pub fn from_http(status: u16, body: &str, retry_after_ms: Option<u64>) -> Self {
         let detail = truncate(body, 600);
+        let lower = body.to_ascii_lowercase();
         match status {
+            // OpenAI reports an empty account as 429, fal as 403.
+            401 | 403 | 429 if out_of_credit(&lower) => Self::InsufficientCredits(detail),
             401 | 403 => Self::Auth(detail),
             402 => Self::InsufficientCredits(detail),
             408 | 425 | 500..=599 => Self::Transient(format!("HTTP {status}: {detail}")),
             429 => Self::RateLimited { retry_after_ms },
             400 | 404 | 409 | 413 | 415 | 422 => {
-                let lower = body.to_ascii_lowercase();
                 if ["safety", "content policy", "moderation", "nsfw", "flagged", "inappropriate"]
                     .iter()
                     .any(|w| lower.contains(w))
@@ -95,6 +97,12 @@ impl From<serde_json::Error> for ProviderError {
     }
 }
 
+/// Whether a lowercased provider message says the account has run out of money, where retrying
+/// or a new key does not help ("insufficient_quota", "User is locked. Reason: Exhausted balance").
+pub fn out_of_credit(lower: &str) -> bool {
+    lower.contains("exhausted balance") || (lower.contains("insufficient") && ["credit", "balance", "quota"].iter().any(|w| lower.contains(w)))
+}
+
 pub fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
@@ -104,4 +112,19 @@ pub fn truncate(s: &str, max: usize) -> String {
         end -= 1;
     }
     format!("{}…", &s[..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderError;
+
+    #[test]
+    fn empty_accounts_read_as_missing_credit_not_as_rate_limits_or_bad_keys() {
+        let openai = r#"{"error":{"type":"insufficient_quota","code":"credit_balance_exhausted","message":"You have no credits remaining."}}"#;
+        assert!(matches!(ProviderError::from_http(429, openai, None), ProviderError::InsufficientCredits(_)));
+        let fal = r#"{"detail":"User is locked. Reason: Exhausted balance. Top up your balance at fal.ai/dashboard/billing."}"#;
+        assert!(matches!(ProviderError::from_http(403, fal, None), ProviderError::InsufficientCredits(_)));
+        assert!(matches!(ProviderError::from_http(429, "slow down", Some(1000)), ProviderError::RateLimited { retry_after_ms: Some(1000) }));
+        assert!(matches!(ProviderError::from_http(401, "invalid api key", None), ProviderError::Auth(_)));
+    }
 }
