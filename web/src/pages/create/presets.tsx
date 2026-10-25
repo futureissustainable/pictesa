@@ -10,6 +10,7 @@ const categoryIcons: Record<string, IconName> = {
   style: "palette",
   lighting: "light_mode",
   light: "light_mode",
+  grade: "contrast",
 };
 
 const titleCase = (text: string) => text.charAt(0).toUpperCase() + text.slice(1).replaceAll("_", " ");

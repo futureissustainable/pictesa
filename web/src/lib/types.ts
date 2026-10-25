@@ -280,10 +280,18 @@ export interface WorkflowImport {
 }
 
 /** A named set of 1 to 14 library images (a person, a product, a style). */
+export type CharacterKind = "character" | "brand";
+
 export interface Character {
   id: string;
   name: string;
   description: string | null;
+  /** "brand" marks a brand kit: its colors and words join every prompt it is used in. */
+  kind?: CharacterKind;
+  /** Brand colors as #rrggbb. */
+  colors?: string[];
+  /** Brand words: tone, style and phrases. */
+  words?: string;
   assets: Asset[];
   created_at: number;
   updated_at: number;
@@ -292,11 +300,14 @@ export interface Character {
 export interface RecipeField {
   key: string;
   label: string;
-  type: "text" | "enum" | "preset";
+  /** `multi` takes several of `options`. */
+  type: "text" | "enum" | "multi" | "preset";
   options?: string[];
   category?: string | null;
-  default?: string | null;
+  default?: string | string[] | null;
   required?: boolean;
+  /** Required unless this input or field has a value. */
+  required_without?: string | null;
   multiline?: boolean;
   help?: string | null;
 }
@@ -318,6 +329,10 @@ export interface RecipeStep {
   params?: Record<string, ParamValue> | null;
   preset?: string | null;
   inputs?: { from: string; role: InputRole }[];
+  /** The step runs once per item: fixed texts, or a lone `{{field}}` for that field's items. */
+  each?: string[];
+  /** What to set up when none of `models` is ready. */
+  needs?: string | null;
 }
 
 export interface Recipe {
@@ -325,6 +340,12 @@ export interface Recipe {
   name: string;
   description?: string | null;
   output: MediaKind;
+  /** Card picture: a built-in illustration name or a library image id. */
+  picture?: string | null;
+  /** Offers a character or brand kit for every step. */
+  character?: boolean;
+  /** A studio page that runs this recipe with a richer tool. */
+  open?: string | null;
   fields: RecipeField[];
   inputs: RecipeInput[];
   steps: RecipeStep[];
@@ -344,6 +365,10 @@ export interface RecipeRun {
   step: number;
   steps: number;
   jobs: string[];
+  /** Jobs per step; a step that runs once per item has one job per item. */
+  step_jobs?: string[][];
+  /** The final step's jobs: their outputs are the results (a set when it ran per item). */
+  results?: string[];
   error: string | null;
   created_at: number;
   updated_at: number;

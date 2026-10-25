@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 400 300" width="400" height="300"><defs><symbol id="s" viewBox="0 0 160 120">
+<rect width="160" height="120" fill="#f9e1cf"/>
+<circle cx="116" cy="36" r="15" fill="#f2693d"/>
+<path d="M0 82C30 66 52 70 80 78C108 86 132 66 160 72V120H0Z" fill="#e2b48f"/>
+<path d="M0 98C40 86 70 92 100 98C124 103 144 94 160 96V120H0Z" fill="#ad4527"/>
+<path d="M40 92L56 78L72 92V104H40Z" fill="#2d2620"/>
+<rect x="52.5" y="94" width="7" height="10" fill="#f2693d"/>
+<path d="M84 103L94 74L104 103Z" fill="#66745a"/>
+<rect x="93" y="102" width="2" height="5" fill="#2d2620"/>
+</symbol><filter id="sh" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#2d2620" flood-opacity=".14"/></filter></defs><rect width="400" height="300" fill="#f3ece2"/><g transform="rotate(-6 168.0 127.0)" filter="url(#sh)"><rect x="70" y="52" width="196" height="150" rx="9" fill="#fffdf9"/><clipPath id="ab"><rect x="76" y="58" width="184" height="138" rx="6"/></clipPath><g clip-path="url(#ab)"><svg x="76" y="58" width="184" height="138" viewBox="0 0 160 120" preserveAspectRatio="xMidYMid slice"><g opacity=".45"><use href="#s" width="160" height="120"/></g></svg></g></g><g transform="rotate(0 224.0 158.0)" filter="url(#sh)"><rect x="110" y="72" width="228" height="172" rx="9" fill="#fffdf9"/><clipPath id="af"><rect x="116" y="78" width="216" height="160" rx="6"/></clipPath><g clip-path="url(#af)"><svg x="116" y="78" width="216" height="160" viewBox="0 0 160 120" preserveAspectRatio="xMidYMid slice"><g ><use href="#s" width="160" height="120"/></g></svg></g></g><path d="M272 104C290 96 304 98 318 104M268 120C290 112 310 114 326 122" fill="none" stroke="#fffdf9" stroke-width="4" stroke-linecap="round" opacity=".9"/><circle cx="224" cy="158" r="24" fill="#fffdf9" opacity=".92"/><path d="M216 146L236 158L216 170Z" fill="#ad4527"/></svg>

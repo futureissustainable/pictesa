@@ -5,7 +5,7 @@ import { plural } from "../../lib/format";
 import { notify, notifyError } from "../../lib/notices";
 import { sendCharacterToCreate } from "../../lib/reuse";
 import { Link } from "../../lib/router";
-import type { Asset, Character } from "../../lib/types";
+import type { Asset, Character, CharacterKind } from "../../lib/types";
 import { Thumb } from "../../ui/asset-card";
 import { Dialog } from "../../ui/dialog";
 import { Icon, Spinner } from "../../ui/icon";
@@ -33,7 +33,7 @@ export default function CharactersPage() {
       <div className="intro characters-intro">
         <div>
           <h1>Characters.</h1>
-          <p>A person, a product or a style, kept as a set of reference images. Pick one in Create to keep the look.</p>
+          <p>A person, a product or a style, kept as a set of reference images. Pick one in Create to keep the look. A brand kit adds its colors and words to every step.</p>
         </div>
         <button type="button" className="primary-button" onClick={() => setEditing("new")}>
           <Icon name="add" />
@@ -92,7 +92,11 @@ function CharacterCard({ character, trainedCount, onEdit }: { character: Charact
       </button>
       <div className="character-body">
         <p className="character-name">{character.name}</p>
-        <p className="character-meta">{plural(character.assets.length, "image", "images")}</p>
+        <p className="character-meta">
+          {character.kind === "brand" ? "Brand kit, " : ""}
+          {plural(character.assets.length, "image", "images")}
+        </p>
+        {character.kind === "brand" && (character.colors?.length ?? 0) > 0 && <Swatches colors={character.colors ?? []} />}
         {character.description && <p className="character-description">{character.description}</p>}
       </div>
       {trainedCount > 0 && <p className="character-meta"><Link to="/loras">{trainedCount} trained LoRA{trainedCount === 1 ? "" : "s"}</Link></p>}
@@ -111,10 +115,29 @@ function CharacterCard({ character, trainedCount, onEdit }: { character: Charact
   );
 }
 
-/** Create or edit a character: name, description and 1 to 14 images. */
+/** Brand colors as small round swatches. */
+function Swatches({ colors }: { colors: string[] }) {
+  return (
+    <span className="swatches" role="img" aria-label={`Brand colors ${colors.join(", ")}`}>
+      {colors.map((color) => (
+        <span key={color} className="swatch" style={{ background: color }} />
+      ))}
+    </span>
+  );
+}
+
+const MAX_COLORS = 8;
+const isHex = (value: string) => /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value.trim());
+
+/** Create or edit a character or brand kit: name, description, 1 to 14 images, and a kit's colors and words. */
 export function CharacterEditor({ character, initial = [], onClose }: { character: Character | null; initial?: Asset[]; onClose(saved?: boolean): void }) {
   const [name, setName] = useState(character?.name ?? "");
   const [description, setDescription] = useState(character?.description ?? "");
+  const [kind, setKind] = useState<CharacterKind>(character?.kind ?? "character");
+  const [colors, setColors] = useState<string[]>(character?.colors ?? []);
+  const [color, setColor] = useState("#f2693d");
+  const [words, setWords] = useState(character?.words ?? "");
+  const brand = kind === "brand";
   const [images, setImages] = useState<Asset[]>(character?.assets ?? initial.slice(0, MAX_CHARACTER_IMAGES));
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -129,7 +152,7 @@ export function CharacterEditor({ character, initial = [], onClose }: { characte
     setBusy(true);
     setError(null);
     try {
-      const body = { name: name.trim(), description: description.trim(), asset_ids: images.map((asset) => asset.id) };
+      const body = { name: name.trim(), description: description.trim(), asset_ids: images.map((asset) => asset.id), kind, colors: brand ? colors : [], words: brand ? words.trim() : "" };
       const saved = character ? await api.updateCharacter(character.id, body) : await api.createCharacter(body);
       upsertCharacter(saved);
       notify(character ? `${saved.name} saved.` : `${saved.name} is ready. Pick it in Create.`);
@@ -141,8 +164,16 @@ export function CharacterEditor({ character, initial = [], onClose }: { characte
   };
 
   return (
-    <Dialog title={character ? `Edit ${character.name}` : "New character"} size="wide" onClose={() => onClose(false)} className="character-editor">
+    <Dialog title={character ? `Edit ${character.name}` : brand ? "New brand kit" : "New character"} size="wide" onClose={() => onClose(false)} className="character-editor">
       <form onSubmit={(event) => void save(event)} noValidate>
+        <div className="segmented segmented-small" role="group" aria-label="Kind">
+          <button type="button" aria-pressed={!brand} onClick={() => setKind("character")}>
+            Character
+          </button>
+          <button type="button" aria-pressed={brand} onClick={() => setKind("brand")}>
+            Brand kit
+          </button>
+        </div>
         <div className="character-fields">
           <label className="field">
             <span>Name</span>
@@ -181,6 +212,54 @@ export function CharacterEditor({ character, initial = [], onClose }: { characte
             )}
           </ul>
         </div>
+        {brand && (
+          <div className="brand-fields">
+            <div className="brand-colors-block">
+              <span className="field-top">
+                <span>Brand colors</span>
+                <small>
+                  {colors.length} of {MAX_COLORS}
+                </small>
+              </span>
+              <div className={`brand-colors ${error?.field === "colors" ? "invalid" : ""}`}>
+                {colors.map((item) => (
+                  <span key={item} className="brand-color">
+                    <span className="swatch" style={{ background: item }} aria-hidden="true" />
+                    {item}
+                    <button type="button" className="icon-button" aria-label={`Remove ${item}`} onClick={() => setColors((list) => list.filter((entry) => entry !== item))}>
+                      <Icon name="close" />
+                    </button>
+                  </span>
+                ))}
+                {colors.length < MAX_COLORS && (
+                  <span className="brand-color-add">
+                    <input type="color" aria-label="Pick a color" value={isHex(color) && color.length === 7 ? color : "#000000"} onChange={(event) => setColor(event.target.value)} />
+                    <input type="text" aria-label="Color hex code" value={color} maxLength={7} spellCheck={false} onChange={(event) => setColor(event.target.value)} />
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={!isHex(color)}
+                      onClick={() => {
+                        const next = color.trim().toLowerCase();
+                        setColors((list) => (list.includes(next) ? list : [...list, next]));
+                      }}
+                    >
+                      <Icon name="add" />
+                      Add
+                    </button>
+                  </span>
+                )}
+              </div>
+            </div>
+            <label className="field">
+              <span>
+                Brand words <small>Optional</small>
+              </span>
+              <input type="text" value={words} maxLength={300} placeholder="Calm, natural, honest. Warm wood and soft light." aria-invalid={error?.field === "words" || undefined} onChange={(event) => setWords(event.target.value)} />
+              <small>Pictesa adds the colors and words to every prompt this kit is used in.</small>
+            </label>
+          </div>
+        )}
         {error && (
           <p className="notice error" role="alert">
             {error.text}
@@ -192,7 +271,7 @@ export function CharacterEditor({ character, initial = [], onClose }: { characte
           </button>
           <button type="submit" className="primary-button" disabled={busy}>
             {busy ? <Spinner /> : <Icon name="check" />}
-            {character ? "Save" : "Save character"}
+            {character ? "Save" : brand ? "Save brand kit" : "Save character"}
           </button>
         </div>
       </form>

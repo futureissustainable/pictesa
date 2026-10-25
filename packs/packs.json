@@ -1,0 +1,127 @@
+[
+ {
+  "name": "ugc_ad",
+  "title": "UGC ad",
+  "description": "A phone video of a person showing a product, like a real customer post. Runs the ads/ugc recipe.",
+  "recipe": "ads/ugc",
+  "arguments": [
+   { "name": "product", "description": "The product and why people like it, in one or two sentences.", "required": true },
+   { "name": "product_image", "description": "The product photo: a library asset id, an https URL, or a file path in local mode.", "type": "file", "required": true },
+   { "name": "audience", "description": "Who the ad speaks to." },
+   { "name": "presenter", "description": "A saved character to appear on camera, by id or name. Leave empty for a new face.", "type": "character" },
+   { "name": "brand", "description": "A brand kit applied to every step, by id or name.", "type": "brand" },
+   { "name": "length", "description": "Clip length in seconds: 5 or 10.", "type": "choice", "options": ["5", "10"], "default": "5" }
+  ],
+  "intro": "Make a UGC video ad for this product: {{product}}.{{#audience}} It speaks to {{audience}}.{{/audience}} UGC means it looks like a real customer filmed it on a phone: one person, a real place, one short and honest line.",
+  "steps": [
+   "Call list_recipes and find \"ads/ugc\". If runnable is false, tell the user which step has no model and what it needs (the step's needs), then stop.",
+   "Write the spoken line: one or two short sentences, under 25 words, in a real customer's voice. Name one concrete benefit. No hype words, prices or claims the user did not give you.",
+   "Pick the setting from the recipe's setting options that suits the product{{#audience}} and the audience{{/audience}}.",
+   "Call run_recipe with id \"ads/ugc\", values {\"line\": <your line>, \"setting\": <the setting>, \"duration\": \"{{length}}\"} and inputs {\"product\": [{{product_image_input}}]{{#presenter}}, \"presenter\": {{presenter_inputs}}{{/presenter}}}{{#brand}}, plus character \"{{brand}}\" so the brand kit applies to both steps{{/brand}}.",
+   "Open the still and the video from the run (results holds the final video). Check that the product matches the photo, the person holds it naturally and the line fits the clip. If something is off, change the setting or the line and run once more.",
+   "Report the video path, the still path and the total cost_usd of the steps."
+  ],
+  "rules": [
+   "Runs on paid providers cost money. Make one run, show it, and ask before making more than two.",
+   "Never invent results, numbers, reviews or endorsements."
+  ]
+ },
+ {
+  "name": "hook_variants",
+  "title": "Hook variants",
+  "description": "Several different openings for the same video, one short clip each, to test which keeps viewers watching. Runs the ads/hook-variants recipe.",
+  "recipe": "ads/hook-variants",
+  "arguments": [
+   { "name": "video", "description": "What the video is about and who it is for.", "required": true },
+   { "name": "frame", "description": "The opening frame every hook starts from: a library asset id, an https URL, or a file path in local mode.", "type": "file", "required": true },
+   { "name": "count", "description": "How many openings to make, from 2 to 8.", "type": "number", "min": 2, "max": 8, "default": "4" },
+   { "name": "length", "description": "Clip length in seconds: 5 or 10.", "type": "choice", "options": ["5", "10"], "default": "5" },
+   { "name": "brand", "description": "A brand kit applied to every clip, by id or name.", "type": "brand" }
+  ],
+  "intro": "Make {{count}} different openings (hooks) for a video about: {{video}}. Each opening is a short clip that starts from the same frame, so the user can test which one works best.",
+  "steps": [
+   "Call list_recipes and find \"ads/hook-variants\". If it is not runnable, tell the user what the step needs and stop.",
+   "Write {{count}} openings, one line each: what happens on screen in the first two seconds. Make them truly different: a bold claim shown in action, a surprising movement, a close-up reveal, a before and after, a question the viewer wants answered. Describe action, not text overlays, in under 20 words.",
+   "Call run_recipe with id \"ads/hook-variants\", values {\"hooks\": <the openings, one per line>, \"duration\": \"{{length}}\"} and inputs {\"frame\": [{{frame_input}}]}{{#brand}}, plus character \"{{brand}}\"{{/brand}}. results holds one clip per line, in the same order.",
+   "Open each clip and compare it with its line. Rerun only the weak lines (a new run with just those lines), not the whole set.",
+   "Report each opening line next to its clip path, and the total cost."
+  ],
+  "rules": [
+   "Each opening costs one clip. Keep the count the user asked for.",
+   "Never put claims in a hook that the user did not give you."
+  ]
+ },
+ {
+  "name": "explainer",
+  "title": "Explainer",
+  "description": "From a topic to a script, scenes, images and clips in order. Runs the video/explainer recipe.",
+  "recipe": "video/explainer",
+  "arguments": [
+   { "name": "topic", "description": "What the video explains.", "required": true },
+   { "name": "audience", "description": "Who watches it." },
+   { "name": "scenes", "description": "How many scenes, from 3 to 12.", "type": "number", "min": 3, "max": 12, "default": "5" },
+   { "name": "shape", "description": "Frame shape: 16:9, 9:16 or 1:1.", "type": "choice", "options": ["16:9", "9:16", "1:1"], "default": "16:9" },
+   { "name": "style", "description": "A style preset id from list_presets, such as style/editorial.", "default": "style/editorial" },
+   { "name": "brand", "description": "A brand kit applied to every step, by id or name.", "type": "brand" }
+  ],
+  "intro": "Make a short explainer video about: {{topic}}.{{#audience}} The audience is {{audience}}.{{/audience}} Work in order: script, scenes, images, clips.",
+  "steps": [
+   "Write the script: {{scenes}} narration lines, one idea per line, in plain words. Each line takes about five seconds to say.",
+   "Write one scene line per narration line: what the viewer sees, concrete and visual, one main subject, no text or labels in the picture. Keep the same characters, colors and place across scenes so it feels like one video.",
+   "Call list_recipes and find \"video/explainer\". If it is not runnable, tell the user what each step needs and stop.",
+   "Call run_recipe with id \"video/explainer\" and values {\"scenes\": <the scene lines, one per line>, \"aspect_ratio\": \"{{shape}}\", \"style\": \"{{style}}\", \"duration\": \"5\"}{{#brand}}, plus character \"{{brand}}\"{{/brand}}. It draws one still per scene, then animates each still. results holds the clips in scene order.",
+   "Check each clip against its scene line. Fix a wrong scene with generate (the model and inputs are in the run's steps) instead of running everything again.",
+   "If the user wants a voiceover, call list_models with output \"audio\". When a speech model is set up, call generate with it and the script. Otherwise give the user the script to record.",
+   "Report the script, then each scene line with its clip path in order, the voiceover path if any, and the total cost."
+  ],
+  "rules": [
+   "Pictesa makes the parts and does not join clips. Say in which order to cut them.",
+   "Runs on paid providers cost money: every scene is one image and one clip."
+  ]
+ },
+ {
+  "name": "faceless_short",
+  "title": "Faceless short",
+  "description": "A vertical short with no presenter on camera: visuals tell the story and a voiceover carries it. Runs the video/explainer recipe at 9:16.",
+  "recipe": "video/explainer",
+  "arguments": [
+   { "name": "topic", "description": "What the short is about.", "required": true },
+   { "name": "length", "description": "Target length in seconds, from 15 to 60.", "type": "number", "min": 15, "max": 60, "default": "30" },
+   { "name": "style", "description": "A style preset id from list_presets, such as style/cinematic.", "default": "style/cinematic" },
+   { "name": "brand", "description": "A brand kit applied to every step, by id or name.", "type": "brand" }
+  ],
+  "intro": "Make a faceless short about {{topic}}: a vertical video for TikTok, Reels or Shorts with no presenter on camera. The pictures carry the story and a voiceover tells it.",
+  "steps": [
+   "Write a voiceover script for about {{length}} seconds: a strong first line, then one idea per line of about five seconds, and a clear takeaway at the end.",
+   "Write one scene line per script line: what the viewer sees, framed for a tall screen, close and simple, no faces looking into the camera and no text in the picture.",
+   "Call list_recipes and find \"video/explainer\". If it is not runnable, tell the user what each step needs and stop.",
+   "Call run_recipe with id \"video/explainer\" and values {\"scenes\": <the scene lines, one per line>, \"aspect_ratio\": \"9:16\", \"style\": \"{{style}}\", \"duration\": \"5\"}{{#brand}}, plus character \"{{brand}}\"{{/brand}}. results holds the clips in scene order.",
+   "For the voiceover, call list_models with output \"audio\" and, when a speech model is set up, call generate with it and the script. Otherwise give the user the script.",
+   "Report the clips in order with their scene lines, the voiceover path or the script, and the total cost."
+  ],
+  "rules": [
+   "Pictesa does not join clips. Say in which order to cut them under the voiceover.",
+   "Keep it faceless: no presenter, no one talking to the camera."
+  ]
+ },
+ {
+  "name": "brand_kit",
+  "title": "Brand kit",
+  "description": "Make anything with a saved brand kit: its reference images, colors and words apply to every step.",
+  "arguments": [
+   { "name": "brand", "description": "The brand kit, by id or name (list_characters shows each kit with kind \"brand\").", "type": "brand", "required": true },
+   { "name": "brief", "description": "What to make.", "required": true }
+  ],
+  "intro": "Make this for the brand \"{{brand_name}}\": {{brief}}",
+  "steps": [
+   "Use the brand kit on every step: pass character \"{{brand}}\" to every generate and run_recipe call. Pictesa then adds the kit's {{brand_images}} where a model takes images.{{#brand_line}} It also adds this line to every prompt, so do not repeat it yourself: \"{{brand_line}}\"{{/brand_line}}",
+   "Pick the tool for the brief. Call list_recipes and use a recipe when one fits (UGC ad, hook variants, explainer, product placement, shots). Otherwise call list_models and generate.",
+   "Write prompts with scenes, props and light that suit the brand's colors and words.",
+   "Check each result against the brand colors and reference images before you report it. Redo a result that drifts from the brand, once.",
+   "Report every file path with what it is, and the total cost."
+  ],
+  "rules": [
+   "Runs on paid providers cost money. Make one result first when the brief asks for many."
+  ]
+ }
+]

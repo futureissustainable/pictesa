@@ -7,6 +7,7 @@ use base64::Engine as _;
 use pictesa_core::{InputRole, MediaKind};
 use pictesa_engine::{
     boards::{Board, Op, RunStatus},
+    packs::Pack,
     Asset, AssetFilter, CreateGeneration, Engine, EngineError, Job, JobInput, ModelFilter,
 };
 use serde_json::{json, Map, Value};
@@ -24,7 +25,10 @@ const INSTRUCTIONS: &str = "Pictesa generates images and videos with many provid
 Typical flow: list_models (filter by output image or video), optionally get_model for its parameters, then generate \
 (it waits for the result by default and returns file paths). Pass input images or videos to generate as {role, path|url|asset_id}; \
 roles are reference, start_frame, end_frame, video, audio, mask. Presets (list_presets) add camera moves or looks. \
-Boards (list_boards, get_board, add_to_board, run_board_step) are shared canvases of files, notes and chained steps; people see your changes live.";
+Boards (list_boards, get_board, add_to_board, run_board_step) are shared canvases of files, notes and chained steps; people see your changes live. \
+Recipes (list_recipes, run_recipe) are the studio's one-click apps, such as shots, angles, face swap, product placement and \
+color grade; a step that runs once per item returns a set in results. Skill packs (prompts/list, prompts/get) are step-by-step \
+workflows for a UGC ad, hook variants, an explainer, a faceless short and a brand kit.";
 
 pub async fn handle(ctx: &McpContext, msg: Value) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
@@ -37,7 +41,7 @@ pub async fn handle(ctx: &McpContext, msg: Value) -> Option<Value> {
             let version = if PROTOCOLS.contains(&asked) { asked } else { PROTOCOLS[0] };
             Ok(json!({
                 "protocolVersion": version,
-                "capabilities": { "tools": { "listChanged": false } },
+                "capabilities": { "tools": { "listChanged": false }, "prompts": { "listChanged": false } },
                 "serverInfo": { "name": "pictesa", "title": "Pictesa", "version": env!("CARGO_PKG_VERSION") },
                 "instructions": INSTRUCTIONS,
             }))
@@ -53,13 +57,41 @@ pub async fn handle(ctx: &McpContext, msg: Value) -> Option<Value> {
             })
         }
         "resources/list" => Ok(json!({ "resources": [] })),
-        "prompts/list" => Ok(json!({ "prompts": [] })),
+        "prompts/list" => Ok(json!({ "prompts": ctx.engine.packs().iter().map(prompt_json).collect::<Vec<_>>() })),
+        "prompts/get" => get_prompt(ctx, &params).await,
         _ => Err((-32601, format!("Method not found: {method}"))),
     };
     Some(match result {
         Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
         Err((code, message)) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
     })
+}
+
+/// A skill pack as an MCP prompt.
+fn prompt_json(p: &Pack) -> Value {
+    json!({
+        "name": p.name, "title": p.title, "description": p.description,
+        "arguments": p.arguments.iter().map(|a| json!({ "name": a.name, "description": a.description, "required": a.required })).collect::<Vec<_>>(),
+    })
+}
+
+/// A skill pack's instructions for the given arguments. Unknown packs and missing or invalid
+/// arguments are invalid params (-32602), as the protocol asks.
+async fn get_prompt(ctx: &McpContext, params: &Value) -> Result<Value, (i64, String)> {
+    let name = params.get("name").and_then(Value::as_str).ok_or((-32602, "name is required".to_string()))?;
+    let args = match params.get("arguments") {
+        None | Some(Value::Null) => Map::new(),
+        Some(Value::Object(args)) => args.clone(),
+        Some(_) => return Err((-32602, "arguments must be an object of text values".into())),
+    };
+    match ctx.engine.pack_prompt(&ctx.user_id, name, &args).await {
+        Ok((pack, text)) => Ok(json!({
+            "description": pack.description,
+            "messages": [{ "role": "user", "content": { "type": "text", "text": text } }],
+        })),
+        Err(e @ (EngineError::Validation { .. } | EngineError::NotFound(_))) => Err((-32602, e.to_string())),
+        Err(e) => Err((-32603, e.to_string())),
+    }
 }
 
 fn tools() -> Value {
@@ -186,24 +218,25 @@ fn tools() -> Value {
         {
             "name": "list_characters",
             "title": "List characters",
-            "description": "Saved characters (named sets of reference images for a person, product or style) that generate can attach with `character`.",
+            "description": "Saved characters (named sets of reference images for a person, product or style) and brand kits (kind brand: references plus brand colors and words). generate and run_recipe attach one with `character`.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "list_recipes",
             "title": "List recipes",
-            "description": "Multi-step pipelines (cinema shot, character shot, product hero, animate a photo, new angle, upscale) with their fields and which model each step would use.",
+            "description": "The studio's apps as recipes: shots, angles, zooms, relight, face swap, product placement, color grade, upscale, UGC ad, hook variants, explainer and more. Each lists its fields, input files, steps, the model each step would use, and what to set up when a step has none.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "run_recipe",
             "title": "Run a recipe",
-            "description": "Run a recipe and wait for it. values fills its fields; inputs maps each recipe input key to files as {path|url|asset_id}. This can cost money on paid providers.",
+            "description": "Run a recipe and wait for it. values fills its fields (a multi field takes a list); inputs maps each recipe input key to files as {path|url|asset_id}. results holds the final files: a set when the last step runs once per item. This can cost money on paid providers.",
             "inputSchema": { "type": "object", "properties": {
                 "id": { "type": "string" },
                 "values": { "type": "object" },
+                "character": { "type": "string", "description": "A character or brand kit (id or name from list_characters) applied to every step" },
                 "inputs": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "url": { "type": "string" }, "asset_id": { "type": "string" } } } } },
                 "models": { "type": "object", "description": "Optional model id per step id" },
                 "timeout_seconds": { "type": "integer", "default": 1800, "maximum": 7200 }
@@ -549,7 +582,10 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 .await
                 .map_err(err)?
                 .iter()
-                .map(|c| json!({ "id": c.id, "name": c.name, "description": c.description, "images": c.assets.len() }))
+                .map(|c| json!({
+                    "id": c.id, "name": c.name, "kind": c.kind, "description": c.description, "images": c.assets.len(),
+                    "image_ids": c.assets.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), "colors": c.colors, "words": c.words,
+                }))
                 .collect();
             Ok(text(&json!({ "characters": list })))
         }
@@ -561,8 +597,17 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 .iter()
                 .map(|r| json!({
                     "id": r.recipe.id, "name": r.recipe.name, "description": r.recipe.description, "output": r.recipe.output,
-                    "fields": r.recipe.fields, "inputs": r.recipe.inputs, "runnable": r.runnable,
-                    "steps": r.recipe.steps.iter().zip(&r.step_models).map(|(s, m)| json!({"id": s.id, "label": s.label, "model": m})).collect::<Vec<_>>(),
+                    "fields": r.recipe.fields, "inputs": r.recipe.inputs, "runnable": r.runnable, "character": r.recipe.character,
+                    "steps": r.recipe.steps.iter().zip(&r.step_models).map(|(s, m)| {
+                        let mut step = json!({"id": s.id, "label": s.label, "output": s.output, "model": m});
+                        if !s.each.is_empty() {
+                            step["each"] = json!(s.each);
+                        }
+                        if m.is_none() {
+                            step["needs"] = json!(s.needs);
+                        }
+                        step
+                    }).collect::<Vec<_>>(),
                 }))
                 .collect();
             Ok(text(&json!({ "recipes": list })))
@@ -572,6 +617,7 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
             let mut req = pictesa_engine::recipes::RunRecipe {
                 values: args.get("values").and_then(Value::as_object).cloned().unwrap_or_default(),
                 models: args.get("models").and_then(Value::as_object).map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()).unwrap_or_default(),
+                character: arg_str(args, "character").map(String::from),
                 ..Default::default()
             };
             for (key, items) in args.get("inputs").and_then(Value::as_object).into_iter().flatten() {
@@ -594,13 +640,18 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 current = e.recipe_run(user, &current.id).await.map_err(err)?;
             }
-            let mut jobs = Vec::new();
+            let (mut jobs, mut results) = (Vec::new(), Vec::new());
             for j in &current.jobs {
                 if let Ok(job) = e.job(user, j).await {
+                    if current.results.contains(j) {
+                        for a in &job.outputs {
+                            results.push(asset_json(ctx, a).await);
+                        }
+                    }
                     jobs.push(job_json(ctx, &job).await);
                 }
             }
-            Ok(text(&json!({ "run": current, "steps": jobs })))
+            Ok(text(&json!({ "run": current, "results": results, "steps": jobs })))
         }
         "get_job" => {
             let id = arg_str(args, "id").ok_or("id is required")?;

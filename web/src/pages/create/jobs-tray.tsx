@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { api } from "../../lib/api";
 import { clock, kindIcon, kindLabel, money } from "../../lib/format";
 import { compareBatches, comparing, dismissCompare, type CompareBatch } from "../../lib/compare";
 import { cancelJob, dismissJob, isActive, jobs, previews, retryJob } from "../../lib/jobs";
-import { cancelRun, dismissRun, jobsInRuns, runs, useRecipes } from "../../lib/recipes";
+import { cancelRun, dismissRun, jobsInRuns, resultJobs, runs, useRecipes } from "../../lib/recipes";
 import { useStore } from "../../lib/store";
 import type { Job, RecipeRun } from "../../lib/types";
 import { openViewer } from "../../lib/viewer";
@@ -144,22 +145,40 @@ function JobCard({ job, now }: { job: Job; now: number }) {
   );
 }
 
-/** One card per recipe run: the current step and its job's real progress. */
+/** One card per app run: the current step, its jobs' real progress, and how much of a set is ready. */
 function RunCard({ run, now, jobs: list }: { run: RecipeRun; now: number; jobs: Job[] }) {
   const recipes = useRecipes().data;
   const recipe = recipes?.find((item) => item.id === run.recipe_id);
-  const stepJob = list.find((job) => job.id === run.jobs[Math.min(run.step, run.jobs.length - 1)]);
-  const finalJob = list.find((job) => job.id === run.jobs[run.jobs.length - 1]);
-  const output = run.status === "succeeded" ? finalJob?.outputs?.[0] : undefined;
+  const stepIds = run.step_jobs?.[run.step] ?? [run.jobs[Math.min(run.step, run.jobs.length - 1)]].filter((id): id is string => Boolean(id));
+  // Finished jobs leave the tray store after a moment; a step job that is gone has finished.
+  const stepJobs = stepIds.map((id) => list.find((job) => job.id === id));
+  const firstId = resultJobs(run)[0];
+  const [fetched, setFetched] = useState<Job | null>(null);
+  const firstResult = list.find((job) => job.id === firstId) ?? fetched;
+  useEffect(() => {
+    if (run.status === "succeeded" && firstId && !list.some((job) => job.id === firstId)) void api.job(firstId).then(setFetched).catch(() => undefined);
+    // Only when the run finishes; later store changes do not matter.
+  }, [run.status, firstId]);
+  const output = run.status === "succeeded" ? firstResult?.outputs?.[0] : undefined;
   const label = recipe?.steps[run.step]?.label ?? `Step ${run.step + 1}`;
   const running = run.status === "running";
-  const preview = useStore(previews).get(stepJob?.id ?? "");
-  const jobProgress = stepJob?.status === "running" && typeof stepJob.progress === "number" ? stepJob.progress : null;
-  const fraction = running && jobProgress !== null ? (run.step + jobProgress) / Math.max(1, run.steps) : null;
+  const live = stepJobs.find((job) => job?.status === "running") ?? stepJobs[0];
+  const preview = useStore(previews).get(live?.id ?? "");
+  // A set counts finished items as done; a single job reports its own progress.
+  const shares = stepJobs.map((job) => (!job || !isActive(job) ? 1 : job.status === "running" && typeof job.progress === "number" ? job.progress : null));
+  const known = shares.length > 0 && shares.every((share) => share !== null);
+  const stepProgress = known ? (shares as number[]).reduce((sum, share) => sum + share, 0) / shares.length : null;
+  const fraction = running && stepProgress !== null ? (run.step + stepProgress) / Math.max(1, run.steps) : null;
+  const ready = stepJobs.filter((job) => !job || job.status === "succeeded").length;
+  const where = `step ${run.step + 1} of ${run.steps}: ${label}`;
   const status = running
-    ? `${jobProgress !== null ? `${Math.round(jobProgress * 100)}%` : clock(now - (stepJob?.started_at ?? stepJob?.created_at ?? run.updated_at))}, step ${run.step + 1} of ${run.steps}: ${label}`
+    ? stepIds.length > 1
+      ? `${ready} of ${stepIds.length} ready, ${where}`
+      : `${stepProgress !== null ? `${Math.round(stepProgress * 100)}%` : clock(now - (live?.started_at ?? live?.created_at ?? run.updated_at))}, ${where}`
     : run.status === "succeeded"
-      ? "Ready"
+      ? resultJobs(run).length > 1
+        ? `${resultJobs(run).length} ready`
+        : "Ready"
       : run.status === "failed"
         ? run.error || "Failed"
         : "Canceled";
@@ -171,7 +190,7 @@ function RunCard({ run, now, jobs: list }: { run: RecipeRun; now: number; jobs: 
         </button>
       ) : (
         <span className="job-visual" aria-hidden="true">
-          {running && preview ? <LivePreview src={preview} /> : running ? <Spinner /> : <Icon name={run.status === "failed" ? "error" : run.status === "canceled" ? "block" : "conversion_path"} />}
+          {running && preview ? <LivePreview src={preview} /> : running ? <Spinner /> : <Icon name={run.status === "failed" ? "error" : run.status === "canceled" ? "block" : "apps"} />}
         </span>
       )}
       <div className="job-text">

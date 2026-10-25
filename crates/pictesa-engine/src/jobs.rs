@@ -297,20 +297,44 @@ impl Engine {
         }
     }
 
-    /// Queues an already-validated request inside an existing batch (recipes use this through `create_generation`).
+    /// Queues several requests as one batch, for a recipe step that returns a set: the set passes
+    /// the budget check and the wallet charge together, or not at all.
+    pub(crate) async fn create_set(&self, user: &str, reqs: Vec<CreateGeneration>) -> Result<Created> {
+        let mut plans = Vec::new();
+        for req in reqs {
+            plans.push(self.plan(user, req).await?);
+        }
+        self.commit(user, plans, None).await
+    }
+
+    /// Queues an already-validated request inside an existing batch (recipes use this through `create_set`).
     async fn plan(&self, user: &str, mut req: CreateGeneration) -> Result<Planned> {
         let spec = self.model(user, &req.model).await?;
-        let raw_training=req.params.remove("_training");
-        let training=self.validate_training(user,&spec,&mut req,raw_training).await?;
-        let raw_loras=req.params.remove("loras");
-        let loras=self.validate_loras(user,&spec,&mut req.prompt,raw_loras).await?;
+        let raw_training = req.params.remove("_training");
+        let training = self.validate_training(user, &spec, &mut req, raw_training).await?;
+        let raw_loras = req.params.remove("loras");
+        let loras = self.validate_loras(user, &spec, &mut req.prompt, raw_loras).await?;
+        // A brand kit's words and colors join the prompt after the "describe it" check below, so
+        // they never stand in for the person's own words.
+        let mut brand_line = None;
         if let Some(cid) = req.character.clone().filter(|c| !c.is_empty()) {
-            let slot = spec.accepts(pictesa_core::InputRole::Reference).filter(|s| s.kind == pictesa_core::MediaKind::Image).ok_or_else(|| {
-                EngineError::invalid(format!("{} does not take reference images, so it cannot use a character.", spec.name), Some("character"))
-            })?;
-            let already = req.inputs.iter().filter(|i| i.role == pictesa_core::InputRole::Reference).count() as u32;
-            let room = slot.max.saturating_sub(already);
-            req.inputs.extend(self.character_inputs(user, &cid, room).await?);
+            let character = self.character(user, &cid).await?;
+            let slot = spec.accepts(pictesa_core::InputRole::Reference).filter(|s| s.kind == pictesa_core::MediaKind::Image);
+            let attached = match slot {
+                Some(slot) => {
+                    let already = req.inputs.iter().filter(|i| i.role == pictesa_core::InputRole::Reference).count() as u32;
+                    let images = character.reference_inputs(slot.max.saturating_sub(already));
+                    let n = images.len();
+                    req.inputs.extend(images);
+                    n
+                }
+                // A brand kit still brings its words and colors to models without image references.
+                None if character.is_brand() => 0,
+                None => return Err(EngineError::invalid(format!("{} does not take reference images, so it cannot use a character.", spec.name), Some("character"))),
+            };
+            if spec.prompt && spec.output != pictesa_core::MediaKind::Audio {
+                brand_line = character.brand_line(attached > 0);
+            }
         }
         let provider = self.inner.catalog.provider(&spec.provider).ok_or_else(|| EngineError::not_found("provider"))?;
         let info = provider.info();
@@ -344,12 +368,17 @@ impl Engine {
             }
         }
 
-        if full_prompt.chars().count() > 20_000 {
-            return Err(EngineError::invalid("The prompt is longer than 20,000 characters.", Some("prompt")));
-        }
         let needs_prompt = spec.prompt && spec.tasks.iter().any(|t| matches!(t, Task::TextToImage | Task::TextToVideo | Task::TextToAudio)) && req.inputs.is_empty();
         if needs_prompt && full_prompt.trim().is_empty() {
             return Err(EngineError::invalid("Describe what to generate.", Some("prompt")));
+        }
+        // Stored with the prompt, so the library shows what was asked; reusing it never doubles the line.
+        if let Some(line) = brand_line.filter(|line| !req.prompt.contains(line.as_str())) {
+            req.prompt = with_sentence(&req.prompt, &line);
+            full_prompt = with_sentence(&full_prompt, &line);
+        }
+        if full_prompt.chars().count() > 20_000 {
+            return Err(EngineError::invalid("The prompt is longer than 20,000 characters.", Some("prompt")));
         }
 
         let mut params = validate_params(&spec, &req.params)?;
@@ -896,7 +925,19 @@ pub fn with_preset(prompt: &str, suffix: &str) -> String {
     match (prompt.trim().is_empty(), suffix.trim().is_empty()) {
         (_, true) => prompt.to_string(),
         (true, false) => suffix.to_string(),
-        (false, false) => format!("{}, {}", prompt.trim_end().trim_end_matches(','), suffix),
+        (false, false) => format!("{}, {}", prompt.trim_end().trim_end_matches([',', '.']), suffix),
+    }
+}
+
+/// Adds a whole sentence after a prompt, with the stop the prompt needs.
+pub fn with_sentence(prompt: &str, sentence: &str) -> String {
+    let prompt = prompt.trim_end().trim_end_matches(',');
+    if prompt.is_empty() {
+        sentence.to_string()
+    } else if prompt.ends_with(['.', '!', '?']) {
+        format!("{prompt} {sentence}")
+    } else {
+        format!("{prompt}. {sentence}")
     }
 }
 

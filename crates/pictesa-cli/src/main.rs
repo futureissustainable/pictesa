@@ -174,10 +174,18 @@ enum Command {
         #[command(subcommand)]
         action: WorkflowAction,
     },
-    /// List or run recipes (multi-step pipelines).
+    /// List or run recipes (the studio's apps and multi-step pipelines).
     Recipe {
         #[command(subcommand)]
         action: RecipeAction,
+    },
+    /// Print a skill pack, a step-by-step workflow for agents: `pictesa pack ugc_ad -a product="..."`.
+    Pack {
+        /// The pack to print; leave it out to list the packs.
+        name: Option<String>,
+        /// Argument as key=value (repeatable).
+        #[arg(short = 'a', long = "arg", value_name = "KEY=VALUE")]
+        args: Vec<String>,
     },
     /// Operator tools for hosted billing.
     Billing {
@@ -210,6 +218,9 @@ enum RecipeAction {
         /// Input file as key=path (repeatable), for recipes that take photos.
         #[arg(short, long = "input", value_name = "KEY=PATH")]
         inputs: Vec<String>,
+        /// A character or brand kit (id or name) applied to every step.
+        #[arg(long)]
+        character: Option<String>,
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
@@ -558,9 +569,9 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
                         println!("{} {:<24} {}", if r.runnable { "ok" } else { " -" }, r.recipe.id, r.recipe.description);
                     }
                 }
-                RecipeAction::Run { id, values, inputs, out } => {
+                RecipeAction::Run { id, values, inputs, character, out } => {
                     engine.start_scoped();
-                    let mut req = pictesa_engine::recipes::RunRecipe { values: parse_params(&values)?, ..Default::default() };
+                    let mut req = pictesa_engine::recipes::RunRecipe { values: parse_params(&values)?, character, ..Default::default() };
                     for raw in &inputs {
                         let (key, path) = raw.split_once('=').ok_or_else(|| anyhow!("input {raw} must look like key=path"))?;
                         let bytes = tokio::fs::read(path).await.with_context(|| format!("reading {path}"))?;
@@ -587,6 +598,23 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
                     report(&engine, jobs, out, false).await?;
                 }
             }
+            Ok(())
+        }
+        Command::Pack { name, args } => {
+            let engine = open_engine(&cli, Mode::Local, None).await?;
+            let Some(name) = name else {
+                for p in engine.packs() {
+                    println!("{:<16} {}", p.name, p.description);
+                }
+                return Ok(());
+            };
+            let mut values = Map::new();
+            for raw in &args {
+                let (k, v) = raw.split_once('=').ok_or_else(|| anyhow!("argument {raw} must look like key=value"))?;
+                values.insert(k.trim().to_string(), json!(v));
+            }
+            let (_, text) = engine.pack_prompt(LOCAL_USER, &name, &values).await?;
+            println!("{text}\n\nWith the CLI: list_recipes is `pictesa recipe list`, run_recipe is `pictesa recipe run <id> -v key=value -i key=path --character <id>`, generate is `pictesa generate`, list_models is `pictesa models`.");
             Ok(())
         }
         Command::Billing { action: BillingAction::Grant { email, usd, operation } } => {

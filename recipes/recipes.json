@@ -1,9 +1,769 @@
 [
  {
+  "id": "photo/shots",
+  "name": "Shots",
+  "output": "image",
+  "description": "Nine different shots of your scene from one photo.",
+  "picture": "shots",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [],
+  "steps": [
+   {
+    "id": "shots",
+    "label": "Shoot nine shots",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "Re-shoot this exact scene as {{each}}. Keep the same people, objects, clothing, setting, colors, light and style. Only the camera position and framing change.",
+    "each": [
+     "a wide establishing shot that shows the whole setting around the subject",
+     "a full shot that frames the subject from head to toe",
+     "a medium shot from the waist up",
+     "a medium close-up from the chest up",
+     "a close-up of the face or the main detail",
+     "an extreme close-up of one small telling detail",
+     "an over-the-shoulder shot looking past the subject",
+     "a low-angle shot looking up at the subject",
+     "a high-angle shot looking down from above"
+    ],
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:photo"
+     }
+    ],
+    "needs": "an image editing model, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "photo/angles",
+  "name": "Angles",
+  "output": "image",
+  "description": "See your subject from new camera angles.",
+  "picture": "angles",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [
+   {
+    "key": "angles",
+    "label": "Angles",
+    "type": "multi",
+    "options": [
+     "three-quarter view from the left",
+     "three-quarter view from the right",
+     "side view from the left",
+     "side view from the right",
+     "view from behind",
+     "low angle looking up",
+     "high angle looking down",
+     "top-down view from directly above"
+    ],
+    "default": [
+     "three-quarter view from the left",
+     "side view from the right",
+     "view from behind",
+     "low angle looking up"
+    ],
+    "required": true,
+    "help": "Each angle makes one image."
+   }
+  ],
+  "steps": [
+   {
+    "id": "angles",
+    "label": "Turn the camera",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "Show exactly the same subject from a new camera angle: {{each}}. Keep its identity, shape, proportions, materials, colors and the light the same. Only the camera position changes.",
+    "each": [
+     "{{angles}}"
+    ],
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:photo"
+     }
+    ],
+    "needs": "an image editing model, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "photo/zooms",
+  "name": "Zooms",
+  "output": "image",
+  "description": "Close, medium and wide versions of one photo.",
+  "picture": "zooms",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [],
+  "steps": [
+   {
+    "id": "zooms",
+    "label": "Reframe",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "Reframe this exact scene as {{each}}. Keep every person, object, material, color and the light the same. Where the new frame is wider than the photo, continue the scene naturally beyond its edges.",
+    "each": [
+     "a close-up that fills the frame with the main subject",
+     "a medium shot that shows the subject and some of its surroundings",
+     "a wide shot that pulls far back to show the whole place around the subject"
+    ],
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:photo"
+     }
+    ],
+    "needs": "an image editing model, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "photo/relight",
+  "name": "Relight",
+  "output": "image",
+  "description": "Change where the light comes from and its mood.",
+  "picture": "relight",
+  "open": "/edit?tool=relight",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [
+   {
+    "key": "light",
+    "label": "Describe the light",
+    "type": "text",
+    "help": "Optional. For example: warm window light, soft shadows."
+   },
+   {
+    "key": "direction",
+    "label": "Light from",
+    "type": "enum",
+    "options": [
+     "top left",
+     "top",
+     "top right",
+     "left",
+     "front",
+     "right",
+     "bottom left",
+     "bottom",
+     "bottom right"
+    ],
+    "default": "left"
+   },
+   {
+    "key": "mood",
+    "label": "Mood",
+    "type": "enum",
+    "options": [
+     "soft daylight",
+     "golden hour",
+     "studio softbox",
+     "overcast",
+     "neon night",
+     "candlelight",
+     "dramatic contrast",
+     "moonlight"
+    ],
+    "default": "golden hour"
+   }
+  ],
+  "steps": [
+   {
+    "id": "relight",
+    "label": "Relight",
+    "output": "image",
+    "models": [
+     "fal:fal-ai/iclight-v2",
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "Relight this photo with {{#light}}{{light}}, {{/light}}{{mood}}, the main light coming from the {{direction}}. Keep the subject, composition and every detail the same.",
+    "params": {
+     "initial_latent": "{{direction}}"
+    },
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:photo"
+     }
+    ],
+    "needs": "a relight model such as IC-Light on fal, or an image editing model such as Nano Banana, GPT Image or FLUX Klein Edit"
+   }
+  ]
+ },
+ {
+  "id": "photo/face-swap",
+  "name": "Face swap",
+  "output": "image",
+  "description": "Put the face from one photo on the person in another.",
+  "picture": "face-swap",
+  "inputs": [
+   {
+    "key": "face",
+    "label": "Face",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   },
+   {
+    "key": "target",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [],
+  "steps": [
+   {
+    "id": "swap",
+    "label": "Swap the face",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "The first image is the target photo and the second image shows a face. Give the person in the target photo the face from the second image, with the same facial features, skin tone and identity. Keep the target photo's pose, head angle, expression, hair, body, clothing, light, background and framing as they are, so it looks like a real photo.",
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:target"
+     },
+     {
+      "role": "reference",
+      "from": "input:face"
+     }
+    ],
+    "needs": "an image editing model that takes two or more images, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "product/placement",
+  "name": "Product placement",
+  "output": "image",
+  "description": "Place your product into a scene photo or a scene you describe.",
+  "picture": "placement",
+  "inputs": [
+   {
+    "key": "product",
+    "label": "Product",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   },
+   {
+    "key": "scene",
+    "label": "Scene",
+    "kind": "image",
+    "max": 1
+   }
+  ],
+  "fields": [
+   {
+    "key": "where",
+    "label": "Scene description",
+    "type": "text",
+    "multiline": true,
+    "required_without": "scene",
+    "help": "Describe the scene, or add a scene photo."
+   }
+  ],
+  "steps": [
+   {
+    "id": "place",
+    "label": "Place the product",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "Place the exact product from the first image {{#scene}}into the scene from the second image{{/scene}}{{^scene}}into a new photo{{/scene}}{{#where}}: {{where}}{{/where}}. Keep the product's shape, proportions, colors, materials, label and logo unchanged. Match the light, shadows, reflections and perspective so it looks photographed there.",
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:product"
+     },
+     {
+      "role": "reference",
+      "from": "input:scene"
+     }
+    ],
+    "needs": "an image editing model that takes two or more images, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "photo/color-grade",
+  "name": "Color grade",
+  "output": "image",
+  "description": "Give a photo a film look, teal and orange or bleach bypass.",
+  "picture": "grade",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [
+   {
+    "key": "look",
+    "label": "Look",
+    "type": "preset",
+    "category": "grade",
+    "default": "grade/teal-orange",
+    "required": true
+   }
+  ],
+  "steps": [
+   {
+    "id": "grade",
+    "label": "Grade",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "Color grade this photo and keep every person, object, detail and the composition exactly the same. Change only color, contrast and tone",
+    "preset": "{{look}}",
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:photo"
+     }
+    ],
+    "needs": "an image editing model, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "photo/upscale",
+  "name": "Upscale",
+  "output": "image",
+  "description": "Enlarge a photo with added detail for print or 4K screens.",
+  "picture": "upscale",
+  "inputs": [
+   {
+    "key": "photo",
+    "label": "Photo",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [],
+  "steps": [
+   {
+    "id": "upscale",
+    "label": "Upscale",
+    "output": "image",
+    "models": [
+     "fal:topaz/upscale/image/generative",
+     "fal:fal-ai/clarity-upscaler",
+     "fal:fal-ai/seedvr/upscale/image",
+     "comfyui:esrgan-upscale"
+    ],
+    "prompt": "",
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:photo"
+     }
+    ],
+    "needs": "an upscaler, such as Topaz, Clarity or SeedVR on fal, or ESRGAN in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "ads/ugc",
+  "name": "UGC ad",
+  "output": "video",
+  "description": "A handheld phone video of a person showing your product.",
+  "picture": "ugc",
+  "character": true,
+  "inputs": [
+   {
+    "key": "product",
+    "label": "Product",
+    "kind": "image",
+    "max": 2,
+    "required": true
+   },
+   {
+    "key": "presenter",
+    "label": "Presenter",
+    "kind": "image",
+    "max": 3
+   }
+  ],
+  "fields": [
+   {
+    "key": "line",
+    "label": "What they say",
+    "type": "text",
+    "multiline": true,
+    "required": true,
+    "help": "One or two short sentences, in a real customer's words."
+   },
+   {
+    "key": "setting",
+    "label": "Setting",
+    "type": "enum",
+    "options": [
+     "a bright kitchen",
+     "a living room sofa",
+     "a bathroom mirror",
+     "a car front seat",
+     "a sunny street",
+     "a home office desk",
+     "a gym"
+    ],
+    "default": "a bright kitchen"
+   },
+   {
+    "key": "duration",
+    "label": "Length",
+    "type": "enum",
+    "options": [
+     "5",
+     "10"
+    ],
+    "default": "5"
+   }
+  ],
+  "steps": [
+   {
+    "id": "still",
+    "label": "Snap the selfie",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1/edit",
+     "fal:openai/gpt-image-2.5/sunburst/edit",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/edit",
+     "fal:alibaba/qwen-image-3/edit",
+     "fal:blackforestlabs/flux-3/klein/edit-image",
+     "comfyui:flux3-klein-edit",
+     "mock:image"
+    ],
+    "prompt": "A casual vertical smartphone selfie photo of {{#presenter}}the same person as in the presenter photos{{/presenter}}{{^presenter}}a friendly everyday person{{/presenter}} in {{setting}}, holding the exact product from the product photo up near the face. Natural daylight, real skin texture, unposed handheld framing, true colors. Keep the product's shape, label and colors exactly.",
+    "params": {
+     "aspect_ratio": "9:16"
+    },
+    "inputs": [
+     {
+      "role": "reference",
+      "from": "input:product"
+     },
+     {
+      "role": "reference",
+      "from": "input:presenter"
+     }
+    ],
+    "needs": "an image editing model, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
+   },
+   {
+    "id": "clip",
+    "label": "Film the ad",
+    "output": "video",
+    "models": [
+     "fal:kling/v4/image-to-video",
+     "fal:lightricks/ltx-2.5/image-to-video/pro",
+     "fal:alibaba/wan-3.0-prime/image-to-video",
+     "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
+     "openai:sora-2",
+     "comfyui:ltx25-i2v",
+     "comfyui:wan22-i2v",
+     "mock:video"
+    ],
+    "prompt": "The person talks to the phone camera with natural gestures and shows the product. They say: \"{{line}}\". Handheld selfie video with a little natural camera shake.",
+    "params": {
+     "duration": "{{duration}}",
+     "aspect_ratio": "9:16",
+     "generate_audio": true
+    },
+    "inputs": [
+     {
+      "role": "start_frame",
+      "from": "step:still"
+     }
+    ],
+    "needs": "an image-to-video model, such as Kling, LTX or Wan on fal, Sora with an OpenAI key, or LTX or Wan in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "ads/hook-variants",
+  "name": "Hook variants",
+  "output": "video",
+  "description": "Several openings for the same video, one clip each.",
+  "picture": "hooks",
+  "character": true,
+  "inputs": [
+   {
+    "key": "frame",
+    "label": "Opening frame",
+    "kind": "image",
+    "max": 1,
+    "required": true
+   }
+  ],
+  "fields": [
+   {
+    "key": "hooks",
+    "label": "Openings",
+    "type": "text",
+    "multiline": true,
+    "required": true,
+    "help": "One opening per line: what happens on screen in the first seconds."
+   },
+   {
+    "key": "duration",
+    "label": "Length",
+    "type": "enum",
+    "options": [
+     "5",
+     "10"
+    ],
+    "default": "5"
+   }
+  ],
+  "steps": [
+   {
+    "id": "hooks",
+    "label": "Film each opening",
+    "output": "video",
+    "models": [
+     "fal:kling/v4/image-to-video",
+     "fal:lightricks/ltx-2.5/image-to-video/pro",
+     "fal:alibaba/wan-3.0-prime/image-to-video",
+     "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
+     "openai:sora-2",
+     "comfyui:ltx25-i2v",
+     "comfyui:wan22-i2v",
+     "mock:video"
+    ],
+    "prompt": "{{each}}, the fast and surprising opening of a short social video",
+    "each": [
+     "{{hooks}}"
+    ],
+    "params": {
+     "duration": "{{duration}}"
+    },
+    "inputs": [
+     {
+      "role": "start_frame",
+      "from": "input:frame"
+     }
+    ],
+    "needs": "an image-to-video model, such as Kling, LTX or Wan on fal, Sora with an OpenAI key, or LTX or Wan in ComfyUI"
+   }
+  ]
+ },
+ {
+  "id": "video/explainer",
+  "name": "Explainer",
+  "output": "video",
+  "description": "Turn a list of scenes into stills, then into clips.",
+  "picture": "explainer",
+  "character": true,
+  "inputs": [],
+  "fields": [
+   {
+    "key": "scenes",
+    "label": "Scenes",
+    "type": "text",
+    "multiline": true,
+    "required": true,
+    "help": "One scene per line, in order. Each line becomes a still and a clip."
+   },
+   {
+    "key": "style",
+    "label": "Style",
+    "type": "preset",
+    "category": "style",
+    "default": "style/editorial"
+   },
+   {
+    "key": "aspect_ratio",
+    "label": "Shape",
+    "type": "enum",
+    "options": [
+     "16:9",
+     "9:16",
+     "1:1"
+    ],
+    "default": "16:9"
+   },
+   {
+    "key": "duration",
+    "label": "Length",
+    "type": "enum",
+    "options": [
+     "5",
+     "10"
+    ],
+    "default": "5"
+   }
+  ],
+  "steps": [
+   {
+    "id": "stills",
+    "label": "Draw each scene",
+    "output": "image",
+    "models": [
+     "fal:google/nano-banana-2.1",
+     "fal:openai/gpt-image-2.5/sunburst/text-to-image",
+     "google:gemini-3.1-flash-image",
+     "openai:gpt-image-2.5-sunburst",
+     "fal:bytedance/seedream/v5/flash/text-to-image",
+     "fal:blackforestlabs/flux-3/klein/text-to-image",
+     "comfyui:flux3-klein-t2i",
+     "comfyui:qwen-image-2512",
+     "mock:image"
+    ],
+    "prompt": "{{each}}, one clear scene from an explainer video, simple composition with one main subject",
+    "preset": "{{style}}",
+    "each": [
+     "{{scenes}}"
+    ],
+    "params": {
+     "aspect_ratio": "{{aspect_ratio}}"
+    },
+    "needs": "a text-to-image model, such as Nano Banana or Seedream on fal, Gemini or OpenAI with your own key, or FLUX Klein in ComfyUI"
+   },
+   {
+    "id": "clips",
+    "label": "Animate each scene",
+    "output": "video",
+    "models": [
+     "fal:kling/v4/image-to-video",
+     "fal:lightricks/ltx-2.5/image-to-video/pro",
+     "fal:alibaba/wan-3.0-prime/image-to-video",
+     "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
+     "openai:sora-2",
+     "comfyui:ltx25-i2v",
+     "comfyui:wan22-i2v",
+     "mock:video"
+    ],
+    "prompt": "{{each}}, gentle camera move, smooth natural motion",
+    "each": [
+     "{{scenes}}"
+    ],
+    "params": {
+     "duration": "{{duration}}",
+     "aspect_ratio": "{{aspect_ratio}}"
+    },
+    "inputs": [
+     {
+      "role": "start_frame",
+      "from": "step:stills"
+     }
+    ],
+    "needs": "an image-to-video model, such as Kling, LTX or Wan on fal, Sora with an OpenAI key, or LTX or Wan in ComfyUI"
+   }
+  ]
+ },
+ {
   "id": "cinema/shot",
   "name": "Cinema shot",
   "output": "video",
   "description": "Direct a shot like on a film set: Pictesa composes the still with your lens and light, then animates it with your camera move.",
+  "picture": "cinema",
+  "character": true,
   "fields": [
    {
     "key": "scene",
@@ -76,7 +836,8 @@
     "prompt": "{{scene}}, cinematic film still, {{lens}} lens, {{light}}, shallow depth of field, natural film grain",
     "params": {
      "aspect_ratio": "16:9"
-    }
+    },
+    "needs": "a text-to-image model, such as Nano Banana or Seedream on fal, Gemini or OpenAI with your own key, or FLUX Klein in ComfyUI"
    },
    {
     "id": "shot",
@@ -102,7 +863,8 @@
       "role": "start_frame",
       "from": "step:still"
      }
-    ]
+    ],
+    "needs": "an image-to-video model, such as Kling, LTX or Wan on fal, Sora with an OpenAI key, or LTX or Wan in ComfyUI"
    }
   ]
  },
@@ -111,6 +873,7 @@
   "name": "Character shot",
   "output": "video",
   "description": "Put your own character or product into a directed shot. Your reference keeps the look consistent; the camera move brings it to life.",
+  "picture": "character-shot",
   "inputs": [
    {
     "key": "character",
@@ -197,7 +960,8 @@
       "role": "reference",
       "from": "input:character"
      }
-    ]
+    ],
+    "needs": "an image editing model, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
    },
    {
     "id": "shot",
@@ -223,7 +987,8 @@
       "role": "start_frame",
       "from": "step:still"
      }
-    ]
+    ],
+    "needs": "an image-to-video model, such as Kling, LTX or Wan on fal, Sora with an OpenAI key, or LTX or Wan in ComfyUI"
    }
   ]
  },
@@ -232,6 +997,7 @@
   "name": "Product hero",
   "output": "video",
   "description": "Turn a plain product photo into a studio hero shot, then a slow orbit for ads.",
+  "picture": "product-hero",
   "inputs": [
    {
     "key": "product",
@@ -296,7 +1062,8 @@
       "role": "reference",
       "from": "input:product"
      }
-    ]
+    ],
+    "needs": "an image editing model, such as Nano Banana or GPT Image on fal, Gemini or OpenAI with your own key, or FLUX Klein Edit in ComfyUI"
    },
    {
     "id": "shot",
@@ -321,7 +1088,8 @@
       "role": "start_frame",
       "from": "step:still"
      }
-    ]
+    ],
+    "needs": "an image-to-video model, such as Kling, LTX or Wan on fal, Sora with an OpenAI key, or LTX or Wan in ComfyUI"
    }
   ]
  },
@@ -330,6 +1098,7 @@
   "name": "Animate a photo",
   "output": "video",
   "description": "Bring any photo to life with a camera move and a line about what should happen.",
+  "picture": "animate",
   "inputs": [
    {
     "key": "photo",
@@ -388,99 +1157,8 @@
       "role": "start_frame",
       "from": "input:photo"
      }
-    ]
-   }
-  ]
- },
- {
-  "id": "photo/new-angle",
-  "name": "New angle",
-  "output": "image",
-  "description": "Re-shoot a photo from another camera position while keeping everything in it the same.",
-  "inputs": [
-   {
-    "key": "photo",
-    "label": "Photo",
-    "kind": "image",
-    "max": 1,
-    "required": true
-   }
-  ],
-  "fields": [
-   {
-    "key": "angle",
-    "label": "New camera position",
-    "type": "enum",
-    "options": [
-     "a low angle",
-     "a high angle",
-     "the left side",
-     "the right side",
-     "behind the subject",
-     "a bird's-eye view",
-     "a close-up",
-     "a wide establishing view"
     ],
-    "default": "a low angle"
-   }
-  ],
-  "steps": [
-   {
-    "id": "angle",
-    "label": "Re-shoot",
-    "output": "image",
-    "models": [
-     "fal:google/nano-banana-2.1/edit",
-     "fal:openai/gpt-image-2.5/sunburst/edit",
-     "fal:bytedance/seedream/v5/flash/edit",
-     "fal:alibaba/qwen-image-3/edit",
-     "fal:blackforestlabs/flux-3/klein/edit-image",
-     "comfyui:flux3-klein-edit",
-     "mock:image"
-    ],
-    "prompt": "Show exactly the same scene from {{angle}}. Keep every person, object, material, color and the lighting identical; only the camera position changes.",
-    "inputs": [
-     {
-      "role": "reference",
-      "from": "input:photo"
-     }
-    ]
-   }
-  ]
- },
- {
-  "id": "photo/upscale",
-  "name": "Upscale",
-  "output": "image",
-  "description": "Enlarge a photo with added detail for print or 4K screens.",
-  "inputs": [
-   {
-    "key": "photo",
-    "label": "Photo",
-    "kind": "image",
-    "max": 1,
-    "required": true
-   }
-  ],
-  "fields": [],
-  "steps": [
-   {
-    "id": "upscale",
-    "label": "Upscale",
-    "output": "image",
-    "models": [
-     "fal:topaz/upscale/image/generative",
-     "fal:fal-ai/clarity-upscaler",
-     "fal:fal-ai/seedvr/upscale/image",
-     "comfyui:esrgan-upscale"
-    ],
-    "prompt": "",
-    "inputs": [
-     {
-      "role": "reference",
-      "from": "input:photo"
-     }
-    ]
+    "needs": "an image-to-video model, such as Kling, LTX or Wan on fal, Sora with an OpenAI key, or LTX or Wan in ComfyUI"
    }
   ]
  }
