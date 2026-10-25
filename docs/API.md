@@ -161,7 +161,7 @@ A generation with `preset` appends `prompt_suffix` to the prompt and merges `par
 ## MCP
 
 `POST /mcp` speaks the Model Context Protocol (Streamable HTTP, JSON responses). `pictesa mcp` speaks it over stdio.
-Tools: `list_models`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
+Tools: `list_collections`, `add_to_collection`, `list_models`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
 
 ## Errors
 
@@ -232,3 +232,38 @@ Named sets of reference images (a person, a product, a style) that any run can a
 
 ### Live previews
 Backends that stream in-progress images (ComfyUI) produce `event: preview` with `{ job_id, version, url }` while a job runs. Pictesa asks ComfyUI for sampler previews on every prompt, so a stock ComfyUI needs no `--preview-method` flag. `GET /api/generations/{id}/preview` returns the latest preview image (JPEG or PNG, not cached); it answers 404 when there is none. Previews disappear when the job ends.
+
+### Collections, tags and bulk library actions
+
+All routes use the authenticated user's library. Collections can contain the same asset in several groups. Deleting a collection keeps its assets. Changes emit a user-scoped `library` event so clients can reload memberships and autocomplete. Names contain 1 to 100 characters; tags contain 1 to 60 characters and match without case sensitivity.
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| GET | `/api/collections` | | `{ collections: [{ id, name, created_at, asset_count }] }` |
+| POST | `/api/collections` | `{ name }` | 201 collection |
+| PATCH | `/api/collections/{id}` | `{ name }` | 204 |
+| DELETE | `/api/collections/{id}` | | 204 |
+| POST | `/api/collections/{id}/assets` | `{ asset_ids: [...] }` | 204 (idempotent add) |
+| DELETE | `/api/collections/{id}/assets` | `{ asset_ids: [...] }` | 204 (remove membership) |
+| GET | `/api/tags` | | `{ tags: [string] }` for autocomplete |
+| GET | `/api/assets/{id}/tags` | | `{ tags: [string] }` |
+| POST | `/api/tags` | `{ asset_ids: [...], tag, remove?: false }` | 204 (add or remove a tag) |
+| POST | `/api/assets/bulk` | `{ asset_ids: [...], action: "favorite"\|"unfavorite"\|"trash" }` | 204 |
+| POST | `/api/assets/download` | `{ asset_ids: [...] }` | streamed `application/zip` attachment |
+
+Bulk operations accept 1 to 100 IDs and validate every owner before changing anything. ZIP downloads accept up to 100 assets and 1 GiB of original media, stored uncompressed. An empty selection, a trashed asset or an exceeded limit gives a 400 with a readable error before streaming starts; another user's or a missing asset gives 404. Filenames use the original name or prompt, sanitized and suffixed with the asset ID. Duplicate IDs are downloaded once.
+
+`GET /api/assets` also takes `collection=<id>`, `tag=<label>`, `provider=<id>`, `cost_min=<USD>` and `cost_max=<USD>`. Filters combine with existing parameters and pagination. Cost endpoints are inclusive, finite and nonnegative. Cost is the run's known charge or estimate, so assets from the same run have the same cost. Unknown costs and assets without runs do not match a cost range. Provider filtering uses the recorded run provider. Filters appear in the library URL.
+
+### Spend and budgets
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| GET | `/api/spend` | | spend view below |
+| PUT | `/api/spend/budgets` | `{ daily_usd: number\|null, monthly_usd: number\|null }` | updated spend view |
+
+The spend view contains `today_usd`, `seven_days_usd`, `thirty_days_usd`, `days: [{ name: "YYYY-MM-DD", usd }]` (30 calendar days including today), `models` and `providers` (30-day groups with `{ name, usd }`), `daily` and `monthly` (`{ cap_usd, spent_usd, remaining_usd }`), `unknown_runs`, `estimated_runs` and `timezone: "UTC"`. The 7-day and 30-day totals include today. Calendar caps reset at midnight UTC or the start of the calendar month UTC.
+
+Spend is isolated per hosted user and uses the single global local user otherwise. Queued runs reserve their estimated cost. Wallet-funded runs record the actual wallet charge including markup. Direct-key runs keep the estimate because provider responses currently do not report final charges. Local backends count as zero. Confirmed unbilled failures and cancellations release spend, including wallet refunds; uncertain upstream submissions keep their reservation. Deleting a job does not erase spend. Unpriced runs are counted in `unknown_runs` and excluded from totals.
+
+Caps are optional, from $0 to $1,000,000; null removes a cap and zero blocks paid runs. Both caps are replaced by PUT. A paid batch that exceeds either remaining cap is rejected atomically before queuing or provider submission, with `field: "budget"` and the cap name, amount and remainder. The exact boundary is allowed. A paid model without a cost estimate is refused while a cap is active. Amounts are stored in integer micro-dollars.

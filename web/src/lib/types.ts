@@ -331,7 +331,35 @@ export interface Billing {
   ledger: LedgerEntry[];
 }
 
+export interface Collection {
+  id: string;
+  name: string;
+  created_at: number;
+  asset_count: number;
+}
+
+export interface SpendGroup { name: string; usd: number }
+export interface BudgetProgress { cap_usd: number | null; spent_usd: number; remaining_usd: number | null }
+export interface Spend {
+  today_usd: number;
+  seven_days_usd: number;
+  thirty_days_usd: number;
+  days: SpendGroup[];
+  models: SpendGroup[];
+  providers: SpendGroup[];
+  daily: BudgetProgress;
+  monthly: BudgetProgress;
+  unknown_runs: number;
+  estimated_runs: number;
+  timezone: string;
+}
+
 export interface AssetQuery {
+  collection?: string;
+  tag?: string;
+  provider?: string;
+  cost_min?: number;
+  cost_max?: number;
   kind?: MediaKind;
   favorite?: boolean;
   q?: string;

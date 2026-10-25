@@ -71,6 +71,18 @@ fn tools() -> Value {
     });
     json!([
         {
+            "name": "list_collections", "description": "List your named library collections.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "add_to_collection", "description": "Add library assets to one of your collections.",
+            "inputSchema": { "type": "object", "properties": {
+                "collection_id": { "type": "string" },
+                "asset_ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 100 }
+            }, "required": ["collection_id", "asset_ids"] }
+        },
+        {
             "name": "list_models",
             "title": "List models",
             "description": "List image and video models. By default only models whose provider is set up.",
@@ -281,6 +293,13 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
     let e = &ctx.engine;
     let user = ctx.user_id.as_str();
     match name {
+        "list_collections" => Ok(text(&json!({ "collections": e.collections(user).await.map_err(err)? }))),
+        "add_to_collection" => {
+            let collection = arg_str(args, "collection_id").ok_or("collection_id is required")?;
+            let ids: Vec<String> = serde_json::from_value(args.get("asset_ids").cloned().unwrap_or(Value::Null)).map_err(|_| "asset_ids must be an array of ids")?;
+            e.collection_assets(user, collection, &ids, false).await.map_err(err)?;
+            Ok(text(&json!({ "ok": true })))
+        },
         "list_models" => {
             let filter = ModelFilter {
                 output: arg_str(args, "output").map(String::from),

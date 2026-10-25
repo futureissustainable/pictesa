@@ -3,6 +3,8 @@
 
 pub mod mcp;
 mod web;
+mod library;
+mod zip;
 
 use std::{convert::Infallible, net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -222,6 +224,15 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/generations/{id}/retry", post(retry_job))
         .route("/generations/{id}/preview", get(job_preview))
         .route("/assets", get(list_assets).post(upload_assets).layer(DefaultBodyLimit::max(MAX_UPLOAD)))
+        .route("/collections", get(library::collections).post(library::create_collection))
+        .route("/collections/{id}", axum::routing::patch(library::rename_collection).delete(library::delete_collection))
+        .route("/collections/{id}/assets", post(library::add_to_collection).delete(library::remove_from_collection))
+        .route("/tags", get(library::tags).post(library::tag_assets))
+        .route("/assets/{id}/tags", get(library::asset_tags))
+        .route("/assets/bulk", post(library::bulk))
+        .route("/assets/download", post(library::download))
+        .route("/spend", get(library::spend))
+        .route("/spend/budgets", put(library::budgets))
         .route("/assets/import", post(import_asset))
         .route("/assets/{id}", get(get_asset).patch(patch_asset).delete(delete_asset))
         .route("/assets/{id}/restore", post(restore_asset))

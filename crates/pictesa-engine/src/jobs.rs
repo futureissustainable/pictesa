@@ -271,8 +271,8 @@ impl Engine {
         while remaining > 0 {
             let n = remaining.min(spec.max_outputs.max(1));
             remaining -= n;
-            let cost = estimate_cost(&spec, &params, n);
-            let charge = if platform {
+            let cost = if info.kind == pictesa_core::ProviderKind::Local && !platform { Some(0.0) } else { estimate_cost(&spec, &params, n) };
+            let charge = if platform && cost != Some(0.0) {
                 let usd = cost.ok_or_else(|| EngineError::invalid(format!("{} has no fixed price, so it can only run with your own {} key.", spec.name, info.name), Some("model")))?;
                 crate::billing::to_micros(usd * markup).max(1)
             } else {
@@ -295,9 +295,13 @@ impl Engine {
     async fn commit(&self, user: &str, plans: Vec<Planned>, batch: Option<String>) -> Result<Created> {
         let total: i64 = plans.iter().flat_map(|p| p.runs.iter().map(|r| r.2)).sum();
         let batch_id = batch.unwrap_or_else(crate::new_id);
-        self.inner.owned_batches.lock().unwrap().insert(batch_id.clone());
+        let mut tx = self.inner.db.begin_with("BEGIN IMMEDIATE").await?;
         let now = now_ms();
-        let mut tx = self.inner.db.begin().await?;
+        let budget_total: i64 = plans.iter().flat_map(|p| p.runs.iter().map(|(_, cost, charge)| {
+            if *charge > 0 { *charge } else { cost.map(crate::billing::to_micros).unwrap_or(0) }
+        })).sum();
+        let unknown = plans.iter().any(|p| p.runs.iter().any(|(_, cost, _)| cost.is_none()));
+        if budget_total > 0 || unknown { self.check_budget(&mut tx, user, budget_total, unknown, now).await?; }
         if total > 0 {
             let wallet: Option<(i64, bool)> = sqlx::query_as("SELECT balance_micros, locked FROM wallets WHERE user_id = ?").bind(user).fetch_optional(&mut *tx).await?;
             let (balance, locked) = wallet.unwrap_or((0, false));
@@ -356,10 +360,16 @@ impl Engine {
                 .bind(now)
                 .execute(&mut *tx)
                 .await?;
+                sqlx::query("INSERT INTO spend_runs (job_id, user_id, model, provider, estimated_micros, actual_micros, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                    .bind(&id).bind(user).bind(&plan.spec.id).bind(&plan.spec.provider)
+                    .bind(cost.map(crate::billing::to_micros))
+                    .bind(if *charge > 0 { Some(*charge) } else if *cost == Some(0.0) { Some(0) } else { None })
+                    .bind(now).execute(&mut *tx).await?;
                 ids.push(id);
             }
         }
         tx.commit().await?;
+        self.inner.owned_batches.lock().unwrap().insert(batch_id.clone());
         let mut jobs = Vec::new();
         for id in ids {
             let job = store::job_row(&self.inner.db, user, &id).await?.to_job(Vec::new());
@@ -581,13 +591,24 @@ impl Engine {
     }
 
     pub async fn assets(&self, user: &str, f: &AssetFilter) -> Result<(Vec<Asset>, Option<String>)> {
+        for cost in [f.cost_min, f.cost_max].into_iter().flatten() {
+            if !cost.is_finite() || cost < 0.0 { return Err(EngineError::invalid("Costs must be finite and nonnegative.", Some("cost_min"))); }
+        }
+        if matches!((f.cost_min, f.cost_max), (Some(min), Some(max)) if min > max) {
+            return Err(EngineError::invalid("Minimum cost must not exceed maximum cost.", Some("cost_min")));
+        }
         let limit = f.limit.unwrap_or(60).clamp(1, 500) as i64;
         let trash = f.trash.unwrap_or(false);
         let fts = f.q.as_deref().and_then(store::fts_query);
         let rows = sqlx::query_as::<_, AssetRow>(
-            "SELECT a.* FROM assets a
+            "SELECT a.* FROM assets a LEFT JOIN spend_runs s ON s.job_id = a.job_id AND s.user_id = a.user_id
              WHERE a.user_id = ?
                AND ((? AND a.deleted_at IS NOT NULL) OR (NOT ? AND a.deleted_at IS NULL))
+               AND (? IS NULL OR EXISTS (SELECT 1 FROM collection_assets ca JOIN collections c ON c.id = ca.collection_id WHERE ca.asset_id = a.id AND c.id = ? AND c.user_id = a.user_id))
+               AND (? IS NULL OR EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id AND t.tag = ?))
+               AND (? IS NULL OR s.provider = ?)
+               AND (? IS NULL OR COALESCE(s.actual_micros, s.estimated_micros) >= ? * 1000000)
+               AND (? IS NULL OR COALESCE(s.actual_micros, s.estimated_micros) <= ? * 1000000)
                AND (? IS NULL OR a.kind = ?)
                AND (? IS NULL OR a.favorite = ?)
                AND (? IS NULL OR a.model = ?)
@@ -599,6 +620,11 @@ impl Engine {
         .bind(user)
         .bind(trash)
         .bind(trash)
+        .bind(&f.collection).bind(&f.collection)
+        .bind(&f.tag).bind(&f.tag)
+        .bind(&f.provider).bind(&f.provider)
+        .bind(f.cost_min).bind(f.cost_min)
+        .bind(f.cost_max).bind(f.cost_max)
         .bind(&f.kind)
         .bind(&f.kind)
         .bind(f.favorite)

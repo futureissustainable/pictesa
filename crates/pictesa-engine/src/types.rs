@@ -140,6 +140,11 @@ pub struct JobFilter {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AssetFilter {
+    pub collection: Option<String>,
+    pub tag: Option<String>,
+    pub provider: Option<String>,
+    pub cost_min: Option<f64>,
+    pub cost_max: Option<f64>,
     pub kind: Option<String>,
     pub favorite: Option<bool>,
     pub q: Option<String>,
