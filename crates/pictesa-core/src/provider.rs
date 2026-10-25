@@ -129,6 +129,8 @@ impl RemoteHandle {
 /// A finished output. URLs are downloaded by the engine with the given headers.
 #[derive(Debug, Clone)]
 pub enum Output {
+    /// Local output streamed into storage. Its disposable parent directory is removed after saving.
+    File { path: std::path::PathBuf, mime: String, cleanup_dir: std::path::PathBuf },
     Url { url: String, headers: Vec<(String, String)> },
     Bytes { data: Vec<u8>, mime: String },
 }

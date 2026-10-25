@@ -38,7 +38,7 @@ export function unitMoney(usd: number): string {
   return `$${parseFloat(usd.toFixed(4))}`;
 }
 
-const units: Record<string, string> = { per_image: "image", per_second: "s", per_video: "video", per_megapixel: "MP" };
+const units: Record<string, string> = { per_run: "training", per_step: "step", per_image: "image", per_second: "s", per_video: "video", per_megapixel: "MP" };
 
 /** Short price hint for the model picker, or null when the provider publishes none. */
 export function priceHint(pricing: Pricing | null | undefined): string | null {
@@ -69,6 +69,8 @@ export function estimateCost(model: ModelSpec, values: ParamValues, count: numbe
   const pricing = model.meta?.batch === true && values.speed === "batch" ? { ...standard, usd: standard.usd * 0.5 } : standard;
   const unitText = priceHint(pricing) ?? "";
   switch (pricing.unit) {
+    case "per_run": return { kind: "total", usd: pricing.usd };
+    case "per_step": return { kind: "unit", text: unitText };
     case "per_image":
     case "per_video":
       return { kind: "total", usd: pricing.usd * count };
@@ -84,9 +86,9 @@ export function estimateCost(model: ModelSpec, values: ParamValues, count: numbe
   }
 }
 
-export const kindLabel: Record<MediaKind, string> = { image: "Image", video: "Video", audio: "Audio" };
-export const kindPlural: Record<MediaKind, string> = { image: "images", video: "videos", audio: "tracks" };
-export const kindIcon: Record<MediaKind, IconName> = { image: "image", video: "movie", audio: "graphic_eq" };
+export const kindLabel: Record<MediaKind, string> = { image: "Image", video: "Video", audio: "Audio", lora: "LoRA" };
+export const kindPlural: Record<MediaKind, string> = { image: "images", video: "videos", audio: "tracks", lora: "LoRAs" };
+export const kindIcon: Record<MediaKind, IconName> = { image: "image", video: "movie", audio: "graphic_eq", lora: "tune" };
 
 export const roleLabel: Record<InputRole, string> = {
   reference: "Reference",
@@ -115,6 +117,7 @@ export const taskLabel: Record<Task, string> = {
   upscale: "Upscale",
   lip_sync: "Lip sync",
   text_to_audio: "Text to audio",
+  training: "Training",
 };
 export const taskName = (task: string) => taskLabel[task as Task] ?? task.replaceAll("_", " ");
 

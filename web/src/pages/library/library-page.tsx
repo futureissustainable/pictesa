@@ -19,7 +19,7 @@ import { SizeSlider, useImageSize } from "../../ui/size-slider";
 
 const CharacterEditor = lazy(() => import("../characters/characters-page").then((module) => ({ default: module.CharacterEditor })));
 
-const kindLabelPlural: Record<MediaKind, string> = { image: "Images", video: "Videos", audio: "Audio" };
+const kindLabelPlural: Record<MediaKind, string> = { image: "Images", video: "Videos", audio: "Audio", lora: "LoRAs" };
 
 const sources: { value: AssetSource | ""; label: string }[] = [
   { value: "", label: "All sources" },

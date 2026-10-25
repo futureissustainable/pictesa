@@ -249,6 +249,10 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/assets/{id}/expand", post(expand_asset))
         .route("/events", get(events))
         .route("/workflows/import", post(import_workflow))
+        .route("/training", get(training_jobs).post(start_training))
+        .route("/training/estimate", post(estimate_training))
+        .route("/training/{id}", get(training_job))
+        .route("/loras", get(loras))
         .route("/characters", get(characters).post(create_character))
         .route("/characters/{id}", get(character).patch(update_character).delete(delete_character))
         .route("/recipes", get(recipes))
@@ -930,4 +934,26 @@ impl axum::extract::OptionalFromRequestParts<AppState> for Caller {
     async fn from_request_parts(parts: &mut Parts, _state: &AppState) -> Result<Option<Self>, Self::Rejection> {
         Ok(parts.extensions.get::<Caller>().cloned())
     }
+}
+
+
+async fn start_training(State(s):State<AppState>,c:Caller,Json(b):Json<pictesa_engine::training::TrainRequest>)->ApiResult<Response> {
+    Ok((StatusCode::CREATED,Json(json!(s.engine.train(&c.user_id,b).await?))).into_response())
+}
+async fn estimate_training(State(s):State<AppState>,c:Caller,Json(b):Json<pictesa_engine::training::TrainRequest>)->ApiResult<Json<Value>> {
+    Ok(Json(json!(s.engine.estimate_training(&c.user_id,b).await?)))
+}
+async fn training_jobs(State(s):State<AppState>,c:Caller)->ApiResult<Json<Value>> {
+    let (jobs,next)=s.engine.jobs(&c.user_id,&JobFilter{output:Some("lora".into()),..Default::default()}).await?;
+    Ok(Json(json!({"jobs":jobs,"next":next})))
+}
+async fn training_job(State(s):State<AppState>,c:Caller,Path(id):Path<String>)->ApiResult<Json<Value>> {
+    let job=s.engine.job(&c.user_id,&id).await?;
+    if job.output!=MediaKind::Lora {return Err(EngineError::not_found("training job").into());}
+    Ok(Json(json!(job)))
+}
+#[derive(Deserialize)]
+struct LoraQuery {family:Option<String>,character:Option<String>}
+async fn loras(State(s):State<AppState>,c:Caller,Query(q):Query<LoraQuery>)->ApiResult<Json<Value>> {
+    Ok(Json(json!({"loras":s.engine.loras(&c.user_id,q.family.as_deref(),q.character.as_deref()).await?})))
 }

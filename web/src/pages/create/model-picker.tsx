@@ -57,7 +57,7 @@ function shortPrice(pricing: Pricing | null | undefined): string | null {
   if (!pricing || pricing.unit === "variable") return null;
   if (pricing.unit === "local") return "Free";
   const usd = unitMoney(pricing.usd);
-  return { per_image: usd, per_megapixel: `${usd}/MP`, per_second: `${usd}/s`, per_video: `${usd}/video` }[pricing.unit];
+  return { per_image: usd, per_megapixel: `${usd}/MP`, per_second: `${usd}/s`, per_video: `${usd}/video`, per_run: usd, per_step: `${usd}/step` }[pricing.unit];
 }
 
 const priceNote = (pricing: Pricing | null | undefined) => (pricing?.unit === "variable" ? pricing.note : undefined);

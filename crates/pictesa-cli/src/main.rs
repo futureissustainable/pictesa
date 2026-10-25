@@ -80,6 +80,20 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Train a character LoRA from saved library images.
+    Train {
+        #[arg(long)] trainer:String,
+        #[arg(long)] character:Option<String>,
+        #[arg(long="asset",conflicts_with="character")] assets:Vec<String>,
+        #[arg(long)] trigger_word:String,
+        #[arg(long,default_value="flux1")] family:String,
+        #[arg(long,default_value_t=1000)] steps:u32,
+        #[arg(long,default_value_t=16)] rank:u32,
+        #[arg(long,default_value_t=0.0001)] learning_rate:f64,
+        #[arg(long)] dry_run:bool,
+        #[arg(long)] no_wait:bool,
+        #[arg(long)] json:bool,
+    },
     /// Search personal history or manage saved prompts and templates.
     Prompts {
         #[command(subcommand)]
@@ -348,6 +362,31 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
                 return client.generate(prompt, model, params, inputs, count, negative, preset, out, no_wait, json, batch).await;
             }
             generate_local(&cli, prompt, model, params, inputs, count, negative, preset, out, no_wait, json, batch).await
+        }
+        Command::Train {trainer,character,assets,trigger_word,family,steps,rank,learning_rate,dry_run,no_wait,json:as_json} => {
+            let req=pictesa_engine::training::TrainRequest{trainer,asset_ids:assets,options:pictesa_core::lora::TrainingOptions{character,trigger_word,family,steps,rank,learning_rate}};
+            if let Some(remote)=Remote::connect(&cli).await {
+                let path=if dry_run {"/api/training/estimate"}else{"/api/training"};
+                let mut value=remote.json(remote.req(reqwest::Method::POST,path).json(&req)).await?;
+                if !dry_run && !no_wait {
+                    let id=value["jobs"][0]["id"].as_str().context("No training job id")?.to_string();
+                    loop {
+                        value=remote.json(remote.req(reqwest::Method::GET,&format!("/api/training/{id}"))).await?;
+                        if matches!(value["status"].as_str(),Some("succeeded"|"failed"|"canceled")){break;}
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                }
+                if as_json {println!("{}",serde_json::to_string_pretty(&value)?);}else{println!("{value}");}
+                if matches!(value["status"].as_str(),Some("failed"|"canceled")){bail!("Training did not succeed.");}
+                return Ok(());
+            }
+            if no_wait && !dry_run {bail!("--no-wait needs a running server so training continues after the CLI exits.");}
+            let engine=open_engine(&cli,Mode::Local,None).await?;
+            if dry_run {println!("{}",serde_json::to_string_pretty(&engine.estimate_training(LOCAL_USER,req).await?)?);return Ok(());}
+            engine.start_scoped();let created=engine.train(LOCAL_USER,req).await?;
+            let job=engine.wait_job(LOCAL_USER,&created.jobs[0].id,Duration::from_secs(25*3600)).await?;
+            println!("{}",serde_json::to_string_pretty(&job)?);
+            if job.status!=pictesa_engine::JobStatus::Succeeded {bail!("Training did not succeed.");}Ok(())
         }
         Command::Prompts { action } => prompts_command(&cli, action).await,
         Command::Models { output, task, provider, q, all, featured, sort, json } => {

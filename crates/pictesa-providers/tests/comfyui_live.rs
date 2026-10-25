@@ -78,6 +78,7 @@ async fn fetch(ctx: &Ctx, out: &Output) -> Vec<u8> {
             resp.bytes().await.unwrap().to_vec()
         }
         Output::Bytes { data, .. } => data.clone(),
+        Output::File { path, .. } => tokio::fs::read(path).await.expect("local output"),
     }
 }
 

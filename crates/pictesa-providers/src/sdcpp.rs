@@ -237,6 +237,9 @@ pub(crate) fn build_request(meta: &Value, req: &GenerationRequest, files: &HashM
     let video = meta.get("mode").and_then(Value::as_str) == Some("vid_gen");
     let mut body = Map::new();
     body.insert("prompt".into(), json!(req.prompt));
+    if let Some(loras)=req.params.get("loras").and_then(Value::as_array) {
+        body.insert("lora".into(),json!(loras.iter().map(|l|json!({"path":l["path"],"multiplier":l["strength"],"is_high_noise":false})).collect::<Vec<_>>()));
+    }
     if let Some(neg) = req.negative_prompt.as_deref().filter(|n| !n.trim().is_empty()) {
         body.insert("negative_prompt".into(), json!(neg));
     }
@@ -399,7 +402,7 @@ impl Provider for SdCpp {
             id: ID.into(),
             name: "stable-diffusion.cpp".into(),
             kind: ProviderKind::Local,
-            fields: vec![CredentialField::base_url(DEFAULT_URL, &["SDCPP_URL", "SD_SERVER_URL"])],
+            fields: vec![CredentialField::base_url(DEFAULT_URL, &["SDCPP_URL", "SD_SERVER_URL"]), crate::training::lora_directory("PICTESA_SDCPP_LORA_DIR")],
             signup_url: Some("https://github.com/leejet/stable-diffusion.cpp/releases".into()),
             docs_url: Some("https://github.com/leejet/stable-diffusion.cpp/blob/master/examples/server/api.md".into()),
             max_concurrency: 2,
@@ -419,7 +422,14 @@ impl Provider for SdCpp {
                 caps["runtime"] = status;
             }
         }
-        Ok(specs_from(&caps))
+        let mut models=specs_from(&caps);
+        for m in &mut models {
+            let family=pictesa_core::lora::family(&m.id,&m.meta);
+            let mode=m.meta.get("mode").and_then(Value::as_str).unwrap_or("img_gen");
+            let capable=caps.pointer(&format!("/features_by_mode/{mode}/lora")).and_then(Value::as_bool)==Some(true);
+            if family.is_some() && capable && ctx.get("lora_dir").is_some() {m.meta["supports_loras"]=json!(true);m.meta["lora_family"]=json!(family);}
+        }
+        Ok(models)
     }
 
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
@@ -645,5 +655,17 @@ mod tests {
         assert!(server_error(503, r#"{"error":"loading","code":"model_loading"}"#).is_retryable());
         assert!(matches!(server_error(429, r#"{"error":"queue full"}"#), ProviderError::RateLimited { .. }));
         assert!(matches!(server_error(400, r#"{"error":"invalid width"}"#), ProviderError::InvalidInput(m) if m.contains("invalid width")));
+    }
+}
+
+#[cfg(test)]
+mod lora_tests {
+    use super::*;
+    #[test]
+    fn loras_use_structured_native_fields() {
+        let req=GenerationRequest{job_id:"job".into(),model:"flux1".into(),prompt:"maya at a lake".into(),negative_prompt:None,params:json!({"loras":[{"path":"pictesa-maya.safetensors","strength":0.7}]}).as_object().unwrap().clone(),inputs:vec![],num_outputs:1};
+        let body=build_request(&json!({"mode":"img_gen"}),&req,&HashMap::new(),None);
+        assert_eq!(body["lora"],json!([{"path":"pictesa-maya.safetensors","multiplier":0.7,"is_high_noise":false}]));
+        assert_eq!(body["prompt"],"maya at a lake");assert!(body.get("loras").is_none());
     }
 }

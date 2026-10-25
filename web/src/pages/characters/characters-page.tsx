@@ -9,6 +9,8 @@ import type { Asset, Character } from "../../lib/types";
 import { Thumb } from "../../ui/asset-card";
 import { Dialog } from "../../ui/dialog";
 import { Icon, Spinner } from "../../ui/icon";
+import { TrainingDialog } from "./training";
+import { useLoras } from "../../lib/loras";
 import { LibraryPicker } from "../create/library-picker";
 
 /** Cover: the first image large, the next two stacked beside it. */
@@ -23,6 +25,7 @@ export function CharacterCover({ character, className = "" }: { character: Chara
 
 export default function CharactersPage() {
   const { data, error } = useCharacters();
+  const loras = useLoras().data;
   const [editing, setEditing] = useState<Character | "new" | null>(null);
 
   return (
@@ -45,7 +48,7 @@ export default function CharactersPage() {
       ) : data.length ? (
         <ul className="character-grid" aria-label="Characters">
           {data.map((character) => (
-            <CharacterCard key={character.id} character={character} onEdit={() => setEditing(character)} />
+            <CharacterCard key={character.id} character={character} trainedCount={loras.filter((l) => l.character_id === character.id).length} onEdit={() => setEditing(character)} />
           ))}
         </ul>
       ) : (
@@ -64,7 +67,8 @@ export default function CharactersPage() {
   );
 }
 
-function CharacterCard({ character, onEdit }: { character: Character; onEdit(): void }) {
+function CharacterCard({ character, trainedCount, onEdit }: { character: Character; trainedCount: number; onEdit(): void }) {
+  const [training, setTraining] = useState(false);
   const [busy, setBusy] = useState(false);
   const remove = async () => {
     if (!confirm(`Delete ${character.name}? The images stay in the library.`)) return;
@@ -91,6 +95,9 @@ function CharacterCard({ character, onEdit }: { character: Character; onEdit(): 
         <p className="character-meta">{plural(character.assets.length, "image", "images")}</p>
         {character.description && <p className="character-description">{character.description}</p>}
       </div>
+      {trainedCount > 0 && <p className="character-meta"><Link to="/loras">{trainedCount} trained LoRA{trainedCount === 1 ? "" : "s"}</Link></p>}
+      <button type="button" className="text-button" onClick={() => setTraining(true)}>Train LoRA</button>
+      {training && <TrainingDialog character={character} onClose={() => setTraining(false)} />}
       <div className="character-actions">
         <button type="button" className="text-button" aria-label={`Use ${character.name} in Create`} onClick={() => void sendCharacterToCreate(character)}>
           <Icon name="arrow_upward" />

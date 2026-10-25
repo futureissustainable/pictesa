@@ -107,6 +107,10 @@ fn tools() -> Value {
         }
     ]);
     let mut tools = json!([
+        {"name":"train_lora","description":"Queue LoRA training from a character or library images. fal training costs money; local ai-toolkit is free. Discover trainers with list_models output:lora. Returns normal job IDs; cancel_job and wait_for_job also work. Use dry_run:true to validate and estimate first.",
+         "inputSchema":{"type":"object","properties":{"trainer":{"type":"string"},"character":{"type":"string"},"asset_ids":{"type":"array","items":{"type":"string"}},"trigger_word":{"type":"string"},"family":{"type":"string","enum":["flux1","qwen_image","qwen_image_2512","wan21"]},"steps":{"type":"integer","default":1000},"rank":{"type":"integer","default":16},"learning_rate":{"type":"number","default":0.0001},"dry_run":{"type":"boolean","default":false}},"required":["trainer","trigger_word","family"]}},
+        {"name":"get_training","description":"Read a training job's status, progress and saved weights.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"annotations":{"readOnlyHint":true}},
+        {"name":"list_loras","description":"List your trained LoRAs with trigger word, character and base model family.","inputSchema":{"type":"object","properties":{"family":{"type":"string"},"character":{"type":"string"}}},"annotations":{"readOnlyHint":true}},
         {
             "name": "list_collections", "description": "List your named library collections.",
             "inputSchema": { "type": "object", "properties": {} },
@@ -122,10 +126,10 @@ fn tools() -> Value {
         {
             "name": "list_models",
             "title": "List models",
-            "description": "List image and video models. By default only models whose provider is set up. Each model carries its LMArena rank per task when rated (human-preference leaderboards, updated daily).",
+            "description": "List generation and training models. By default only models whose provider is set up. Each model carries its LMArena rank per task when rated (human-preference leaderboards, updated daily).",
             "inputSchema": { "type": "object", "properties": {
-                "output": { "type": "string", "enum": ["image", "video", "audio"] },
-                "task": { "type": "string", "enum": ["text_to_image", "image_edit", "text_to_video", "image_to_video", "video_to_video", "video_to_audio", "upscale", "lip_sync", "text_to_audio"] },
+                "output": { "type": "string", "enum": ["image", "video", "audio", "lora"] },
+                "task": { "type": "string", "enum": ["text_to_image", "image_edit", "text_to_video", "image_to_video", "video_to_video", "video_to_audio", "upscale", "lip_sync", "text_to_audio", "training"] },
                 "q": { "type": "string", "description": "Search in name, id and maker" },
                 "provider": { "type": "string" },
                 "configured_only": { "type": "boolean", "default": true },
@@ -231,7 +235,7 @@ fn tools() -> Value {
             "title": "Search the library",
             "description": "Recent images and videos in the library, newest first. q searches prompts.",
             "inputSchema": { "type": "object", "properties": {
-                "kind": { "type": "string", "enum": ["image", "video", "audio"] },
+                "kind": { "type": "string", "enum": ["image", "video", "audio", "lora"] },
                 "q": { "type": "string" },
                 "favorite": { "type": "boolean" },
                 "limit": { "type": "integer", "default": 20, "maximum": 200 }
@@ -464,6 +468,19 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
             let input = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
             Ok(text(&json!(e.save_prompt(user, input).await.map_err(err)?)))
         }
+        "train_lora" => {
+            let mut body=args.clone();
+            let dry=match body.as_object_mut().and_then(|b|b.remove("dry_run")) {
+                None=>false, Some(Value::Bool(value))=>value, _=>return Err("dry_run must be a boolean.".into()),
+            };
+            let req=serde_json::from_value(body).map_err(|e|e.to_string())?;
+            if dry {Ok(text(&json!(e.estimate_training(user,req).await.map_err(err)?)))} else {Ok(text(&json!(e.train(user,req).await.map_err(err)?)))}
+        }
+        "get_training" => {
+            let job=e.job(user,arg_str(args,"id").ok_or("id is required")?).await.map_err(err)?;
+            if job.output!=MediaKind::Lora {return Err("Training job not found.".into());} Ok(text(&json!(job)))
+        }
+        "list_loras" => Ok(text(&json!({"loras":e.loras(user,arg_str(args,"family"),arg_str(args,"character")).await.map_err(err)?}))),
         "generate_batch" => {
             let mut body = args.as_object().cloned().ok_or("arguments must be an object")?;
             let mut inputs = Vec::new();

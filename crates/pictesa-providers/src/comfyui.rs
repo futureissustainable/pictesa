@@ -181,7 +181,7 @@ impl InputDef {
     fn input_name(&self) -> &str {
         self.input.as_deref().unwrap_or(match self.kind {
             MediaKind::Image => "image",
-            MediaKind::Video => "file",
+            MediaKind::Video | MediaKind::Lora => "file",
             MediaKind::Audio => "audio",
         })
     }
@@ -1133,6 +1133,7 @@ async fn node_info(ctx: &Ctx, base: &str, templates: &[Template]) -> ProviderRes
                 .chain(t.manifest.requires.nodes.iter().cloned())
         })
         .collect();
+    if ctx.get("lora_dir").is_some() {classes.extend(["LoraLoader".into(),"LoraLoaderModelOnly".into()]);}
     classes.sort();
     classes.dedup();
     if classes.is_empty() {
@@ -1503,6 +1504,7 @@ impl Provider for ComfyUi {
             kind: ProviderKind::Local,
             fields: vec![
                 CredentialField::base_url(DEFAULT_URL, &["COMFYUI_URL"]),
+                crate::training::lora_directory("PICTESA_COMFYUI_LORA_DIR"),
                 CredentialField {
                     key: "api_key".into(),
                     label: "API key or bearer token (Comfy Cloud, reverse proxy)".into(),
@@ -1575,6 +1577,10 @@ impl Provider for ComfyUi {
                         s.meta["unavailable"] = json!(format!("ComfyUI at {base} did not answer; start it and refresh the model list"));
                     }
                 }
+                if ctx.get("lora_dir").is_some() && info.is_some() {
+                    let family=pictesa_core::lora::family(&s.id,&s.meta);
+                    if family.is_some() && lora_links(&t.workflow).is_some_and(|(_,clip)|info.as_ref().and_then(|i|i.get(if clip.is_some(){"LoraLoader"}else{"LoraLoaderModelOnly"})).is_some()) {s.meta["supports_loras"]=json!(true);s.meta["lora_family"]=json!(family);}
+                }
                 s
             })
             .collect())
@@ -1610,7 +1616,8 @@ impl Provider for ComfyUi {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        let graph = build_graph(&t, req, &uploads, &dims, &rename)?;
+        let mut graph = build_graph(&t, req, &uploads, &dims, &rename)?;
+        attach_loras(&mut graph,req)?;
         let classes: Map<String, Value> = graph
             .iter()
             .filter_map(|(k, n)| Some((k.clone(), n.get("class_type")?.clone())))
@@ -2680,5 +2687,63 @@ mod tests {
         let found = find_template(&ctx, &spec).unwrap();
         assert_eq!(found.manifest.name, "My upscaler");
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+
+fn lora_links(graph:&Graph)->Option<(Value,Option<Value>)> {
+    // Existing LoRA chains can have architecture-specific routing; leave those workflows explicit.
+    if graph.values().any(|n|n.get("class_type").and_then(Value::as_str).is_some_and(|c|c.to_ascii_lowercase().contains("lora"))) {return None;}
+    let mut model=None;let mut clip=None;
+    for node in graph.values() {
+        if let Some(inputs)=node.get("inputs").and_then(Value::as_object) {
+            if model.is_none() {model=inputs.get("model").filter(|v|v.is_array()).cloned();}
+            if clip.is_none() {clip=inputs.get("clip").filter(|v|v.is_array()).cloned();}
+        }
+    }
+    model.map(|m|(m,clip))
+}
+
+fn attach_loras(graph:&mut Graph,req:&GenerationRequest)->ProviderResult<()> {
+    let Some(loras)=req.params.get("loras").and_then(Value::as_array).filter(|v|!v.is_empty()) else {return Ok(());};
+    let (source_model,source_clip)=lora_links(graph).ok_or_else(||ProviderError::NotSupported("This workflow has no model link for a LoRA.".into()))?;
+    let (mut model,mut clip)=(source_model.clone(),source_clip.clone());
+    let originals=graph.keys().cloned().collect::<Vec<_>>();
+    let mut id=graph.keys().filter_map(|k|k.parse::<u64>().ok()).max().unwrap_or(0)+1;
+    for lora in loras {
+        while graph.contains_key(&id.to_string()) {id+=1;}
+        let key=id.to_string();let mut inputs=json!({"model":model,"lora_name":lora["path"],"strength_model":lora["strength"]});
+        let class=if let Some(link)=clip {inputs["clip"]=link;inputs["strength_clip"]=lora["strength"].clone();"LoraLoader"}else{"LoraLoaderModelOnly"};
+        graph.insert(key.clone(),json!({"class_type":class,"inputs":inputs}));
+        model=json!([key,0]);clip=source_clip.as_ref().map(|_|json!([key,1]));id+=1;
+    }
+    for key in originals {
+        if let Some(inputs)=graph.get_mut(&key).and_then(|n|n.get_mut("inputs")).and_then(Value::as_object_mut) {
+            for value in inputs.values_mut() {
+                if *value==source_model {*value=model.clone();}
+                else if source_clip.as_ref()==Some(value) {if let Some(link)=&clip {*value=link.clone();}}
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod lora_tests {
+    use super::*;
+    #[test]
+    fn lora_graph_rewires_model_and_clip_without_changing_other_links() {
+        let mut graph:Graph=serde_json::from_value(json!({
+            "1":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"flux.safetensors"}},
+            "2":{"class_type":"CLIPTextEncode","inputs":{"text":"maya at a lake","clip":["1",1]}},
+            "3":{"class_type":"KSampler","inputs":{"model":["1",0],"positive":["2",0],"seed":42}}
+        })).unwrap();
+        let req=GenerationRequest{job_id:"job".into(),model:"flux1".into(),prompt:String::new(),negative_prompt:None,params:json!({"loras":[{"path":"pictesa-maya.safetensors","strength":0.7},{"path":"pictesa-style.safetensors","strength":0.5}]}).as_object().unwrap().clone(),inputs:vec![],num_outputs:1};
+        attach_loras(&mut graph,&req).unwrap();
+        assert_eq!(graph["4"]["inputs"]["model"],json!(["1",0]));assert_eq!(graph["4"]["inputs"]["clip"],json!(["1",1]));
+        assert_eq!(graph["5"]["inputs"]["model"],json!(["4",0]));assert_eq!(graph["5"]["inputs"]["clip"],json!(["4",1]));
+        assert_eq!(graph["5"]["inputs"]["lora_name"],"pictesa-style.safetensors");assert_eq!(graph["5"]["inputs"]["strength_model"],0.5);
+        assert_eq!(graph["2"]["inputs"]["clip"],json!(["5",1]));assert_eq!(graph["3"]["inputs"]["model"],json!(["5",0]));assert_eq!(graph["3"]["inputs"]["positive"],json!(["2",0]));
+        assert!(lora_links(&graph).is_none(),"existing LoRA routing is left explicit");
     }
 }

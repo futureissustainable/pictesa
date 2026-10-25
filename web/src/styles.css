@@ -1108,3 +1108,32 @@ video.viewer-media { max-width: 100%; max-height: 100%; background: #1d1a17; }
   .board-share-form { grid-template-columns: 1fr; }
   .board-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 8px; }
 }
+
+/* Training uses the studio's existing fields, dialogs and list rhythm. */
+.training-dialog { max-width: 760px; }
+.training-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 24px; }
+.training-source { grid-column: 1 / -1; display: flex; align-items: end; gap: 16px; }
+.training-source > .field { flex: 1; min-width: 0; }
+.training-limits, .training-parameters { grid-column: 1 / -1; }
+.training-parameters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.training-dialog .control-help { margin: 0; }
+.training-dialog .notice { margin-top: 24px; }
+.lora-list { list-style: none; padding: 0; margin: 24px 0; }
+.lora-row { display: flex; align-items: center; gap: 24px; padding: 24px 0; border-bottom: 1px solid var(--line); }
+.lora-row > div { flex: 1; min-width: 0; }
+.lora-row h2, .lora-row h3 { font-size: 16px; font-weight: 500; margin: 0 0 8px; overflow-wrap: anywhere; }
+.lora-row p { color: var(--muted); font-size: 13px; margin: 6px 0; overflow-wrap: anywhere; }
+.lora-row progress { width: 100%; max-width: 320px; height: 6px; appearance: none; border: 0; border-radius: 3px; overflow: hidden; background: var(--stone); }
+.lora-row progress::-webkit-progress-bar { background: var(--stone); }
+.lora-row progress::-webkit-progress-value { background: var(--clay); }
+.lora-row progress::-moz-progress-bar { background: var(--clay); }
+.training-history { margin-top: 48px; }
+.training-history > h2 { font-size: 20px; }
+.composer-loras { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+.composer-loras > .field { min-width: 160px; flex: 1; }
+@media (max-width: 600px) {
+  .training-fields, .training-parameters { grid-template-columns: 1fr; }
+  .training-source { flex-direction: column; align-items: stretch; }
+  .lora-row { align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .composer-loras { padding: 16px; }
+}

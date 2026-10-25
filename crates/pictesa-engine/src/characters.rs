@@ -1,6 +1,6 @@
 //! Characters: named sets of reference images (a person, a product, a style) that any run can
-//! attach with one click. An open take on closed "identity" features: no training, just references
-//! sent to every model that accepts them.
+//! attach with one click. Images work as references; optional training creates a family-specific
+//! LoRA linked to the character.
 
 use pictesa_core::{now_ms, InputRole, MediaKind};
 use serde::{Deserialize, Serialize};

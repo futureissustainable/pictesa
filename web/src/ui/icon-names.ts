@@ -65,6 +65,7 @@ export const iconNames = [
   "link",
   "login",
   "logout",
+  "model_training",
   "more_horiz",
   "movie",
   "open_in_full",

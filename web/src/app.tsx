@@ -15,6 +15,7 @@ import { Notices } from "./ui/notices";
 const CreatePage = lazy(() => import("./pages/create/create-page"));
 const LibraryPage = lazy(() => import("./pages/library/library-page"));
 const RecipesPage = lazy(() => import("./pages/recipes/recipes-page"));
+const LorasPage = lazy(() => import("./pages/characters/loras-page"));
 const CharactersPage = lazy(() => import("./pages/characters/characters-page"));
 const SettingsPage = lazy(() => import("./pages/settings/settings-page"));
 const AuthPage = lazy(() => import("./pages/auth/auth-page"));
@@ -24,7 +25,7 @@ const EditPage = lazy(() => import("./pages/edit/edit-page"));
 const BoardsPage = lazy(() => import("./pages/boards/boards-page"));
 const BoardPage = lazy(() => import("./pages/boards/board-page"));
 
-type Section = "create" | "library" | "boards" | "favorites" | "uploads" | "collections" | "characters" | "trash" | "settings" | "none";
+type Section = "create" | "library" | "boards" | "favorites" | "uploads" | "collections" | "characters" | "loras" | "trash" | "settings" | "none";
 
 interface NavItem {
   id: Section;
@@ -43,6 +44,7 @@ const collections: NavItem[] = [
   { id: "favorites", label: "Favorites", icon: "favorite", to: "/library?favorite=true" },
   { id: "uploads", label: "Uploads", icon: "upload", to: "/library?source=upload" },
   { id: "characters", label: "Characters", icon: "face", to: "/characters" },
+  { id: "loras", label: "LoRAs", icon: "model_training", to: "/loras" },
   { id: "trash", label: "Trash", icon: "delete", to: "/library?trash=true" },
 ];
 const settingsItem: NavItem = { id: "settings", label: "Settings", icon: "tune", to: "/settings" };
@@ -51,6 +53,7 @@ const mobileItems = [primary[0]!, primary[1]!, primary[2]!, collections[1]!, set
 function sectionOf(url: URL): Section {
   if (url.pathname === "/" || url.pathname === "/recipes" || url.pathname === "/edit") return "create";
   if (url.pathname.startsWith("/settings")) return "settings";
+  if (url.pathname === "/loras") return "loras";
   if (url.pathname === "/characters") return "characters";
   if (url.pathname === "/boards" || url.pathname.startsWith("/boards/")) return "boards";
   if (url.pathname === "/library") {
@@ -71,6 +74,7 @@ const titles: Record<Section, string> = {
   collections: "Collections",
   uploads: "Uploads",
   characters: "Characters",
+  loras: "LoRAs",
   trash: "Trash",
   settings: "Settings",
   none: "Not found",
@@ -204,6 +208,8 @@ function Shell({ me }: { me: Me }) {
               <CreatePage />
             ) : section === "settings" ? (
               <SettingsPage />
+            ) : section === "loras" ? (
+              <LorasPage />
             ) : section === "characters" ? (
               <CharactersPage />
             ) : section === "boards" ? (

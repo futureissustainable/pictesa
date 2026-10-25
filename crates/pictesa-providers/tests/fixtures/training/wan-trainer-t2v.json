@@ -1,0 +1,348 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "Queue OpenAPI for fal-ai/wan-trainer/t2v",
+    "version": "1.0.0",
+    "description": "The OpenAPI schema for the fal-ai/wan-trainer/t2v queue.",
+    "x-fal-metadata": {
+      "endpointId": "fal-ai/wan-trainer/t2v",
+      "category": "training",
+      "thumbnailUrl": "https://v3b.fal.media/files/b/0a9f9a58/9x88JS9WeQTWs03-5wAVb_SXqxFAWn.png",
+      "playgroundUrl": "https://fal.ai/models/fal-ai/wan-trainer/t2v",
+      "documentationUrl": "https://fal.ai/models/fal-ai/wan-trainer/t2v/api",
+      "about": "Runs training on the T2V 1.3B model."
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Fal Key"
+      }
+    },
+    "schemas": {
+      "QueueStatus": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "IN_QUEUE",
+              "IN_PROGRESS",
+              "COMPLETED"
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "description": "The request id."
+          },
+          "response_url": {
+            "type": "string",
+            "description": "The response url."
+          },
+          "status_url": {
+            "type": "string",
+            "description": "The status url."
+          },
+          "cancel_url": {
+            "type": "string",
+            "description": "The cancel url."
+          },
+          "logs": {
+            "type": "object",
+            "description": "The logs.",
+            "additionalProperties": true
+          },
+          "metrics": {
+            "type": "object",
+            "description": "The metrics.",
+            "additionalProperties": true
+          },
+          "queue_position": {
+            "type": "integer",
+            "description": "The queue position."
+          }
+        },
+        "required": [
+          "status",
+          "request_id"
+        ]
+      },
+      "WanTrainerT2vInput": {
+        "required": [
+          "training_data_url"
+        ],
+        "title": "Input",
+        "type": "object",
+        "x-fal-order-properties": [
+          "training_data_url",
+          "number_of_steps",
+          "learning_rate",
+          "trigger_phrase",
+          "auto_scale_input"
+        ],
+        "properties": {
+          "number_of_steps": {
+            "title": "Number Of Steps",
+            "description": "The number of steps to train for.",
+            "minimum": 100,
+            "type": "integer",
+            "default": 400,
+            "maximum": 20000
+          },
+          "trigger_phrase": {
+            "description": "The phrase that will trigger the model to generate an image.",
+            "type": "string",
+            "default": "",
+            "title": "Trigger Phrase"
+          },
+          "auto_scale_input": {
+            "description": "If true, the input will be automatically scale the video to 81 frames at 16fps.",
+            "examples": [
+              true
+            ],
+            "type": "boolean",
+            "default": false,
+            "title": "Auto-Scale Input"
+          },
+          "training_data_url": {
+            "description": "URL to zip archive with images of a consistent style. Try to use at least 10 images and/or videos, although more is better.\n\n        In addition to images the archive can contain text files with captions. Each text file should have the same name as the image/video file it corresponds to.",
+            "type": "string",
+            "title": "Training Data URL"
+          },
+          "learning_rate": {
+            "title": "Learning Rate",
+            "description": "The rate at which the model learns. Higher values can lead to faster training, but over-fitting.",
+            "minimum": 1e-06,
+            "type": "number",
+            "default": 0.0002,
+            "maximum": 1
+          }
+        }
+      },
+      "WanTrainerT2vOutput": {
+        "required": [
+          "lora_file",
+          "config_file"
+        ],
+        "title": "Output",
+        "type": "object",
+        "x-fal-order-properties": [
+          "lora_file",
+          "config_file"
+        ],
+        "properties": {
+          "lora_file": {
+            "description": "URL to the trained LoRA weights.",
+            "$ref": "#/components/schemas/File"
+          },
+          "config_file": {
+            "description": "Configuration used for setting up the inference endpoints.",
+            "$ref": "#/components/schemas/File"
+          }
+        }
+      },
+      "File": {
+        "required": [
+          "url"
+        ],
+        "title": "File",
+        "type": "object",
+        "x-fal-order-properties": [
+          "url",
+          "content_type",
+          "file_name",
+          "file_size"
+        ],
+        "properties": {
+          "url": {
+            "description": "The URL where the file can be downloaded from.",
+            "type": "string",
+            "title": "Url"
+          },
+          "file_size": {
+            "description": "The size of the file in bytes.",
+            "examples": [
+              4404019
+            ],
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "content_type": {
+            "description": "The mime type of the file.",
+            "examples": [
+              "image/png"
+            ],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "file_name": {
+            "description": "The name of the file. It will be auto-generated if not provided.",
+            "examples": [
+              "z9RV14K95DvU.png"
+            ],
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/fal-ai/wan-trainer/t2v/requests/{request_id}/status": {
+      "get": {
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Request ID"
+            }
+          },
+          {
+            "name": "logs",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "Whether to include logs (`1`) in the response or not (`0`)."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fal-ai/wan-trainer/t2v/requests/{request_id}/cancel": {
+      "put": {
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Request ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request was cancelled successfully."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fal-ai/wan-trainer/t2v": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WanTrainerT2vInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The request status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fal-ai/wan-trainer/t2v/requests/{request_id}": {
+      "get": {
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Request ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result of the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WanTrainerT2vOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://queue.fal.run"
+    }
+  ],
+  "security": [
+    {
+      "apiKeyAuth": []
+    }
+  ]
+}

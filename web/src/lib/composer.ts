@@ -1,7 +1,7 @@
 import { sameValue } from "./format";
 import { readJson, writeJson } from "./prefs";
 import { createStore, useStore } from "./store";
-import type { Asset, InputRole, InputSlot, MediaKind, ModelSpec, ParamSpec, ParamValue, ParamValues, Preset } from "./types";
+import type { Asset, InputRole, InputSlot, MediaKind, ModelSpec, LoraSelection, ParamSpec, ParamValue, ParamValues, Preset } from "./types";
 
 // The Create draft. It lives outside the page so the Library can load settings into it
 // ("Reuse settings", "Animate", "Use as reference") and it survives reloads.
@@ -34,6 +34,7 @@ export interface ComposerState {
   compareByMode: Partial<Record<MediaKind, string[]>>;
   /** A character whose images join as references, per mode. */
   characterByMode: Partial<Record<MediaKind, string | null>>;
+  loraByModel: Record<string, LoraSelection | null>;
   count: number;
   /** Bumped when settings arrive from elsewhere, so the prompt can take focus. */
   revision: number;
@@ -46,10 +47,11 @@ const initial: ComposerState = {
   prompt: "",
   negativePrompt: "",
   paramsByModel: {},
-  inputsByMode: { image: [], video: [], audio: [] },
+  inputsByMode: { image: [], video: [], audio: [], lora: [] },
   presetByMode: {},
   compareByMode: {},
   characterByMode: {},
+  loraByModel: {},
   count: 1,
   revision: 0,
 };
@@ -63,7 +65,7 @@ function restore(): ComposerState {
     ...saved,
     mode: saved.mode === "video" || saved.mode === "audio" ? saved.mode : "image",
     count: Number.isInteger(saved.count) && saved.count! >= 1 && saved.count! <= 8 ? saved.count! : 1,
-    inputsByMode: { image: keep(inputs.image), video: keep(inputs.video), audio: keep(inputs.audio) },
+    inputsByMode: { image: keep(inputs.image), video: keep(inputs.video), audio: keep(inputs.audio), lora: [] },
     revision: 0,
   };
 }
@@ -82,7 +84,7 @@ composer.subscribe(() => {
     writeJson(STORAGE_KEY, {
       ...state,
       paramsByModel: Object.fromEntries(recent),
-      inputsByMode: { image: keep(state.inputsByMode.image), video: keep(state.inputsByMode.video), audio: keep(state.inputsByMode.audio) },
+      inputsByMode: { image: keep(state.inputsByMode.image), video: keep(state.inputsByMode.video), audio: keep(state.inputsByMode.audio), lora: [] },
       revision: 0,
     });
   }, 250);
@@ -149,6 +151,8 @@ export function activeInputs(model: ModelSpec | undefined, inputs: AttachedInput
   return model.inputs.flatMap((slot) => slotInputs(slot, inputs));
 }
 
+export const setLora = (model: string, selection: LoraSelection | null) => update((state) => ({ loraByModel: { ...state.loraByModel, [model]: selection } }));
+
 export const setMode = (mode: MediaKind) => update(() => ({ mode }));
 export const setPrompt = (prompt: string) => update(() => ({ prompt }));
 export const setNegativePrompt = (negativePrompt: string) => update(() => ({ negativePrompt }));
@@ -158,7 +162,7 @@ export const setCompare = (mode: MediaKind, models: string[]) => update((state) 
 export const setCharacter = (mode: MediaKind, character: string | null) => update((state) => ({ characterByMode: { ...state.characterByMode, [mode]: character } }));
 
 /** Whether a model can take a character: it needs an image reference slot. */
-export const takesCharacter = (model: ModelSpec | undefined) => Boolean(model?.inputs.some((slot) => slot.role === "reference" && slot.kind === "image"));
+export const takesCharacter = (model: ModelSpec | undefined) => Boolean(model?.inputs.some((slot) => slot.role === "reference" && slot.kind === "image") || model?.meta?.supports_loras);
 
 /** Selects a model. A model used for the first time inherits fitting choices from the previous one. */
 export function selectModel(mode: MediaKind, next: ModelSpec, previous?: ModelSpec) {
@@ -237,6 +241,7 @@ export function loadSettings(settings: LoadedSettings) {
   update((state) => ({
     mode: settings.mode,
     modelByMode: settings.model ? { ...state.modelByMode, [settings.mode]: settings.model.id } : state.modelByMode,
+    loraByModel: settings.model ? { ...state.loraByModel, [settings.model.id]: Array.isArray(settings.params.loras) ? settings.params.loras[0] ?? null : null } : state.loraByModel,
     prompt: settings.prompt,
     negativePrompt: settings.negativePrompt ?? "",
     paramsByModel: settings.model ? { ...state.paramsByModel, [settings.model.id]: { ...settings.params } } : state.paramsByModel,

@@ -740,6 +740,7 @@ fn kind_plural(kind: MediaKind) -> &'static str {
         MediaKind::Image => "images",
         MediaKind::Video => "videos",
         MediaKind::Audio => "audio files",
+        MediaKind::Lora => "LoRA files",
     }
 }
 

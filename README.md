@@ -15,12 +15,12 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 - **Recipes.** Open multi-step pipelines: *Cinema shot* (compose a still with your lens and light, then animate it with a camera move), *Character shot*, *Product hero*, *Animate a photo*, *New angle* and *Upscale*. Each step uses the first model you have set up, cloud or local, and recipes are plain JSON you can fork.
 - **Edit any image.** Paint over a part and describe what goes there, expand the frame to a new shape, relight it or remove the background, with the models you have set up. Results land in the library next to the image they came from, ready to edit again.
 - **Edit video.** Trim, join up to ten clips, grab a frame, smooth to twice the frame rate or add music with the free built-in ffmpeg provider. Extend, upscale and create sound with compatible cloud models you have set up. Open a video and choose **Edit video**, or pick it from **Edit**. Results stay in the library with their inputs, ready to keep editing.
-- **Characters.** Save a person, product or style as a named set of reference images and attach it to any run on any model that takes references.
+- **Characters.** Save a person, product or style as a named set of reference images and attach it to any run on any model that takes references, or train a LoRA for compatible models.
 - **Compare.** Run one prompt on up to eight models side by side, with parameters adapted to each.
 - **Boards.** A canvas for moodboards and chained steps: add files, notes and steps, connect them and run. Results land next to their step, and a step's results can feed the next one. Share a board in hosted mode and edit it live with others and with agents.
 - **Presets.** 76 camera moves and looks (dolly in, orbit, crane, FPV drone, bullet time, film stocks, light) as editable JSON.
 - **Built for agents.** An MCP server (stdio and HTTP), a CLI with `--json`, and a REST API with live events. Agents and people share one library, so an image you make can go straight to an agent and back. See [docs/AGENTS.md](docs/AGENTS.md).
-- **One fast binary.** Rust (Tokio, Axum, SQLite) with the web UI embedded. No Python, Docker or Node at runtime. Files are stored once by content hash, with thumbnails, range-streamed video and full-text prompt search. It starts in 17 ms, and the studio page loads in 41 requests and 308 KB where Higgsfield's video page needs 745 and 7.8 MB ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)).
+- **One fast binary.** Rust (Tokio, Axum, SQLite) with the web UI embedded. The studio needs no Python, Docker or Node at runtime; optional ai-toolkit training uses its Python installation. Files are stored once by content hash, with thumbnails, range-streamed video and full-text prompt search. It starts in 17 ms, and the studio page loads in 41 requests and 308 KB where Higgsfield's video page needs 745 and 7.8 MB ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)).
 - **Yours or hosted.** Run it for yourself, or host it for others the way n8n works: accounts, API tokens, and optional prepaid wallets with Stripe top-ups so people can run on your provider keys.
 
 ## Quick start
@@ -72,7 +72,7 @@ Local video inputs are limited to ten minutes, 4K and 120 fps, with a 128 MiB ou
 claude mcp add pictesa -- pictesa mcp          # Claude Code
 ```
 
-Tools: `list_models`, `get_model`, `list_presets`, `list_recipes`, `list_characters`, `generate`, `run_recipe`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `import_workflow`, `list_boards`, `create_board`, `get_board`, `add_to_board`, `run_board_step`. `generate` waits for the result and returns file paths. Setup for Codex, Cursor and HTTP clients is in [docs/AGENTS.md](docs/AGENTS.md); the HTTP API is in [docs/API.md](docs/API.md).
+Tools: `train_lora`, `get_training`, `list_loras`, `list_models`, `get_model`, `list_presets`, `list_recipes`, `list_characters`, `generate`, `run_recipe`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `import_workflow`, `list_boards`, `create_board`, `get_board`, `add_to_board`, `run_board_step`. `generate` waits for the result and returns file paths. Setup for Codex, Cursor and HTTP clients is in [docs/AGENTS.md](docs/AGENTS.md); the HTTP API is in [docs/API.md](docs/API.md).
 
 ## Hosting Pictesa for others
 
@@ -124,3 +124,18 @@ pictesa generate -m mock:image --prompts-file prompts.csv --no-wait --json
 ```
 
 `.csv` files use the first column, without a header; other files use prompt lines. `--seeds START:COUNT` sweeps consecutive seeds. Repeat `--grid key=a,b` for more axes, or use a JSON array for values containing commas. Remove `--dry-run` to queue. All normal model validation, budgets and wallet checks apply. MCP tools: `list_prompt_history`, `list_saved_prompts`, `save_prompt`, `generate_batch`. See [API.md](docs/API.md) and [AGENTS.md](docs/AGENTS.md) for formats and template rules.
+
+### Character training
+
+Open **Characters > Train LoRA**, or **LoRAs > Train a LoRA**, to train from a saved character or selected library images. Choose a trigger word, compatible base family and a Quick, Balanced or Detailed preset. The studio validates the dataset and checks estimated cost before **Start training**. Training has live progress, cancel and retry. Weights appear on the character and in **LoRAs**, with a download link. Compatible models show a LoRA picker and strength slider in Create; the trigger word is added when missing.
+
+fal trainers come from its active catalog and published schemas. Local training runs [ostris/ai-toolkit](https://github.com/ostris/ai-toolkit) when `PICTESA_AI_TOOLKIT_PATH` points to its installation or an executable wrapper. Install its Python dependencies and GPU prerequisites yourself. Pictesa writes the config and captions, launches the process and saves the final `.safetensors` file. Local training is free and limited to one run at a time; fal training is paid and follows the existing budgets and wallet checks. No GPU training is bundled with Pictesa.
+
+```bash
+pictesa train --trainer ai-toolkit:flux1 --character CHARACTER_ID --trigger-word maya_person --family flux1 --dry-run --json
+pictesa train --trainer ai-toolkit:flux1 --character CHARACTER_ID --trigger-word maya_person --family flux1 --steps 1000 --rank 16 --learning-rate 0.0001 --json
+pictesa train --trainer fal:fal-ai/qwen-image-2512-trainer --asset IMAGE_A --asset IMAGE_B --asset IMAGE_C --trigger-word my_style --family qwen_image_2512 --no-wait --json
+pictesa generate "at a lake at dawn" -m fal:fal-ai/flux-lora -p 'loras=[{"asset_id":"LORA_ASSET_ID","strength":0.8}]' --json
+```
+
+`train` uses the running server when available, otherwise runs the local engine and waits. `--no-wait` requires a running server. `--dry-run` validates and estimates without queuing. Trainer defaults: 1000 steps, rank 16 and learning rate 0.0001; fal controls fixed by the provider keep their own defaults. The API and MCP also support training, status and LoRA listing. Shared local ComfyUI and stable-diffusion.cpp directories enable generation with saved weights; see [setup, supported families and limits](docs/API.md#character-training-and-loras).

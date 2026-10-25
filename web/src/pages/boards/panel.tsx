@@ -162,7 +162,7 @@ function NoteInspector({ node, editable, onClose }: InspectorProps) {
   );
 }
 
-const outputs: MediaKind[] = ["image", "video", "audio"];
+const outputs = ["image", "video", "audio"] as const;
 
 /** Keeps the settings the new model has, with values it accepts. */
 function carryParams(params: ParamValues | undefined, model: ModelSpec): ParamValues {
@@ -177,9 +177,10 @@ function carryParams(params: ParamValues | undefined, model: ModelSpec): ParamVa
 function StepInspector({ board, node, nodes, edges, editable, titleOf, onClose, onRun, onCancel }: InspectorProps) {
   const lists = { image: useModels("image"), video: useModels("video"), audio: useModels("audio") };
   const current = outputs.flatMap((output) => lists[output].data ?? []).find((model) => model.id === node.model);
-  const [output, setOutput] = useState<MediaKind>(current?.output ?? "image");
+  // Steps generate media; LoRA trainers live on the Characters page.
+  const [output, setOutput] = useState<keyof typeof lists>(current?.output === "lora" ? "image" : (current?.output ?? "image"));
   useEffect(() => {
-    if (current) setOutput(current.output);
+    if (current && current.output !== "lora") setOutput(current.output);
   }, [current]);
   const models = lists[output];
   const full = useFullModel(current);

@@ -1,4 +1,4 @@
-import type { BatchEstimate, BatchRequest, PromptContent, PromptHistory, SavedPrompt } from "./types";
+import type { Lora, TrainRequest, BatchEstimate, BatchRequest, PromptContent, PromptHistory, SavedPrompt } from "./types";
 import type {
   ApiToken,
   Asset,
@@ -157,6 +157,10 @@ export const api = {
   generateBatch: (body: BatchRequest) => request<{ batch_id: string; jobs: Job[] }>("POST", "/api/generations/batch", body),
   variations: (jobId: string) => request<{ batch_id: string; jobs: Job[] }>("POST", `/api/generations/${id(jobId)}/variations`),
 
+  train: (body: TrainRequest) => request<{ batch_id: string; jobs: Job[] }>("POST", "/api/training", body),
+  estimateTraining: (body: TrainRequest) => request<BatchEstimate>("POST", "/api/training/estimate", body),
+  trainingJobs: () => request<{ jobs: Job[] }>("GET", "/api/training"),
+  loras: (family?: string, character?: string) => request<{ loras: Lora[] }>("GET", withQuery("/api/loras", { family, character })),
   generate: (body: GenerationRequest) => request<{ batch_id: string; jobs: Job[] }>("POST", "/api/generations", body),
   jobs: (query: { status?: string; output?: MediaKind; limit?: number; before?: string } = {}) =>
     request<{ jobs: Job[]; next: string | null }>("GET", withQuery("/api/generations", query)),
