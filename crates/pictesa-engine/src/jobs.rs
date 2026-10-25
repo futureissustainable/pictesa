@@ -8,10 +8,12 @@ use serde_json::{json, Map, Value};
 use crate::{
     files::Stored,
     store::{self, AssetRow, JobRow},
-    Asset, AssetFilter, CreateGeneration, Created, Engine, EngineError, Job, JobFilter, ModelFilter, ModelView, Result,
+    Asset, AssetFilter, CreateGeneration, Created, Engine, EngineError, Job, JobFilter, ModelFilter, ModelPrefs, ModelView, Result,
 };
 
 pub const MAX_COUNT: u32 = 16;
+const MAX_PINNED: usize = 100;
+const PINNED_KEY: &str = "models.pinned";
 
 /// A validated, priced request ready to be queued.
 struct Planned {
@@ -44,6 +46,7 @@ impl Engine {
         let markup = self.inner.billing.markup;
         let q = f.q.as_deref().map(str::to_lowercase).filter(|q| !q.is_empty());
         let task: Option<Task> = f.task.as_deref().and_then(|t| serde_json::from_value(json!(t)).ok());
+        let arenas = self.arenas();
         let mut out: Vec<ModelView> = self
             .inner
             .catalog
@@ -66,14 +69,38 @@ impl Engine {
                 if is_billed {
                     spec.pricing = spec.pricing.map(|p| with_markup(p, markup));
                 }
+                let released = spec.meta.get("date").and_then(Value::as_str).and_then(|d| d.get(..10)).map(String::from);
                 // Provider bindings are internal and heavy; the full spec comes from GET /api/models/{id}.
                 spec.meta = Value::Null;
-                ModelView { spec, configured: ok, billed: is_billed }
+                ModelView { arena: arenas.scores(&spec), spec, configured: ok, billed: is_billed, released }
             })
             .filter(|v| f.configured != Some(true) || v.configured)
             .collect();
         out.sort_by_key(|v| (!v.configured, !v.spec.tags.iter().any(|t| t == "featured")));
+        match f.sort.as_deref() {
+            Some("arena") => out.sort_by(|a, b| b.rating(task).unwrap_or(f64::MIN).total_cmp(&a.rating(task).unwrap_or(f64::MIN))),
+            Some("newest") => out.sort_by(|a, b| b.released.cmp(&a.released)),
+            Some("name") => out.sort_by_cached_key(|v| v.spec.name.to_lowercase()),
+            _ => {}
+        }
         Ok(out)
+    }
+
+    /// The user's pinned models and the models of their latest generations.
+    pub async fn model_prefs(&self, user: &str) -> Result<ModelPrefs> {
+        let pinned: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE user_id = ? AND key = ?").bind(user).bind(PINNED_KEY).fetch_optional(&self.inner.db).await?;
+        let recent: Vec<(String,)> = sqlx::query_as("SELECT model FROM jobs WHERE user_id = ? GROUP BY model ORDER BY MAX(created_at) DESC LIMIT 8").bind(user).fetch_all(&self.inner.db).await?;
+        Ok(ModelPrefs { pinned: pinned.and_then(|(v,)| serde_json::from_str(&v).ok()).unwrap_or_default(), recent: recent.into_iter().map(|(m,)| m).collect() })
+    }
+
+    pub async fn set_pinned_models(&self, user: &str, ids: Vec<String>) -> Result<ModelPrefs> {
+        if ids.len() > MAX_PINNED || ids.iter().any(|id| id.is_empty() || id.len() > 300) {
+            return Err(EngineError::invalid(format!("Pin up to {MAX_PINNED} models."), Some("pinned")));
+        }
+        let mut seen = std::collections::HashSet::new();
+        let ids: Vec<String> = ids.into_iter().filter(|id| seen.insert(id.clone())).collect();
+        store::put_setting(&self.inner.db, user, PINNED_KEY, &json!(ids).to_string()).await?;
+        self.model_prefs(user).await
     }
 
     /// Full spec for one model (fetches its schema on first use).

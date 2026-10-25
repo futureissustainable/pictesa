@@ -48,8 +48,18 @@ Secret values are never returned, only `set` and `source`.
 
 ## Models
 
-`GET /api/models?output=image|video|audio&task=text_to_video&provider=fal&q=kling&configured=true`
-→ `{ models: [ModelSpec & { configured: bool }] }`
+`GET /api/models?output=image|video|audio&task=text_to_video&provider=fal&q=kling&configured=true&sort=arena`
+→ `{ models: [ModelSpec & { configured: bool, arena?: [ArenaScore], released?: "YYYY-MM-DD" }] }`
+
+`sort`: `arena` (best rated first, in the arena of `task` when given), `newest` (by `released`) or `name`. Without it, set-up and featured models come first.
+
+`arena` holds the model's standing on LMArena's human-preference leaderboards (`text_to_image`, `image_edit`, `text_to_video`, `image_to_video`), matched by name. The server downloads them once a day from the public Hugging Face dataset `lmarena-ai/leaderboard-dataset`; `PICTESA_LEADERBOARDS=off` turns that off.
+```json
+{ "arena": "text_to_video", "name": "kling-2.6-pro", "rank": 29, "of": 48, "rating": 1183.4, "votes": 73362, "published": "2026-09-22" }
+```
+`name` is the model's name on the leaderboard, so a client can show what was rated.
+
+`GET /api/models/prefs` → `{ pinned: [model id], recent: [model id] }`: the caller's pinned models in pin order and the models of their latest generations, newest first. `PUT /api/models/prefs` with `{ "pinned": [model id] }` replaces the pins (up to 100) and answers the same shape.
 
 `ModelSpec` (see `crates/pictesa-core/src/model.rs`):
 ```json

@@ -10,6 +10,7 @@ import type {
   Job,
   MediaKind,
   Me,
+  ModelPrefs,
   ModelSpec,
   Preset,
   ProviderState,
@@ -122,6 +123,8 @@ export const api = {
   /** Full spec of one model. Ids contain ":" and "/", which the server expects as they are. */
   model: (modelId: string) => request<ModelSpec>("GET", `/api/models/${encodeURI(modelId).replaceAll("?", "%3F").replaceAll("#", "%23")}`),
   refreshModels: () => request<{ models: number }>("POST", "/api/models/refresh"),
+  modelPrefs: () => request<ModelPrefs>("GET", "/api/models/prefs"),
+  setPinnedModels: (pinned: string[]) => request<ModelPrefs>("PUT", "/api/models/prefs", { pinned }),
   importWorkflow: (name: string, workflow: unknown) => request<WorkflowImport>("POST", "/api/workflows/import", { name, workflow }),
   presets: (output: MediaKind) => request<{ presets: Preset[] }>("GET", withQuery("/api/presets", { output })),
   enhancePrompt: (prompt: string, output: MediaKind) => request<{ prompt: string }>("POST", "/api/prompt/enhance", { prompt, output }),

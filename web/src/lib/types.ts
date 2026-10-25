@@ -77,6 +77,30 @@ export interface ModelSpec {
   /** Hosted mode: runs are paid from the wallet and `pricing` already includes the markup. */
   billed?: boolean;
   meta?: Record<string, unknown> | null;
+  /** LMArena standings in the arenas that rate this model's tasks. */
+  arena?: ArenaScore[];
+  /** When the provider published the model (YYYY-MM-DD). */
+  released?: string | null;
+}
+
+export interface ArenaScore {
+  /** The task the arena rates: text_to_image, image_edit, text_to_video or image_to_video. */
+  arena: string;
+  /** The model's name on the leaderboard. */
+  name: string;
+  rank: number;
+  /** Models rated in that arena. */
+  of: number;
+  rating: number;
+  votes: number;
+  /** YYYY-MM-DD. */
+  published: string;
+}
+
+export interface ModelPrefs {
+  pinned: string[];
+  /** Models of the latest generations, newest first. */
+  recent: string[];
 }
 
 export type ProviderKind = "cloud" | "gateway" | "local";

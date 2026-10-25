@@ -144,6 +144,9 @@ impl Provider for OpenRouter {
                     .get("description")
                     .and_then(Value::as_str)
                     .map(String::from);
+                if let Some(created) = m.get("created").and_then(Value::as_i64) {
+                    s.meta = json!({ "date": pictesa_core::utc_date(created) });
+                }
                 Some(s)
             })
             .collect())

@@ -73,6 +73,20 @@ async fn bad_input_is_refused_with_the_field_named() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn pins_belong_to_their_user_and_recent_models_follow_generations() {
+    let e = engine("prefs", Mode::Local).await;
+    let prefs = e.set_pinned_models(LOCAL_USER, vec!["mock:video".into(), "mock:image".into(), "mock:video".into()]).await.unwrap();
+    assert_eq!(prefs.pinned, ["mock:video", "mock:image"], "pin order kept, repeats dropped");
+    assert!(e.model_prefs("someone-else").await.unwrap().pinned.is_empty());
+    assert!(e.set_pinned_models(LOCAL_USER, vec![String::new()]).await.is_err());
+    for model in ["mock:video", "mock:image"] {
+        e.create_generation(LOCAL_USER, req(model, "recent")).await.expect("queued");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(e.model_prefs(LOCAL_USER).await.unwrap().recent, ["mock:image", "mock:video"], "newest first");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn hosted_platform_runs_are_charged_and_refunded_when_refused() {
     let e = engine("billing", Mode::Hosted).await;
     let user = e.signup("tester@example.com", "correct horse battery", None).await.unwrap();

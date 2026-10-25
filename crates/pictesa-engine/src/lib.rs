@@ -10,6 +10,7 @@ pub mod crypto;
 pub mod enhance;
 pub mod files;
 pub mod jobs;
+pub mod leaderboard;
 pub mod netguard;
 pub mod presets;
 pub mod queue;
@@ -143,6 +144,8 @@ pub(crate) struct Inner {
     /// When each local server's model list was last checked; held while checking, so parallel
     /// model lists wait for one check instead of repeating it.
     pub local_checks: tokio::sync::Mutex<HashMap<String, i64>>,
+    /// LMArena leaderboards, matched to models by name.
+    pub arenas: std::sync::RwLock<Arc<leaderboard::Boards>>,
 }
 
 /// Cheap to clone; all clones share the same state.
@@ -197,9 +200,11 @@ impl Engine {
             scoped: std::sync::atomic::AtomicBool::new(false),
             owned_batches: Mutex::new(std::collections::HashSet::new()),
             local_checks: tokio::sync::Mutex::new(HashMap::new()),
+            arenas: Default::default(),
         };
         let engine = Self { inner: Arc::new(inner) };
         engine.inner.catalog.load_cache(&engine.inner.db).await;
+        engine.load_arenas().await;
         Ok(engine)
     }
 

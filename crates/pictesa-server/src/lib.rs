@@ -213,6 +213,7 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/providers/{id}/check", post(check_provider))
         .route("/models", get(models))
         .route("/models/refresh", post(refresh_models))
+        .route("/models/prefs", get(model_prefs).put(set_model_prefs))
         .route("/models/{*id}", get(model))
         .route("/presets", get(presets))
         .route("/prompt/enhance", post(enhance_prompt))
@@ -480,6 +481,19 @@ async fn models(State(s): State<AppState>, c: Caller, Query(f): Query<ModelFilte
 
 async fn model(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(s.engine.model(&c.user_id, &id).await?)))
+}
+
+async fn model_prefs(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(s.engine.model_prefs(&c.user_id).await?)))
+}
+
+#[derive(Deserialize)]
+struct PrefsBody {
+    pinned: Vec<String>,
+}
+
+async fn set_model_prefs(State(s): State<AppState>, c: Caller, Json(b): Json<PrefsBody>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(s.engine.set_pinned_models(&c.user_id, b.pinned).await?)))
 }
 
 #[derive(Deserialize)]

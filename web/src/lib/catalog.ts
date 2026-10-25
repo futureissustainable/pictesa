@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { api, ApiError, errorMessage } from "./api";
+import { notifyError } from "./notices";
 import { createStore, useStore } from "./store";
-import type { MediaKind, ModelSpec, Preset, ProviderState } from "./types";
+import type { MediaKind, ModelPrefs, ModelSpec, Preset, ProviderState } from "./types";
 
 // Cached server catalogs: models and presets per output kind, and the provider list.
 
@@ -61,6 +62,32 @@ export function invalidateModels() {
   for (const [, loader] of modelLoaders) {
     if (loader.store.get().data) void loader.load(true);
   }
+}
+
+const NO_PREFS: ModelPrefs = { pinned: [], recent: [] };
+const prefsLoader = cachedLoader(() => api.modelPrefs());
+
+/** Pinned and recent models. Reloaded whenever a picker opens, since every generation changes "recent". */
+export function useModelPrefs(): ModelPrefs {
+  const state = useStore(prefsLoader.store);
+  useEffect(() => {
+    void prefsLoader.load(true);
+  }, []);
+  return state.data ?? NO_PREFS;
+}
+
+/** Pins or unpins a model at once and saves it; a failed save puts the list back. */
+export function togglePin(modelId: string) {
+  const before = prefsLoader.store.get().data ?? NO_PREFS;
+  const pinned = before.pinned.includes(modelId) ? before.pinned.filter((id) => id !== modelId) : [...before.pinned, modelId];
+  prefsLoader.store.set((state) => ({ ...state, data: { ...before, pinned } }));
+  api.setPinnedModels(pinned).then(
+    (saved) => prefsLoader.store.set((state) => ({ ...state, data: saved })),
+    (error: unknown) => {
+      prefsLoader.store.set((state) => ({ ...state, data: before }));
+      notifyError(`The pin was not saved. ${errorMessage(error)}`);
+    },
+  );
 }
 
 const presetLoaders = new Map<MediaKind, ReturnType<typeof cachedLoader<Preset[]>>>();

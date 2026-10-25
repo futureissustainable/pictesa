@@ -8,7 +8,7 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 
 ## What you get
 
-- **Every model in one place.** About 1,250 image and video models through fal, Replicate and Comfy Router, plus direct APIs: OpenAI, Google, OpenRouter, xAI, ByteDance (BytePlus), Black Forest Labs, Runway, Luma, Kling, MiniMax, Alibaba, Stability AI, Ideogram and Recraft. New gateway models appear without an update: Pictesa reads their catalogs and builds each model's controls from its published schema.
+- **Every model in one place.** About 1,250 image and video models through fal, Replicate and Comfy Router, plus direct APIs: OpenAI, Google, OpenRouter, xAI, ByteDance (BytePlus), Black Forest Labs, Runway, Luma, Kling, MiniMax, Alibaba, Stability AI, Ideogram and Recraft. New gateway models appear without an update: Pictesa reads their catalogs and builds each model's controls from its published schema. Each model shows its LMArena rank when people have rated it, and the picker sorts by rank, price or release date, with your pinned and recent models on top.
 - **Any ComfyUI workflow becomes an app.** Drop in a workflow exported with *Export (API)*: Pictesa reads the graph, finds the prompt, seed, steps, guidance, size, video length and image inputs, and turns it into a model with proper controls in the studio, a CLI command and an MCP tool for agents. No glue code. Built-in templates cover LTX 2.5, FLUX 3 Klein, Wan 2.2, Qwen Image and upscalers, and stable-diffusion.cpp, Forge and Automatic1111 work too. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
 - **Live previews.** Local runs show their image as it renders: ComfyUI's sampler previews stream into the job card and the feed, so a run that goes wrong can be stopped early.
 - **Real prices.** You pay providers directly, at their price. Models show the provider's published price (per image, second or megapixel; fal's whole catalog is priced this way), token-billed models say so, and every run records its cost estimate. No credits, no markup.
@@ -42,6 +42,7 @@ Needs Rust 1.85+ and Node 22+ to build. `ffmpeg` on the PATH enables video thumb
 
 ```bash
 pictesa models --output video --featured
+pictesa models --task text_to_image --sort arena    # best rated first, by LMArena rank
 pictesa model fal:kling/v4/image-to-video
 pictesa generate "a timber cabin on a misty lake at dawn" -m fal:google/nano-banana-2.1 -p aspect_ratio=16:9 -n 4 -o ./out
 pictesa generate "slow push in" -m fal:kling/v4/image-to-video -i start_frame=./out/cabin.png -p duration=5

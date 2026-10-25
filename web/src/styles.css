@@ -407,10 +407,22 @@ code, pre { font-family: var(--font-mono); }
 .model-sub { font-size: var(--text-caption); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-row.unconfigured .model-name { color: #6b645a; }
 .model-setup { color: #8b6f45; }
-.model-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
-.model-price { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-caption); color: #5d574e; font-variant-numeric: tabular-nums; }
+.model-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; max-width: 45%; }
+.model-price { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-caption); color: #5d574e; font-variant-numeric: tabular-nums; text-align: right; }
 .model-price .icon { font-size: 14px; color: var(--muted); }
 .model-check { font-size: 18px; color: var(--picked-ink); }
+.model-group { margin: 0; padding: 12px 10px 4px; color: var(--muted); font-size: var(--text-caption); font-weight: 400; letter-spacing: 0; }
+.model-section:first-child .model-group { padding-top: 4px; }
+.model-item { display: flex; align-items: center; gap: 2px; }
+.model-item .model-row { flex: 1; min-width: 0; }
+.model-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.model-arena { display: inline-flex; flex-shrink: 0; align-items: center; gap: 2px; font-size: var(--text-caption); color: #796347; font-variant-numeric: tabular-nums; }
+.model-arena .icon { font-size: 14px; }
+.model-pin { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 40px; height: 44px; border-radius: 5px; color: var(--muted); }
+.model-pin:hover { background: var(--stone); color: var(--ink); }
+.model-pin[aria-pressed="true"] { color: var(--picked-ink); }
+.model-pin .icon { font-size: 18px; }
+@media (hover: hover) { .model-item:not(:hover):not(:focus-within) .model-pin[aria-pressed="false"] { opacity: 0; } }
 .model-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: var(--text-body); }
 .model-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 10px; padding: 2px 8px 2px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--text-caption); }
 .model-footer .text-button { font-size: var(--text-ui); }

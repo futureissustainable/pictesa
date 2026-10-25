@@ -73,7 +73,7 @@ fn tools() -> Value {
         {
             "name": "list_models",
             "title": "List models",
-            "description": "List image and video models. By default only models whose provider is set up.",
+            "description": "List image and video models. By default only models whose provider is set up. Each model carries its LMArena rank per task when rated (human-preference leaderboards, updated daily).",
             "inputSchema": { "type": "object", "properties": {
                 "output": { "type": "string", "enum": ["image", "video", "audio"] },
                 "task": { "type": "string", "enum": ["text_to_image", "image_edit", "text_to_video", "image_to_video", "video_to_video", "upscale", "lip_sync", "text_to_audio"] },
@@ -81,6 +81,7 @@ fn tools() -> Value {
                 "provider": { "type": "string" },
                 "configured_only": { "type": "boolean", "default": true },
                 "featured_only": { "type": "boolean", "default": false },
+                "sort": { "type": "string", "enum": ["recommended", "arena", "newest", "name"], "description": "arena: best rated by people first (LMArena, per task); newest: latest release first" },
                 "limit": { "type": "integer", "default": 40, "maximum": 300 }
             } },
             "annotations": { "readOnlyHint": true }
@@ -289,6 +290,7 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                 q: arg_str(args, "q").map(String::from),
                 configured: Some(args.get("configured_only").and_then(Value::as_bool).unwrap_or(true)),
                 featured: args.get("featured_only").and_then(Value::as_bool),
+                sort: arg_str(args, "sort").map(String::from),
             };
             let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(40).min(300) as usize;
             let models = e.models(user, &filter).await.map_err(err)?;
@@ -308,6 +310,8 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
                         "inputs": s.inputs.iter().map(|i| json!({"role": i.role, "max": i.max, "required": i.min > 0})).collect::<Vec<_>>(),
                         "pricing": s.pricing, "open_weights": s.open_weights, "configured": m.configured,
                         "featured": s.tags.iter().any(|t| t == "featured"),
+                        "arena": m.arena.iter().map(|a| json!({"arena": a.arena, "rank": a.rank, "of": a.of, "rating": a.rating.round()})).collect::<Vec<_>>(),
+                        "released": m.released,
                     })
                 })
                 .collect();

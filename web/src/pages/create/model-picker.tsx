@@ -1,14 +1,16 @@
 import { lazy, Suspense, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { useProviders } from "../../lib/catalog";
+import { togglePin, useModelPrefs, useProviders } from "../../lib/catalog";
 import { priceHint, taskName } from "../../lib/format";
+import { readJson, writeJson } from "../../lib/prefs";
 import { Link } from "../../lib/router";
-import type { ModelSpec, ProviderKind, ProviderState } from "../../lib/types";
+import type { ArenaScore, ModelSpec, Pricing, ProviderKind, ProviderState } from "../../lib/types";
 import { Control } from "../../ui/control";
 import { Icon } from "../../ui/icon";
 
 const WorkflowImportDialog = lazy(() => import("../workflows/import-dialog"));
 
 type Where = "all" | "local" | "cloud";
+type Sort = "recommended" | "arena" | "price" | "newest" | "provider";
 
 export interface PickerFilters {
   q: string;
@@ -16,9 +18,24 @@ export interface PickerFilters {
   task: string;
   where: Where;
   configuredOnly: boolean;
+  sort: Sort;
 }
 
+const SORTS: { value: Sort; label: string }[] = [
+  { value: "recommended", label: "Recommended" },
+  { value: "arena", label: "Best rated" },
+  { value: "price", label: "Lowest price" },
+  { value: "newest", label: "Newest" },
+  { value: "provider", label: "By provider" },
+];
+const SORT_KEY = "pictesa.modelSort";
+const savedSort = (): Sort => {
+  const value = readJson<string>(SORT_KEY, "recommended");
+  return SORTS.some((sort) => sort.value === value) ? (value as Sort) : "recommended";
+};
+
 const LIMIT = 150;
+const RECENT = 5;
 
 function kindOf(model: ModelSpec, providers: ProviderState[] | null): ProviderKind {
   const kind = providers?.find((provider) => provider.id === model.provider)?.kind;
@@ -47,11 +64,44 @@ function rank(model: ModelSpec): number {
   return (model.configured ? 0 : 2) + (model.tags?.includes("featured") ? 0 : 1);
 }
 
+const recommended = (a: ModelSpec, b: ModelSpec) => rank(a) - rank(b) || a.name.localeCompare(b.name);
+
+/** The model's standing in the arena of the chosen task; without a task, its first arena. */
+function arenaScore(model: ModelSpec, task: string): ArenaScore | undefined {
+  return task ? model.arena?.find((score) => score.arena === task) : model.arena?.[0];
+}
+
+/** A comparable cost per output: a 5 s clip for per-second video prices, one image per megapixel. */
+function unitCost(pricing: Pricing | null | undefined): number {
+  if (!pricing || pricing.unit === "variable") return Infinity;
+  if (pricing.unit === "local") return 0;
+  return pricing.unit === "per_second" ? pricing.usd * 5 : pricing.usd;
+}
+
+function sorter(filters: PickerFilters, providers: ProviderState[] | null): (a: ModelSpec, b: ModelSpec) => number {
+  // Differences of two missing values are NaN, which falls through to the next comparison.
+  switch (filters.sort) {
+    case "arena":
+      return (a, b) => (arenaScore(b, filters.task)?.rating ?? -Infinity) - (arenaScore(a, filters.task)?.rating ?? -Infinity) || recommended(a, b);
+    case "price":
+      return (a, b) => unitCost(a.pricing) - unitCost(b.pricing) || recommended(a, b);
+    case "newest":
+      return (a, b) => (b.released ?? "").localeCompare(a.released ?? "") || recommended(a, b);
+    case "provider":
+      return (a, b) => providerName(a.provider, providers).localeCompare(providerName(b.provider, providers)) || recommended(a, b);
+    default:
+      return recommended;
+  }
+}
+
+const arenaLabel = (score: ArenaScore) =>
+  `LMArena ${taskName(score.arena).toLowerCase()}: #${score.rank} of ${score.of} as ${score.name}, ${score.votes.toLocaleString("en")} votes, ${score.published.split("-").reverse().join(".")}`;
+
 /** The model trigger on the control line and its searchable, filterable list. */
 export function ModelPicker({ models, model, onSelect, loading }: { models: ModelSpec[]; model?: ModelSpec; onSelect(model: ModelSpec): void; loading: boolean }) {
   const [filters, setFilters] = useState<PickerFilters | null>(null);
   const [importing, setImporting] = useState(false);
-  const current = filters ?? { q: "", provider: "", task: "", where: "all", configuredOnly: models.some((item) => item.configured) };
+  const current = filters ?? { q: "", provider: "", task: "", where: "all", configuredOnly: models.some((item) => item.configured), sort: savedSort() };
   return (
     <>
     <Control
@@ -93,7 +143,7 @@ export function ModelPicker({ models, model, onSelect, loading }: { models: Mode
 /** "+ Compare": adds another model to run the same prompt side by side. */
 export function ComparePicker({ models, exclude, disabled, onAdd }: { models: ModelSpec[]; exclude: string[]; disabled: boolean; onAdd(model: ModelSpec): void }) {
   const [filters, setFilters] = useState<PickerFilters | null>(null);
-  const current = filters ?? { q: "", provider: "", task: "", where: "all", configuredOnly: true };
+  const current = filters ?? { q: "", provider: "", task: "", where: "all", configuredOnly: true, sort: savedSort() };
   return (
     <Control
       label="Compare with another model"
@@ -137,17 +187,40 @@ function ModelList({
   onImport?(): void;
 }) {
   const providers = useProviders().data;
+  const prefs = useModelPrefs();
   const listRef = useRef<HTMLDivElement>(null);
   const set = (change: Partial<PickerFilters>) => setFilters({ ...filters, ...change });
 
   const providerIds = useMemo(() => [...new Set(models.map((model) => model.provider))].sort(), [models]);
   const tasks = useMemo(() => [...new Set(models.flatMap((model) => model.tasks))], [models]);
   const hasLocal = useMemo(() => models.some((model) => kindOf(model, providers) === "local"), [models, providers]);
-  const found = useMemo(
-    () => models.filter((model) => matches(model, filters, providers)).sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name)),
-    [models, filters, providers],
-  );
-  const shown = found.slice(0, LIMIT);
+  const found = useMemo(() => models.filter((model) => matches(model, filters, providers)).sort(sorter(filters, providers)), [models, filters, providers]);
+  // Pinned and recent models lead the list; each model shows once.
+  const sections = useMemo(() => {
+    const byId = new Map(found.map((model) => [model.id, model]));
+    const pick = (ids: string[]) => ids.flatMap((id) => byId.get(id) ?? []);
+    const pinned = pick(prefs.pinned);
+    const recent = pick(prefs.recent.filter((id) => !prefs.pinned.includes(id))).slice(0, RECENT);
+    const lead = new Set([...pinned, ...recent].map((model) => model.id));
+    const rest = found.filter((model) => !lead.has(model.id)).slice(0, LIMIT);
+    const groups: { title?: string; models: ModelSpec[] }[] = [
+      { title: "Pinned", models: pinned },
+      { title: "Recent", models: recent },
+    ];
+    if (filters.sort === "provider") {
+      for (const model of rest) {
+        const title = providerName(model.provider, providers);
+        const group = groups.at(-1)?.title === title ? groups.at(-1) : undefined;
+        if (group) group.models.push(model);
+        else groups.push({ title, models: [model] });
+      }
+    } else {
+      groups.push({ title: lead.size ? "All models" : undefined, models: rest });
+    }
+    return groups.filter((group) => group.models.length);
+  }, [found, prefs, filters.sort, providers]);
+  const pinned = new Set(prefs.pinned);
+  const hidden = found.length - sections.reduce((sum, group) => sum + group.models.length, 0);
 
   const moveFocus = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -180,6 +253,23 @@ function ModelList({
         />
       </label>
       <div className="model-filters">
+        <label className="select-chip">
+          <span className="sr-only">Sort models</span>
+          <select
+            value={filters.sort}
+            onChange={(event) => {
+              const sort = event.target.value as Sort;
+              writeJson(SORT_KEY, sort);
+              set({ sort });
+            }}
+          >
+            {SORTS.map((sort) => (
+              <option key={sort.value} value={sort.value}>
+                {sort.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="select-chip">
           <span className="sr-only">Provider</span>
           <select value={filters.provider} onChange={(event) => set({ provider: event.target.value })}>
@@ -218,45 +308,29 @@ function ModelList({
           Configured only
         </label>
       </div>
-      <div className="model-list" ref={listRef} role="list" aria-label="Models">
-        {shown.map((model) => {
-          const price = priceHint(model.pricing);
-          const maker = model.vendor && model.vendor !== providerName(model.provider, providers) ? `${model.vendor} on ${providerName(model.provider, providers)}` : providerName(model.provider, providers);
-          const isSelected = model.id === selected?.id;
-          return (
-            <div role="listitem" key={model.id}>
-              <button
-                type="button"
-                className={`model-row ${model.configured ? "" : "unconfigured"}`}
-                aria-pressed={isSelected}
-                title={model.description ?? undefined}
-                onClick={() => onSelect(model)}
-              >
-                <span className="model-main">
-                  <span className="model-name">{model.name}</span>
-                  <span className="model-sub">
-                    {maker}
-                    {!model.configured && <span className="model-setup"> Needs setup</span>}
-                  </span>
-                </span>
-                <span className="model-side">
-                  {model.open_weights && <span className="badge">Open weights</span>}
-                  {price && (
-                    <span className="model-price" title={model.billed ? "Paid from your Pictesa balance" : undefined}>
-                      {model.billed && <Icon name="account_balance_wallet" />}
-                      {price}
-                    </span>
-                  )}
-                </span>
-                <Icon name="check" className={`model-check ${isSelected ? "" : "invisible"}`} />
-              </button>
+      <div className="model-list" ref={listRef}>
+        {sections.map((group) => (
+          <section key={group.title ?? "models"} className="model-section">
+            {group.title && <h3 className="model-group">{group.title}</h3>}
+            <div role="list" aria-label={group.title ?? "Models"}>
+              {group.models.map((model) => (
+                <ModelRow
+                  key={model.id}
+                  model={model}
+                  providers={providers}
+                  task={filters.task}
+                  selected={model.id === selected?.id}
+                  pinned={pinned.has(model.id)}
+                  onSelect={onSelect}
+                />
+              ))}
             </div>
-          );
-        })}
+          </section>
+        ))}
         {!found.length && (
           <div className="model-empty">
             <p>No models match.</p>
-            <button type="button" className="text-button" onClick={() => setFilters({ q: "", provider: "", task: "", where: "all", configuredOnly: false })}>
+            <button type="button" className="text-button" onClick={() => setFilters({ q: "", provider: "", task: "", where: "all", configuredOnly: false, sort: filters.sort })}>
               Clear filters
             </button>
           </div>
@@ -264,7 +338,7 @@ function ModelList({
       </div>
       <div className="model-footer">
         <span>
-          {found.length > LIMIT ? `${LIMIT} of ${found.length} shown. Search to narrow.` : `${found.length} of ${models.length} models`}
+          {hidden > 0 ? `${found.length - hidden} of ${found.length} shown. Search to narrow.` : `${found.length} of ${models.length} models`}
         </span>
         <span className="model-footer-actions">
           {onImport && (
@@ -279,6 +353,62 @@ function ModelList({
           </Link>
         </span>
       </div>
+    </div>
+  );
+}
+
+function ModelRow({
+  model,
+  providers,
+  task,
+  selected,
+  pinned,
+  onSelect,
+}: {
+  model: ModelSpec;
+  providers: ProviderState[] | null;
+  task: string;
+  selected: boolean;
+  pinned: boolean;
+  onSelect(model: ModelSpec): void;
+}) {
+  const price = priceHint(model.pricing);
+  const provider = providerName(model.provider, providers);
+  const maker = model.vendor && model.vendor !== provider ? `${model.vendor} on ${provider}` : provider;
+  const score = arenaScore(model, task);
+  return (
+    <div role="listitem" className="model-item">
+      <button type="button" className={`model-row ${model.configured ? "" : "unconfigured"}`} aria-pressed={selected} title={model.description ?? undefined} onClick={() => onSelect(model)}>
+        <span className="model-main">
+          <span className="model-title">
+            <span className="model-name">{model.name}</span>
+            {score && (
+              <span className="model-arena" title={arenaLabel(score)}>
+                <Icon name="trophy" />
+                <span className="sr-only">Arena rank</span>
+                {score.rank}
+              </span>
+            )}
+          </span>
+          <span className="model-sub">
+            {maker}
+            {!model.configured && <span className="model-setup"> Needs setup</span>}
+          </span>
+        </span>
+        <span className="model-side">
+          {model.open_weights && <span className="badge">Open weights</span>}
+          {price && (
+            <span className="model-price" title={model.billed ? "Paid from your Pictesa balance" : undefined}>
+              {model.billed && <Icon name="account_balance_wallet" />}
+              {price}
+            </span>
+          )}
+        </span>
+        <Icon name="check" className={`model-check ${selected ? "" : "invisible"}`} />
+      </button>
+      <button type="button" className="model-pin" aria-pressed={pinned} aria-label={`${pinned ? "Unpin" : "Pin"} ${model.name}`} title={pinned ? "Unpin" : "Pin to the top"} onClick={() => togglePin(model.id)}>
+        <Icon name="keep" filled={pinned} />
+      </button>
     </div>
   );
 }

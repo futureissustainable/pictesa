@@ -94,6 +94,9 @@ enum Command {
         all: bool,
         #[arg(long)]
         featured: bool,
+        /// arena (best rated on LMArena first), newest or name.
+        #[arg(long, value_parser = ["recommended", "arena", "newest", "name"])]
+        sort: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -215,6 +218,7 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
             let mode = if hosted { Mode::Hosted } else { Mode::Local };
             let engine = open_engine(&cli, mode, public_url.clone()).await?;
             engine.start();
+            engine.start_leaderboards();
             let ip: std::net::IpAddr = host.parse().map_err(|_| anyhow!("--host must be an IP address"))?;
             if !ip.is_loopback() && mode == Mode::Local && cli.token.is_none() {
                 bail!("refusing to listen on {host} without an access token. Set PICTESA_TOKEN (or --token), or use --hosted for accounts.");
@@ -247,9 +251,9 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
             }
             generate_local(&cli, prompt, model, params, inputs, count, negative, preset, out, no_wait, json).await
         }
-        Command::Models { output, task, provider, q, all, featured, json } => {
+        Command::Models { output, task, provider, q, all, featured, sort, json } => {
             let engine = open_engine(&cli, Mode::Local, None).await?;
-            let f = ModelFilter { output, task, provider, q, configured: (!all).then_some(true), featured: featured.then_some(true) };
+            let f = ModelFilter { output, task, provider, q, configured: (!all).then_some(true), featured: featured.then_some(true), sort };
             let models = engine.models(LOCAL_USER, &f).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&models)?);
@@ -259,9 +263,10 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
                 for m in &models {
                     let s = &m.spec;
                     let star = if s.tags.iter().any(|t| t == "featured") { "*" } else { " " };
-                    println!("{star} {:<6} {:<58} {}", s.output.as_str(), s.id, s.name);
+                    let rank = m.arena.first().map(|a| format!("#{}", a.rank)).unwrap_or_default();
+                    println!("{star} {:<6} {rank:>4} {:<58} {}", s.output.as_str(), s.id, s.name);
                 }
-                println!("\n{} models ({} shown as featured *)", models.len(), models.iter().filter(|m| m.spec.tags.iter().any(|t| t == "featured")).count());
+                println!("\n{} models ({} shown as featured *, #n is the LMArena rank)", models.len(), models.iter().filter(|m| m.spec.tags.iter().any(|t| t == "featured")).count());
             }
             Ok(())
         }

@@ -163,6 +163,17 @@ pub async fn asset_row(db: &SqlitePool, user: &str, id: &str) -> Result<AssetRow
     Ok(sqlx::query_as::<_, AssetRow>("SELECT * FROM assets WHERE id = ? AND user_id = ?").bind(id).bind(user).fetch_one(db).await?)
 }
 
+/// Stores one value of the `settings` table (per user, or `system` for the server's own).
+pub async fn put_setting(db: &SqlitePool, user: &str, key: &str, value: &str) -> Result<()> {
+    sqlx::query("INSERT INTO settings (user_id, key, value) VALUES (?, ?, ?) ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value")
+        .bind(user)
+        .bind(key)
+        .bind(value)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 /// Builds an FTS5 query from free text: every word must appear (prefix match).
 pub fn fts_query(q: &str) -> Option<String> {
     let words: Vec<String> = q

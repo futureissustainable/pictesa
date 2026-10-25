@@ -158,6 +158,8 @@ pub struct ModelFilter {
     pub q: Option<String>,
     pub configured: Option<bool>,
     pub featured: Option<bool>,
+    /// "arena" (best rated first), "newest" or "name". Default: set-up and featured models first.
+    pub sort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -168,6 +170,28 @@ pub struct ModelView {
     /// Runs are paid from the wallet (hosted mode on platform keys); `pricing` already includes the markup.
     #[serde(default)]
     pub billed: bool,
+    /// LMArena standings in the arenas that rate this model's tasks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub arena: Vec<crate::leaderboard::ArenaScore>,
+    /// When the provider published the model (YYYY-MM-DD), if it says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub released: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelPrefs {
+    /// Models the user pinned, in pin order.
+    pub pinned: Vec<String>,
+    /// Models of the user's latest generations, newest first.
+    pub recent: Vec<String>,
+}
+
+impl ModelView {
+    /// The model's rating in the arena for `task`, or its first arena.
+    pub fn rating(&self, task: Option<pictesa_core::Task>) -> Option<f64> {
+        let key = task.and_then(|t| crate::leaderboard::ARENAS.iter().find(|(_, at)| *at == t)).map(|(k, _)| *k);
+        self.arena.iter().find(|s| key.is_none_or(|k| s.arena == k)).map(|s| s.rating)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
