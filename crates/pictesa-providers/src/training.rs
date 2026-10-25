@@ -356,7 +356,7 @@ mod tests {
         );
         assert_eq!(
             v.pointer("/config/process/0/datasets/0/folder_path"),
-            Some(&json!("/data/with \"quotes\"/images"))
+            Some(&json!(Path::new("/data/with \"quotes\"").join("images")))
         );
         assert_eq!(
             v.pointer("/config/process/0/save/push_to_hub"),
