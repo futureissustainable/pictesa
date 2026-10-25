@@ -37,3 +37,7 @@ These ran through the full path (studio or CLI, server, provider) on the same VM
 | stable-diffusion.cpp `sd-server` | Wan 2.1 T2V 1.3B (Q4_K_M GGUF) | a 336×192 video, 9 frames, in 263 s |
 | ComfyUI 0.42.1 | SD 1.5, as an imported workflow | 8 live sampler previews in the studio while it ran, 400×400 image in 72 s |
 | ComfyUI 0.42.1 | Real-ESRGAN template, with an uploaded image | 2× upscale to 800×800 in 29 s |
+| Automatic1111/Forge API (`a1111` provider, served by `sd-server`) | SDXS | 512×512 image in 20 s |
+| OpenAI-compatible API (`openai_compatible` provider, served by `sd-server`) | SDXS | 512×512 image in 9 s |
+
+Cloud providers were checked with real keys without spending: the key checks and live catalogs of fal, OpenAI, Google and OpenRouter (1,469 models, 613 of 617 fal image and 544 of 545 fal video models priced) on 25.10.2026, with paid runs switched off.

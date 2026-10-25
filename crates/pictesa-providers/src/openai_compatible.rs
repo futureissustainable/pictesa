@@ -53,6 +53,19 @@ fn spec(id: &str, name: &str) -> ModelSpec {
     })
 }
 
+/// A server on this machine, the local network or a tailnet costs nothing per run.
+fn is_local_server(url: &str) -> bool {
+    match url::Url::parse(url).ok().as_ref().and_then(url::Url::host) {
+        Some(url::Host::Domain(d)) => d == "localhost" || d.ends_with(".localhost") || d.ends_with(".local"),
+        Some(url::Host::Ipv4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            ip.is_loopback() || ip.is_private() || ip.is_link_local() || (a == 100 && (64..128).contains(&b))
+        }
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        None => false,
+    }
+}
+
 fn discover_models(v: &Value, prefix: Option<&str>) -> Vec<ModelSpec> {
     v.get("data")
         .and_then(Value::as_array)
@@ -186,8 +199,15 @@ impl Provider for OpenAICompatible {
         Vec::new()
     }
     async fn discover(&self, ctx: &Ctx) -> ProviderResult<Vec<ModelSpec>> {
-        let v = get_json(auth(ctx.http.get(format!("{}/models", api(ctx)?)), ctx)).await?;
-        Ok(discover_models(&v, ctx.get("name")))
+        let base = api(ctx)?;
+        let v = get_json(auth(ctx.http.get(format!("{base}/models")), ctx)).await?;
+        let mut models = discover_models(&v, ctx.get("name"));
+        if is_local_server(&base) {
+            for m in &mut models {
+                m.pricing = Some(Pricing::Local);
+            }
+        }
+        Ok(models)
     }
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
         get_json(auth(ctx.http.get(format!("{}/models", api(ctx)?)), ctx)).await?;
@@ -244,6 +264,16 @@ impl Provider for OpenAICompatible {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn servers_on_this_machine_or_network_are_local() {
+        for url in ["http://127.0.0.1:1234/v1", "http://localhost:8080/v1", "http://192.168.1.20:7860/v1", "http://100.64.0.1:9000/v1", "http://[::1]:1234/v1", "http://gpu-box.local/v1"] {
+            assert!(is_local_server(url), "{url}");
+        }
+        for url in ["https://api.example.com/v1", "http://8.8.8.8/v1", "https://openrouter.ai/api/v1"] {
+            assert!(!is_local_server(url), "{url}");
+        }
+    }
     #[test]
     fn discovery_respects_server_capability_and_marks_unknown() {
         let models = discover_models(
