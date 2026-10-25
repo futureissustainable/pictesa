@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { api, ApiError, errorMessage } from "../../lib/api";
-import { ASSET_DRAG_TYPE, readDraggedAsset, rejectionMessage, routeFiles, uploadInto } from "../../lib/attach";
+import { ASSET_DRAG_TYPE, fileKind, readDraggedAsset, rejectionMessage, routeFiles, uploadInto } from "../../lib/attach";
 import { defaultModel, useFullModel, useModels, usePresets, useProviders } from "../../lib/catalog";
 import {
   activeInputs,
@@ -20,12 +20,13 @@ import {
   slotInputs,
   useComposer,
 } from "../../lib/composer";
+import { intentOf, variantFor } from "../../lib/families";
 import { estimateCost, kindPlural, money, plural } from "../../lib/format";
 import { MAX_COMPARE, trackCompare } from "../../lib/compare";
 import { addJobs } from "../../lib/jobs";
 import { notify, notifyError } from "../../lib/notices";
 import { navigate } from "../../lib/router";
-import type { GenerationRequest, MediaKind, ModelSpec, ParamValues } from "../../lib/types";
+import type { Asset, GenerationRequest, MediaKind, ModelSpec, ParamValues } from "../../lib/types";
 import { Choice, Control } from "../../ui/control";
 import { Icon, Spinner } from "../../ui/icon";
 import { InputSlots, slotLabel } from "./inputs";
@@ -59,6 +60,12 @@ export function Composer() {
   const values = useMemo(() => (model ? effectiveParams(model, explicit, preset) : {}), [model, explicit, preset]);
   const inputs = draft.inputsByMode[mode];
   const attached = activeInputs(model, inputs);
+  const intent = intentOf(mode, inputs);
+  // A model listed without an image slot can still edit through another member of its family.
+  const editVersion = useMemo(
+    () => (model && listed && mode === "image" && !model.inputs.some((slot) => slot.kind === "image") ? variantFor(list, listed, "image_edit") : null),
+    [model, listed, list, mode],
+  );
   const uploading = attached.some((input) => input.upload);
   const compare = (draft.compareByMode[mode] ?? []).filter((id) => id !== model?.id);
   const characterId = draft.characterByMode[mode] ?? null;
@@ -123,6 +130,15 @@ export function Composer() {
     return () => clearTimeout(timer);
   }, [undo]);
 
+  // Adding or removing a reference switches to the member of the model's family that does that.
+  const lastIntent = useRef(intent);
+  useEffect(() => {
+    if (lastIntent.current === intent) return;
+    lastIntent.current = intent;
+    const next = listed && intent ? variantFor(list, listed, intent) : null;
+    if (next && next.id !== listed?.id) selectModel(mode, next, model);
+  }, [intent, listed, list, mode, model]);
+
   // Remember the default model so the choice is stable across reloads.
   useEffect(() => {
     if (listed && draft.modelByMode[mode] !== listed.id) selectModel(mode, listed);
@@ -143,11 +159,21 @@ export function Composer() {
 
   useEffect(() => setInvalid(null), [model?.id, mode]);
 
+  // Images dropped on a model without an image slot go to its edit version once that loads.
+  const pending = useRef<{ modelId: string; files: File[]; asset?: Asset } | null>(null);
+  const switchToEdit = (files: File[], asset?: Asset) => {
+    if (!editVersion || !model || editVersion.id === model.id) return false;
+    pending.current = { modelId: editVersion.id, files, asset };
+    selectModel(mode, editVersion, model);
+    return true;
+  };
+
   const attachFiles = (files: File[]) => {
     if (!model || !files.length) return;
     const { placements, rejected } = routeFiles(model, inputs, files);
     placements.forEach((placement) => void uploadInto(mode, placement.slot.role, placement.files));
-    if (rejected.length) notifyError(rejectionMessage(model, rejected));
+    if (!rejected.length || (rejected.some((file) => fileKind(file) === "image") && switchToEdit(rejected))) return;
+    notifyError(rejectionMessage(model, rejected));
   };
 
   // Pasting files anywhere on the page (outside other fields) attaches them.
@@ -176,13 +202,26 @@ export function Composer() {
     setDragging(false);
     if (!model) return;
     const asset = readDraggedAsset(event.dataTransfer);
-    if (asset) {
-      const slot = model.inputs.find((candidate) => candidate.kind === asset.kind && slotInputs(candidate, inputs).length < candidate.max);
-      if (!slot) return notifyError(`${model.name} has no free slot for ${kindPlural[asset.kind]}.`);
-      return addInput(mode, { key: inputKey(), role: slot.role, asset });
-    }
+    if (asset) return attachAsset(asset);
     attachFiles([...event.dataTransfer.files]);
   };
+
+  function attachAsset(asset: Asset) {
+    if (!model) return;
+    const slot = model.inputs.find((candidate) => candidate.kind === asset.kind && slotInputs(candidate, inputs).length < candidate.max);
+    if (slot) return addInput(mode, { key: inputKey(), role: slot.role, asset });
+    if (asset.kind === "image" && switchToEdit([], asset)) return;
+    notifyError(`${model.name} has no free slot for ${kindPlural[asset.kind]}.`);
+  }
+
+  useEffect(() => {
+    if (!model || pending.current?.modelId !== model.id) return;
+    const { files, asset } = pending.current;
+    pending.current = null;
+    if (asset) attachAsset(asset);
+    attachFiles(files);
+    // Runs once per switched model; the handlers read the current state.
+  }, [model]);
 
   function generationRequest(): GenerationRequest {
     if (!model) throw new Error("Choose a model first.");
@@ -281,6 +320,12 @@ export function Composer() {
       >
         <div className="composer-main">
         {model && (model.inputs.length > 0 || characterId) && <InputSlots model={model} mode={mode} inputs={inputs} invalidRole={invalid?.startsWith("inputs.") ? invalid.slice(7) : null} />}
+        {editVersion && editVersion.id !== model?.id && (
+          <button type="button" className="text-button edit-an-image" onClick={() => selectModel(mode, editVersion, model)}>
+            <Icon name="add_photo_alternate" />
+            Edit an image
+          </button>
+        )}
         <div className="prompt-line">
           {model?.prompt === false ? (
             <p className="prompt-off">
@@ -377,7 +422,7 @@ export function Composer() {
         </div>
         <div className="composer-toolbar">
           <div className="composer-controls" aria-label="Generation settings" role="group">
-            <ModelPicker key={mode} models={list} model={listed} loading={models.loading} onSelect={(next) => selectModel(mode, next, model)} />
+            <ModelPicker key={mode} models={list} model={listed} intent={intent} loading={models.loading} onSelect={(next) => selectModel(mode, next, model)} />
             {compareModels.map((other) => (
               <span key={other.id} className="compare-chip">
                 <span>{other.name}</span>
@@ -389,6 +434,7 @@ export function Composer() {
             {model && (
               <ComparePicker
                 models={list}
+                intent={intent}
                 exclude={[model.id, ...compare]}
                 disabled={compare.length >= MAX_COMPARE}
                 onAdd={(other) => setCompare(mode, [...compare, other.id])}

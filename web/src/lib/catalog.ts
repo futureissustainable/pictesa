@@ -76,10 +76,10 @@ export function useModelPrefs(): ModelPrefs {
   return state.data ?? NO_PREFS;
 }
 
-/** Pins or unpins a model at once and saves it; a failed save puts the list back. */
-export function togglePin(modelId: string) {
+/** Changes the pinned models at once and saves them; a failed save puts the list back. */
+export function updatePins(change: (pinned: string[]) => string[]) {
   const before = prefsLoader.store.get().data ?? NO_PREFS;
-  const pinned = before.pinned.includes(modelId) ? before.pinned.filter((id) => id !== modelId) : [...before.pinned, modelId];
+  const pinned = change(before.pinned);
   prefsLoader.store.set((state) => ({ ...state, data: { ...before, pinned } }));
   api.setPinnedModels(pinned).then(
     (saved) => prefsLoader.store.set((state) => ({ ...state, data: saved })),

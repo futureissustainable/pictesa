@@ -204,6 +204,8 @@ pub struct ModelView {
     /// When the provider published the model (YYYY-MM-DD), if it says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub released: Option<String>,
+    /// The same model on other providers or for other tasks shares this key.
+    pub family: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

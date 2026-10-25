@@ -72,7 +72,7 @@ impl Engine {
                 let released = spec.meta.get("date").and_then(Value::as_str).and_then(|d| d.get(..10)).map(String::from);
                 // Provider bindings are internal and heavy; the full spec comes from GET /api/models/{id}.
                 spec.meta = Value::Null;
-                ModelView { arena: Vec::new(), spec, configured: ok, billed: is_billed, released }
+                ModelView { arena: Vec::new(), family: arenas.family(&spec), spec, configured: ok, billed: is_billed, released }
             })
             .filter(|v| f.configured != Some(true) || v.configured)
             .map(|mut v| {

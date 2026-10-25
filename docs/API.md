@@ -59,6 +59,8 @@ Secret values are never returned, only `set` and `source`.
 ```
 `name` is the model's name on the leaderboard, so a client can show what was rated.
 
+`family` is shared by one model's entries across providers and tasks (fal's text-to-image and edit endpoints, the same model on OpenRouter or Comfy Router, Google's Gemini name and its Nano Banana alias). The studio shows one row per family and runs the member that fits: the edit endpoint once a reference image is attached.
+
 `GET /api/models/prefs` → `{ pinned: [model id], recent: [model id] }`: the caller's pinned models in pin order and the models of their latest generations, newest first. `PUT /api/models/prefs` with `{ "pinned": [model id] }` replaces the pins (up to 100) and answers the same shape.
 
 `ModelSpec` (see `crates/pictesa-core/src/model.rs`):

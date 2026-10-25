@@ -82,6 +82,8 @@ export interface ModelSpec {
   arena?: ArenaScore[];
   /** When the provider published the model (YYYY-MM-DD). */
   released?: string | null;
+  /** Shared by the same model on other providers and for other tasks. */
+  family?: string;
 }
 
 export interface ArenaScore {

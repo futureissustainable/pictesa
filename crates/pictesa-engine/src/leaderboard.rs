@@ -136,6 +136,10 @@ fn words(name: &str) -> BTreeSet<String> {
     out
 }
 
+fn join(words: &BTreeSet<String>) -> String {
+    words.iter().map(String::as_str).collect::<Vec<_>>().join(" ")
+}
+
 /// Removes YYYY-MM-DD dates, which would otherwise leave month and day numbers behind.
 fn strip_dates(s: &str) -> String {
     let b = s.as_bytes();
@@ -210,6 +214,9 @@ fn entry_names(name: &str) -> Vec<BTreeSet<String>> {
 #[derive(Default)]
 pub struct Boards {
     boards: Vec<Board>,
+    /// Every name a leaderboard model goes by, mapped to the words of its main name, so
+    /// "nano-banana-2" and "gemini-3.1-flash-image" are known to be one model.
+    aliases: HashMap<BTreeSet<String>, String>,
     /// When the oldest arena was downloaded; 0 while one is missing.
     pub fetched_at: i64,
 }
@@ -241,9 +248,27 @@ impl Boards {
                 Some(Board { key: a.key.clone(), task, published: a.published.clone(), size: a.entries.len() as u32, by_words })
             })
             .collect();
+        let mut aliases = HashMap::new();
+        for names in arenas.iter().flat_map(|a| &a.entries).map(|e| entry_names(&e.name)) {
+            let Some(main) = names.first().map(|w| join(w)) else { continue };
+            for set in names {
+                aliases.entry(set).or_insert_with(|| main.clone());
+            }
+        }
         let complete = ARENAS.iter().all(|(key, _)| arenas.iter().any(|a| a.key == *key));
         let fetched_at = if complete { arenas.iter().map(|a| a.fetched_at).min().unwrap_or(0) } else { 0 };
-        Self { boards, fetched_at }
+        Self { boards, aliases, fetched_at }
+    }
+
+    /// The model a catalog id names, whatever the provider or task: "fal:google/nano-banana-2/edit"
+    /// and "google:gemini-3.1-flash-image" share one key when a leaderboard knows both names.
+    pub fn family(&self, model: &ModelSpec) -> String {
+        let own = words(model.remote_id());
+        match self.aliases.get(&own) {
+            Some(main) => main.clone(),
+            None if own.is_empty() => model.id.clone(),
+            None => join(&own),
+        }
     }
 
     /// The model's standing in each arena that rates one of its tasks.
@@ -394,6 +419,20 @@ mod tests {
         same("byteplus/dreamina-seedance-2-0-260128", "seedance-2-0");
         assert_ne!(words("veo-3"), words("veo-3.1"));
         assert_ne!(words("gpt-image-1"), words("gpt-image-1.5"));
+    }
+
+    #[test]
+    fn one_model_is_one_family_across_providers_and_tasks() {
+        let boards = Boards::new(&[arena("text_to_image", &["gemini-3.1-flash-image (nano-banana-2) [web-search]"])]);
+        let family = |id: &str| boards.family(&model(id, Task::TextToImage));
+        assert_eq!(family("fal:fal-ai/nano-banana-2"), family("google:gemini-3.1-flash-image"), "Google's alias joins the family");
+        let nano = family("fal:google/nano-banana-2.1");
+        for id in ["fal:google/nano-banana-2.1/edit", "openrouter:google/gemini-nano-banana-2.1", "comfy_router:vertexai/gemini-nano-banana-2.1"] {
+            assert_eq!(family(id), nano, "{id}");
+        }
+        assert_eq!(family("fal:fal-ai/kling-video/v2.6/pro/text-to-video"), family("fal:fal-ai/kling-video/v2.6/pro/image-to-video"));
+        assert_ne!(family("fal:fal-ai/kling-video/v2.6/pro/text-to-video"), family("fal:fal-ai/kling-video/v2.6/standard/text-to-video"));
+        assert_ne!(family("mock:image"), family("mock:video"), "ids without telling words stay apart");
     }
 
     #[test]
