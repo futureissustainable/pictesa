@@ -30,7 +30,7 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 
 ## Quick start
 
-1. Download the binary for your system from the releases page, or build it (below).
+1. Download the binary for your system from the releases page (Windows, macOS, or Linux with glibc 2.35 or newer, such as Ubuntu 22.04 and Debian 12), or build it (below).
 2. Run `pictesa`. The studio opens at http://127.0.0.1:4747.
 3. Open **Settings > Providers**, paste a key (fal or OpenRouter cover the most models), or point Pictesa at your ComfyUI.
 4. Write a prompt, pick a model, generate.

@@ -13,11 +13,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Linux builds on the oldest supported Ubuntu: a binary linked against a newer glibc
+        # (24.04 has 2.39) does not start on Debian 12 or Ubuntu 22.04.
         include:
-          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, name: pictesa-linux-x86_64 }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: pictesa-linux-arm64 }
-          - { os: macos-14, target: aarch64-apple-darwin, name: pictesa-macos-arm64 }
-          - { os: macos-13, target: x86_64-apple-darwin, name: pictesa-macos-x86_64 }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: pictesa-linux-x86_64 }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, name: pictesa-linux-arm64 }
+          - { os: macos-15, target: aarch64-apple-darwin, name: pictesa-macos-arm64 }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, name: pictesa-macos-x86_64 }
           - { os: windows-2022, target: x86_64-pc-windows-msvc, name: pictesa-windows-x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
@@ -46,6 +48,7 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}.*
+          retention-days: 1
   publish:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
@@ -57,8 +60,8 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+  # A manual run builds the image without pushing it, as a release dry run.
   image:
-    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -66,6 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -73,7 +77,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
             ghcr.io/${{ github.repository }}:latest
