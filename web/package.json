@@ -15,7 +15,8 @@
     "build": "node scripts/check-icons.mjs && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
-    "icons": "python3 scripts/subset-icons.py"
+    "icons": "python3 scripts/subset-icons.py",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "@fontsource/poppins": "5.3.0",
