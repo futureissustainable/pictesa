@@ -738,6 +738,7 @@ fn tasks_for(id: &str, output: MediaKind, inputs: &[MediaKind], text: bool) -> V
             }
         }
         MediaKind::Audio if text => tasks.push(Task::TextToAudio),
+        MediaKind::Lora => tasks.push(Task::Training),
         MediaKind::Audio => {}
     }
     if tasks.is_empty() {
@@ -745,6 +746,7 @@ fn tasks_for(id: &str, output: MediaKind, inputs: &[MediaKind], text: bool) -> V
             MediaKind::Image => Task::ImageEdit,
             MediaKind::Video => Task::VideoToVideo,
             MediaKind::Audio => Task::TextToAudio,
+            MediaKind::Lora => Task::Training,
         });
     }
     tasks
@@ -1296,7 +1298,7 @@ fn role_for(name: &str, kind: MediaKind, output: MediaKind) -> InputRole {
         {
             InputRole::StartFrame
         }
-        MediaKind::Image => InputRole::Reference,
+        MediaKind::Image | MediaKind::Lora => InputRole::Reference,
     }
 }
 
@@ -2148,6 +2150,7 @@ fn item_for(b: &InputBind, e: &Encoded) -> Value {
                 MediaKind::Image => "image_url",
                 MediaKind::Video => "video_url",
                 MediaKind::Audio => "audio_url",
+                MediaKind::Lora => "file_url",
             };
             json!({ "type": field, field: { "url": e.url }, "role": b.tag })
         }
@@ -2454,6 +2457,7 @@ pub(crate) fn collect_outputs(v: &Value, want: MediaKind) -> Vec<Output> {
                             MediaKind::Image => "image/png",
                             MediaKind::Video => "video/mp4",
                             MediaKind::Audio => "audio/mpeg",
+                            MediaKind::Lora => "application/x-safetensors",
                         };
                         let mime = mime
                             .map(String::from)
@@ -3540,6 +3544,7 @@ mod tests {
                 .map(|o| match o {
                     Output::Url { url, .. } => url,
                     Output::Bytes { mime, .. } => format!("bytes:{mime}"),
+                    Output::File { mime, .. } => format!("file:{mime}"),
                 })
                 .collect()
         };

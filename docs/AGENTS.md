@@ -23,7 +23,7 @@ args = ["mcp"]
 
 Remote or shared, over Streamable HTTP: point the client at `http://127.0.0.1:4747/mcp` (add `Authorization: Bearer <token>` when the server requires one; hosted users create tokens in Settings > Agents).
 
-Tools: `list_collections`, `add_to_collection`, `list_models`, `get_model`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
+Tools: `train_lora`, `get_training`, `list_loras`, `list_collections`, `add_to_collection`, `list_models`, `get_model`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
 `list_models` returns each model's LMArena rank per task when people have rated it; pass `sort: "arena"` with a `task` to get the best rated first, or `sort: "newest"`.
 `generate` waits for the result by default and returns local file paths, so an agent can open the image right away. Pass `include_preview: true` to also receive small JPEG previews for vision models.
 
@@ -94,3 +94,13 @@ A `.csv` file uses CSV first-column parsing; other files use one prompt per line
 ## Local video tools
 
 `list_models` includes the free `local:trim`, `local:join`, `local:frame`, `local:smooth` and `local:add-audio` models when ffmpeg/ffprobe are installed. Call `get_model` for inputs and ranges, then use `generate` or a recipe as usual; no new tool is required. Send 2 to 10 ordered `video` inputs for join. Frame returns an image. Smooth doubles the frame rate and is slow on CPU. Cloud catalog models cover extension, video upscaling and sound; `list_models` also accepts task `video_to_audio`. See [video tool parameters and limits](API.md#video-tools).
+
+## Train and use a character LoRA
+
+- `list_models { output: "lora" }` discovers configured local and active fal trainers; `get_model` reads the trainer's full schema and price. Local ai-toolkit is free. fal training costs money.
+- `train_lora { trainer, character?, asset_ids?, trigger_word, family, steps?: 1000, rank?: 16, learning_rate?: 0.0001, dry_run?: false }` validates and queues a normal training job. Send a character or picked library image IDs. Use `dry_run: true` first for validation, estimated cost and budget/wallet checks without reserving funds. Unknown cost stays null. At least 3 distinct images of 256 px per side are required. Read the [full limits and provider setup](API.md#character-training-and-loras).
+- `get_training { id }` returns the job, progress and weights asset. `wait_for_job`, `cancel_job` and the normal retry API also apply. Do not resubmit an accepted fal training job after a timeout.
+- `list_loras { family?, character? }` lists your weights assets, character links, family and trigger words. They are private and excluded from ordinary image lists.
+- `generate { model, prompt, params: { loras: [{ asset_id, strength: 0.8 }] } }` uses compatible weights. The engine adds a missing trigger and refuses wrong-family, trashed or unowned assets. Model metadata `supports_loras` and `lora_family` describe compatibility. fal receives its published `loras` shape; local servers require a configured shared LoRA directory.
+
+Families: `flux1`, `qwen_image`, `qwen_image_2512`, `wan21`. Local training supports `flux1`, `qwen_image`, `wan21`, configured with `PICTESA_AI_TOOLKIT_PATH` or Settings > Providers. Local subprocess training and shared-directory writes are available only in local mode. MCP training returns immediately with job IDs so agents can follow progress, cancel or return later.

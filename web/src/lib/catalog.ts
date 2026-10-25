@@ -144,7 +144,8 @@ export function useModelNames(outputs: readonly MediaKind[]): (id: string | null
   const image = useModels("image", outputs.includes("image"));
   const video = useModels("video", outputs.includes("video"));
   const audio = useModels("audio", outputs.includes("audio"));
-  const lists = { image, video, audio };
+  const lora = useModels("lora", outputs.includes("lora"));
+  const lists = { image, video, audio, lora };
   const names = new Map<string, string>();
   for (const output of outputs) for (const model of lists[output].data ?? []) names.set(model.id, model.name);
   return (id) => (id ? (names.get(id) ?? fallbackModelName(id)) : "");

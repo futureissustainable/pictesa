@@ -43,6 +43,7 @@ pub mod comfy_router;
 pub mod comfyui;
 pub mod sdcpp;
 pub mod local_video;
+pub mod training;
 // LOCAL-MODULES (comfy_router, comfyui, sdcpp)
 
 /// Every built-in provider, in the order the Settings page shows them.
@@ -78,6 +79,7 @@ pub fn registry() -> Vec<Arc<dyn Provider>> {
         Arc::new(comfyui::ComfyUi),
         Arc::new(sdcpp::SdCpp),
         Arc::new(local_video::LocalVideo),
+        Arc::new(training::AiToolkit),
         // LOCAL-REGISTRY
     ];
     if std::env::var("PICTESA_MOCK").is_ok_and(|v| v == "1") {

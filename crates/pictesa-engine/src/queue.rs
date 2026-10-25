@@ -87,11 +87,12 @@ async fn dispatch_once(engine: &Engine) -> anyhow::Result<()> {
                 continue;
             }
             let now = now_ms();
-            let claimed = sqlx::query("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ?, message = 'Starting', owner = ? WHERE id = ? AND status = 'queued'")
+            let claimed = sqlx::query("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ?, message = 'Starting', owner = ? WHERE id = ? AND status = 'queued' AND (provider != 'ai-toolkit' OR NOT EXISTS (SELECT 1 FROM jobs active WHERE active.provider = 'ai-toolkit' AND (active.status = 'running' OR (active.status = 'canceled' AND active.owner IS NOT NULL AND active.updated_at > ?))))")
                 .bind(now)
                 .bind(now)
                 .bind(&engine.inner.instance)
                 .bind(&job.id)
+                .bind(now - STALE_MS)
                 .execute(&engine.inner.db)
                 .await?;
             if claimed.rows_affected() == 1 {
@@ -136,6 +137,8 @@ pub(crate) fn spawn_job(engine: &Engine, job: JobRow) {
             fail(&engine, &job, "internal", "Pictesa hit an internal error while running this job. Retry it, and report it if it happens again.", refund).await;
         }
         beat.abort();
+        let _=sqlx::query("UPDATE jobs SET owner = NULL WHERE id = ? AND owner = ? AND status IN ('succeeded','failed','canceled')")
+            .bind(&id).bind(&engine.inner.instance).execute(&engine.inner.db).await;
         engine.inner.previews.lock().unwrap().remove(&id);
         engine.inner.cancels.lock().unwrap().remove(&id);
         if let Some(n) = engine.inner.running.lock().unwrap().get_mut(&provider) {
@@ -314,7 +317,7 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
     if outputs.is_none() {
         let handle = handle.expect("handle set when not done");
         let batch = handle.is_batch();
-        let runtime = if batch { MAX_BATCH_RUNTIME } else { MAX_RUNTIME };
+        let runtime = if batch || job.output == "lora" { MAX_BATCH_RUNTIME } else { MAX_RUNTIME };
         let started_at = job.started_at.unwrap_or_else(now_ms);
         let mut attempt: u32 = 0;
         let mut errors: u32 = 0;
@@ -453,12 +456,14 @@ async fn build_request(engine: &Engine, job: &JobRow, spec: &pictesa_core::Model
         });
     }
     let suffix = job.preset.as_deref().and_then(|p| engine.preset(p)).map(|p| p.prompt_suffix).unwrap_or_default();
+    let mut params=job.params_map();
+    engine.lora_request_params(&job.user_id,&job.provider,&mut params).await.map_err(|e|e.to_string())?;
     Ok(GenerationRequest {
         job_id: job.id.clone(),
         model: spec.remote_id().to_string(),
         prompt: crate::jobs::with_preset(&job.prompt, &suffix),
         negative_prompt: job.negative_prompt.clone(),
-        params: job.params_map(),
+        params,
         inputs,
         num_outputs: job.count.max(1) as u32,
     })
@@ -467,7 +472,7 @@ async fn build_request(engine: &Engine, job: &JobRow, spec: &pictesa_core::Model
 /// Validity of signed input links handed to providers.
 pub const FILE_LINK_TTL_MS: i64 = 6 * 3600 * 1000;
 
-fn signed_file_url(engine: &Engine, base: &str, asset_id: &str) -> String {
+pub(crate) fn signed_file_url(engine: &Engine, base: &str, asset_id: &str) -> String {
     let exp = now_ms() + FILE_LINK_TTL_MS;
     format!("{}/files/{asset_id}?e={exp}&k={}", base.trim_end_matches('/'), file_key(engine, asset_id, exp))
 }
@@ -483,6 +488,14 @@ const DONE: &str = "done";
 async fn save_output(engine: &Engine, job: &JobRow, out: Output, guarded: bool) -> anyhow::Result<()> {
     let client = if guarded { &engine.inner.download_guarded } else { &engine.inner.download };
     let stored = match out {
+        Output::File { path, mime, cleanup_dir } => {
+            let result=async {
+                let file=tokio::fs::File::open(&path).await?;
+                engine.inner.files.store_stream(tokio_util::io::ReaderStream::new(file),Some(&mime),path.to_str(),true).await
+            }.await;
+            let _=tokio::fs::remove_dir_all(cleanup_dir).await;
+            result?
+        },
         Output::Bytes { data, mime } => engine.inner.files.store_bytes(&data, Some(&mime), None, true).await?,
         Output::Url { url, .. } if url.starts_with("data:") => {
             let (meta, b64) = url.split_once(',').ok_or_else(|| anyhow::anyhow!("bad data URI"))?;
@@ -502,7 +515,7 @@ async fn save_output(engine: &Engine, job: &JobRow, out: Output, guarded: bool) 
                     req = req.header(k, v);
                 }
                 match req.send().await {
-                    Ok(resp) if resp.status().is_success() => match engine.inner.files.store_response(resp, Some(&url), true).await {
+                    Ok(resp) if resp.status().is_success() => match engine.inner.files.store_response(resp, if job.output == "lora" { Some("weights.safetensors") } else { Some(&url) }, true).await {
                         Ok(s) => {
                             stored = Some(s);
                             break;
@@ -517,7 +530,12 @@ async fn save_output(engine: &Engine, job: &JobRow, out: Output, guarded: bool) 
             stored.ok_or_else(|| last.unwrap_or_else(|| anyhow::anyhow!("download failed")))?
         }
     };
-    engine.insert_asset(&job.user_id, &stored, "generated", Some(job), None).await?;
+    if job.output == "lora" && stored.kind != pictesa_core::MediaKind::Lora { anyhow::bail!("Trainer returned the wrong output file type."); }
+    let asset=engine.insert_asset(&job.user_id, &stored, "generated", Some(job), None).await?;
+    if let Err(e)=engine.register_lora(job,&asset).await {
+        let _=sqlx::query("DELETE FROM assets WHERE id=?").bind(&asset.id).execute(&engine.inner.db).await;
+        return Err(anyhow::anyhow!(e));
+    }
     Ok(())
 }
 

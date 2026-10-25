@@ -7,6 +7,7 @@
 
 pub mod error;
 pub mod model;
+pub mod lora;
 pub mod provider;
 pub mod request;
 pub mod schema;

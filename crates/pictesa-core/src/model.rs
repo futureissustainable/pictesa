@@ -8,6 +8,7 @@ pub enum MediaKind {
     Image,
     Video,
     Audio,
+    Lora,
 }
 
 impl MediaKind {
@@ -16,11 +17,14 @@ impl MediaKind {
             Self::Image => "image",
             Self::Video => "video",
             Self::Audio => "audio",
+            Self::Lora => "lora",
         }
     }
 
     pub fn from_mime(mime: &str) -> Option<Self> {
-        if mime.starts_with("image/") {
+        if mime == "application/x-safetensors" {
+            Some(Self::Lora)
+        } else if mime.starts_with("image/") {
             Some(Self::Image)
         } else if mime.starts_with("video/") {
             Some(Self::Video)
@@ -45,6 +49,7 @@ pub enum Task {
     Upscale,
     LipSync,
     TextToAudio,
+    Training,
 }
 
 /// The role an input file plays in a generation.
@@ -237,6 +242,8 @@ impl ParamSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "unit", rename_all = "snake_case")]
 pub enum Pricing {
+    PerRun { usd: f64 },
+    PerStep { usd: f64 },
     PerImage { usd: f64 },
     PerSecond { usd: f64 },
     PerVideo { usd: f64 },

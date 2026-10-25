@@ -150,6 +150,7 @@ pub fn parse_kind(s: &str) -> MediaKind {
     match s {
         "video" => MediaKind::Video,
         "audio" => MediaKind::Audio,
+        "lora" => MediaKind::Lora,
         _ => MediaKind::Image,
     }
 }

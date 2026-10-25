@@ -1,7 +1,7 @@
 // Shapes of the Pictesa HTTP API (docs/API.md). The server generates models, params and input
 // slots, so nothing here names a specific model or provider.
 
-export type MediaKind = "image" | "video" | "audio";
+export type MediaKind = "image" | "video" | "audio" | "lora";
 
 export type Task =
   | "text_to_image"
@@ -12,12 +12,13 @@ export type Task =
   | "video_to_audio"
   | "upscale"
   | "lip_sync"
-  | "text_to_audio";
+  | "text_to_audio"
+  | "training";
 
 export type InputRole = "reference" | "start_frame" | "end_frame" | "video" | "audio" | "mask";
 
 /** Param values are plain JSON scalars. */
-export type ParamValue = string | number | boolean | null;
+export type ParamValue = string | number | boolean | null | LoraSelection[];
 export type ParamValues = Record<string, ParamValue>;
 
 export interface InputSlot {
@@ -52,7 +53,7 @@ export type ParamSpec = ParamBase &
   );
 
 export type Pricing =
-  | { unit: "per_image" | "per_second" | "per_video" | "per_megapixel"; usd: number }
+  | { unit: "per_run" | "per_step" | "per_image" | "per_second" | "per_video" | "per_megapixel"; usd: number }
   | { unit: "local" }
   | { unit: "variable"; note: string };
 
@@ -421,3 +422,7 @@ export interface BatchRequest extends GenerationRequest {
   grid?: { key: string; values: ParamValue[] }[];
 }
 export interface BatchEstimate { run_count: number; total_estimated_cost_usd: number | null; max_runs: number }
+
+export interface Lora { asset: Asset; character_id: string | null; family: string; trigger_word: string }
+export interface LoraSelection { asset_id: string; strength: number }
+export interface TrainRequest { trainer: string; character?: string; asset_ids?: string[]; trigger_word: string; family: string; steps: number; rank: number; learning_rate: number }

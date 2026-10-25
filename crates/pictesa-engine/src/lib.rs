@@ -13,6 +13,7 @@ pub mod files;
 pub mod jobs;
 pub mod leaderboard;
 pub mod library;
+pub mod training;
 pub mod netguard;
 pub mod presets;
 pub mod prompts;

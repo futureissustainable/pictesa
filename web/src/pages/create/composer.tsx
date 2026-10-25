@@ -13,7 +13,6 @@ import {
   selectModel,
   setCompare,
   setCount,
-  takesCharacter,
   setNegativePrompt,
   setParam,
   setPrompt,
@@ -31,6 +30,7 @@ import { Icon, Spinner } from "../../ui/icon";
 import { InputSlots, slotLabel } from "./inputs";
 import { ComparePicker, ModelPicker, providerName } from "./model-picker";
 import { ParamControl, ParamField } from "./params";
+import { LoraPicker } from "./loras";
 import { BatchDialog } from "./batch";
 import { PromptHistoryControl, PromptsControl, SavePromptDialog, usePromptSuggestions } from "./prompts";
 import { PresetsStrip } from "./presets";
@@ -190,12 +190,12 @@ export function Composer() {
       model: model.id,
       prompt: model.prompt ? draft.prompt.trim() : "",
       negative_prompt: model.negative_prompt && draft.negativePrompt.trim() ? draft.negativePrompt.trim() : null,
-      params: requestParams(model, explicit),
+      params: { ...requestParams(model, explicit), ...(model.meta?.supports_loras === true && draft.loraByModel?.[model.id] ? { loras: [draft.loraByModel[model.id]!] } : {}) },
       inputs: attached.flatMap((input) => (input.asset ? [{ asset_id: input.asset.id, role: input.role }] : [])),
       count: draft.count,
       ...(preset ? { preset: preset.id } : {}),
       ...(compare.length ? { compare } : {}),
-      ...(characterId && takesCharacter(model) ? { character: characterId } : {}),
+      ...(characterId && model.inputs.some((slot) => slot.role === "reference" && slot.kind === "image") ? { character: characterId } : {}),
     } satisfies GenerationRequest;
   }
 
@@ -279,8 +279,9 @@ export function Composer() {
         }}
         onDrop={onDrop}
       >
+        {model && <LoraPicker model={model} characterId={characterId} />}
         <div className="composer-main">
-        {model && (model.inputs.length > 0 || characterId) && <InputSlots model={model} mode={mode} inputs={inputs} invalidRole={invalid?.startsWith("inputs.") ? invalid.slice(7) : null} />}
+        {model && (model.inputs.length > 0 || model.meta?.supports_loras || characterId) && <InputSlots model={model} mode={mode} inputs={inputs} invalidRole={invalid?.startsWith("inputs.") ? invalid.slice(7) : null} />}
         <div className="prompt-line">
           {model?.prompt === false ? (
             <p className="prompt-off">

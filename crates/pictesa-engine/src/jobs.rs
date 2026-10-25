@@ -71,7 +71,9 @@ impl Engine {
                 }
                 let released = spec.meta.get("date").and_then(Value::as_str).and_then(|d| d.get(..10)).map(String::from);
                 // Provider bindings are internal and heavy; the full spec comes from GET /api/models/{id}.
-                spec.meta = Value::Null;
+                let public_meta:Map<String,Value>=["supports_loras","lora_family"].into_iter().filter_map(|key|spec.meta.get(key).cloned().map(|value|(key.into(),value))).collect();
+                spec.meta = if public_meta.is_empty() {Value::Null} else {Value::Object(public_meta)};
+                if spec.output==pictesa_core::MediaKind::Lora {spec.complete=false;}
                 ModelView { arena: Vec::new(), spec, configured: ok, billed: is_billed, released }
             })
             .filter(|v| f.configured != Some(true) || v.configured)
@@ -204,6 +206,7 @@ impl Engine {
     /// Validates, prices and queues a generation (or a comparison across models) in one transaction:
     /// either every run is queued and paid, or nothing is.
     pub async fn create_generation(&self, user: &str, req: CreateGeneration) -> Result<Created> {
+        if req.params.contains_key("_training") && !req.compare.is_empty() {return Err(EngineError::invalid("Training runs one model at a time.",Some("compare")));}
         let mut plans = Vec::new();
         if req.compare.is_empty() {
             plans.push(self.plan(user, req).await?);
@@ -230,7 +233,7 @@ impl Engine {
                 one.params = req
                     .params
                     .iter()
-                    .filter_map(|(k, v)| spec.param_spec(k).and_then(|p| crate::recipes::fit_param(p, v)).map(|v| (k.clone(), v)))
+                    .filter_map(|(k, v)| if k == "loras" { Some((k.clone(),v.clone())) } else { spec.param_spec(k).and_then(|p| crate::recipes::fit_param(p, v)).map(|v| (k.clone(), v)) })
                     .collect();
                 one.inputs = req.inputs.iter().filter(|i| spec.accepts(i.role).is_some()).cloned().collect();
                 plans.push(self.plan(user, one).await.map_err(blame)?);
@@ -294,6 +297,10 @@ impl Engine {
     /// Queues an already-validated request inside an existing batch (recipes use this through `create_generation`).
     async fn plan(&self, user: &str, mut req: CreateGeneration) -> Result<Planned> {
         let spec = self.model(user, &req.model).await?;
+        let raw_training=req.params.remove("_training");
+        let training=self.validate_training(user,&spec,&mut req,raw_training).await?;
+        let raw_loras=req.params.remove("loras");
+        let loras=self.validate_loras(user,&spec,&mut req.prompt,raw_loras).await?;
         if let Some(cid) = req.character.clone().filter(|c| !c.is_empty()) {
             let slot = spec.accepts(pictesa_core::InputRole::Reference).filter(|s| s.kind == pictesa_core::MediaKind::Image).ok_or_else(|| {
                 EngineError::invalid(format!("{} does not take reference images, so it cannot use a character.", spec.name), Some("character"))
@@ -342,7 +349,9 @@ impl Engine {
             return Err(EngineError::invalid("Describe what to generate.", Some("prompt")));
         }
 
-        let params = validate_params(&spec, &req.params)?;
+        let mut params = validate_params(&spec, &req.params)?;
+        if let Some(value)=training {params.insert("_training".into(),value);}
+        if let Some(value)=loras {params.insert("loras".into(),value);}
         let inputs = self.validate_inputs(user, &spec, &req.inputs).await?;
         let count = req.count.unwrap_or(1).clamp(1, MAX_COUNT);
         let negative = req.negative_prompt.filter(|n| spec.negative_prompt && !n.trim().is_empty());
@@ -762,7 +771,7 @@ impl Engine {
                AND (? IS NULL OR s.provider = ?)
                AND (? IS NULL OR COALESCE(s.actual_micros, s.estimated_micros) >= ? * 1000000)
                AND (? IS NULL OR COALESCE(s.actual_micros, s.estimated_micros) <= ? * 1000000)
-               AND (? IS NULL OR a.kind = ?)
+               AND ((? IS NULL AND a.kind != 'lora') OR a.kind = ?)
                AND (? IS NULL OR a.favorite = ?)
                AND (? IS NULL OR a.model = ?)
                AND ((? IS NULL AND a.source != 'edit') OR a.source = ?)
@@ -943,6 +952,8 @@ fn coerce(p: &pictesa_core::ParamSpec, v: &Value) -> Value {
 fn with_markup(p: Pricing, m: f64) -> Pricing {
     let r = |usd: f64| (usd * m * 10_000.0).round() / 10_000.0;
     match p {
+        Pricing::PerRun { usd } => Pricing::PerRun { usd: r(usd) },
+        Pricing::PerStep { usd } => Pricing::PerStep { usd: usd * m },
         Pricing::PerImage { usd } => Pricing::PerImage { usd: r(usd) },
         Pricing::PerSecond { usd } => Pricing::PerSecond { usd: r(usd) },
         Pricing::PerVideo { usd } => Pricing::PerVideo { usd: r(usd) },
@@ -960,8 +971,11 @@ pub fn estimate_cost(spec: &ModelSpec, params: &Map<String, Value>, outputs: u32
             .unwrap_or(5.0)
     };
     let usd = match spec.pricing.as_ref()? {
+        Pricing::PerRun { usd } => *usd,
+        Pricing::PerStep { usd } => usd * params.get("_training").and_then(|t|t.get("steps")).and_then(Value::as_f64).unwrap_or(1000.0),
         Pricing::PerImage { usd } => usd * outputs as f64,
         Pricing::PerVideo { usd } => usd * outputs as f64,
+        Pricing::PerSecond { .. } if spec.output == pictesa_core::MediaKind::Lora => return None,
         Pricing::PerSecond { usd } => usd * seconds() * outputs as f64,
         Pricing::PerMegapixel { usd } => {
             let mp = match params.get(keys::RESOLUTION).and_then(Value::as_str) {

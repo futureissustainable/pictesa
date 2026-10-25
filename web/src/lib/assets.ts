@@ -8,6 +8,7 @@ const PAGE = 60;
 
 /** Whether an asset belongs in a list. Text search runs on the server, so `q` lists never take new items. */
 export function matchesQuery(asset: Asset, query: AssetQuery): boolean {
+  if (asset.kind === "lora" && query.kind !== "lora") return false;
   if (query.kind && asset.kind !== query.kind) return false;
   if (query.favorite && !asset.favorite) return false;
   if (query.source ? asset.source !== query.source : asset.source === "edit") return false;

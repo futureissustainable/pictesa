@@ -193,6 +193,7 @@ impl FileStore {
                 }
                 s.has_thumb = self.video_thumb(path, &thumb, s.duration_ms).await;
             }
+            MediaKind::Lora => {},
             MediaKind::Audio => {
                 if let Some((_, _, d)) = self.probe(path).await {
                     s.duration_ms = d;
@@ -271,6 +272,7 @@ fn on_checkerboard(img: &image::RgbaImage) -> image::RgbImage {
 
 /// Types Pictesa stores and serves. Nothing that a browser could execute (no SVG or HTML).
 const SAFE_MIMES: &[&str] = &[
+    "application/x-safetensors",
     "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif", "image/heic",
     "video/mp4", "video/quicktime", "video/webm",
     "audio/mpeg", "audio/wav", "audio/x-wav", "audio/ogg", "audio/flac", "audio/mp4", "audio/aac",
@@ -284,6 +286,7 @@ fn decide_mime(head: &[u8], mime_hint: Option<&str>, name_hint: Option<&str>, tr
     if !trusted {
         return None;
     }
+    if trusted && name_hint.is_some_and(|n| n.split('?').next().unwrap_or(n).ends_with(".safetensors")) { return Some("application/x-safetensors".into()); }
     let declared = mime_hint
         .map(|m| m.split(';').next().unwrap_or(m).trim().to_ascii_lowercase())
         .filter(|m| m != "application/octet-stream" && m != "binary/octet-stream")
@@ -326,6 +329,7 @@ pub fn sniff(b: &[u8]) -> Option<&'static str> {
 
 pub fn ext_for(mime: &str) -> &'static str {
     match mime {
+        "application/x-safetensors" => "safetensors",
         "image/png" => "png",
         "image/jpeg" | "image/jpg" => "jpg",
         "image/webp" => "webp",

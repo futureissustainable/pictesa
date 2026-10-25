@@ -1,0 +1,390 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "Queue OpenAPI for fal-ai/flux-lora-fast-training",
+    "version": "1.0.0",
+    "description": "The OpenAPI schema for the fal-ai/flux-lora-fast-training queue.",
+    "x-fal-metadata": {
+      "endpointId": "fal-ai/flux-lora-fast-training",
+      "category": "training",
+      "thumbnailUrl": "https://storage.googleapis.com/falserverless/gallery/video-training.webp",
+      "playgroundUrl": "https://fal.ai/models/fal-ai/flux-lora-fast-training",
+      "documentationUrl": "https://fal.ai/models/fal-ai/flux-lora-fast-training/api",
+      "about": "FLUX LoRA fine-tuning endpoint.\n\nThis endpoint fine-tunes a LoRA model on a dataset of images.\nBy default the fine-tuning process is configured for preprocessing a subject.\nThe training will generate both segmentation masks and caption for training.\n\nIf the `is_style` flag is set to `True`,\nthe training a style LoRA, which disables auto-captioning and sengmentation.\n\nTo provide your own captions, you can include a text file with the same name as\nthe image file. For example, if you have an image `photo.jpg`, you can include a\ntext file `photo.txt` with the caption.\n\nAdditionally you can include your own masks for the images. If you have a image\n`photo.jpg`, you can include a mask file `photo_mask.jpg`."
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Fal Key"
+      }
+    },
+    "schemas": {
+      "QueueStatus": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "IN_QUEUE",
+              "IN_PROGRESS",
+              "COMPLETED"
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "description": "The request id."
+          },
+          "response_url": {
+            "type": "string",
+            "description": "The response url."
+          },
+          "status_url": {
+            "type": "string",
+            "description": "The status url."
+          },
+          "cancel_url": {
+            "type": "string",
+            "description": "The cancel url."
+          },
+          "logs": {
+            "type": "object",
+            "description": "The logs.",
+            "additionalProperties": true
+          },
+          "metrics": {
+            "type": "object",
+            "description": "The metrics.",
+            "additionalProperties": true
+          },
+          "queue_position": {
+            "type": "integer",
+            "description": "The queue position."
+          }
+        },
+        "required": [
+          "status",
+          "request_id"
+        ]
+      },
+      "FluxLoraFastTrainingInput": {
+        "required": [
+          "images_data_url"
+        ],
+        "type": "object",
+        "x-fal-order-properties": [
+          "images_data_url",
+          "trigger_word",
+          "create_masks",
+          "steps",
+          "is_style",
+          "is_input_format_already_preprocessed",
+          "data_archive_format"
+        ],
+        "title": "PublicInput",
+        "properties": {
+          "is_input_format_already_preprocessed": {
+            "type": "boolean",
+            "default": false,
+            "description": "Specifies whether the input data is already in a processed format. When set to False (default), the system expects raw input where image files and their corresponding caption files share the same name (e.g., 'photo.jpg' and 'photo.txt'). Set to True if your data is already in a preprocessed format.",
+            "title": "Is Input Format Already Preprocessed"
+          },
+          "steps": {
+            "title": "Steps",
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Number of steps to train the LoRA on.",
+            "examples": [
+              1000
+            ]
+          },
+          "data_archive_format": {
+            "title": "Data Archive Format",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The format of the archive. If not specified, the format will be inferred from the URL."
+          },
+          "images_data_url": {
+            "type": "string",
+            "title": "Images Data Url",
+            "description": "\n        URL to zip archive with images. Try to use at least 4 images in general the more the better.\n\n        In addition to images the archive can contain text files with captions. Each text file should have the same name as the image file it corresponds to.\n    "
+          },
+          "create_masks": {
+            "type": "boolean",
+            "default": true,
+            "description": "If True segmentation masks will be used in the weight the training loss. For people a face mask is used if possible.",
+            "title": "Create Masks"
+          },
+          "trigger_word": {
+            "title": "Trigger Word",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trigger word to be used in the captions. If None, a trigger word will not be used.\n        If no captions are provide the trigger_word will be used instead of captions. If captions are the trigger word will not be used.\n        "
+          },
+          "is_style": {
+            "type": "boolean",
+            "default": false,
+            "description": "If True, the training will be for a style. This will deactivate segmentation, captioning and will use trigger word instead. Use the trigger word to specify the style.",
+            "title": "Is Style"
+          }
+        }
+      },
+      "FluxLoraFastTrainingOutput": {
+        "required": [
+          "diffusers_lora_file",
+          "config_file"
+        ],
+        "type": "object",
+        "x-fal-order-properties": [
+          "diffusers_lora_file",
+          "config_file",
+          "debug_preprocessed_output"
+        ],
+        "title": "Output",
+        "properties": {
+          "config_file": {
+            "$ref": "#/components/schemas/File",
+            "description": "URL to the training configuration file."
+          },
+          "debug_preprocessed_output": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/File"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "URL to the preprocessed images."
+          },
+          "diffusers_lora_file": {
+            "$ref": "#/components/schemas/File",
+            "description": "URL to the trained diffusers lora weights."
+          }
+        }
+      },
+      "File": {
+        "required": [
+          "url"
+        ],
+        "type": "object",
+        "x-fal-order-properties": [
+          "url",
+          "content_type",
+          "file_name",
+          "file_size"
+        ],
+        "title": "File",
+        "properties": {
+          "file_name": {
+            "title": "File Name",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The name of the file. It will be auto-generated if not provided.",
+            "examples": [
+              "z9RV14K95DvU.png"
+            ]
+          },
+          "content_type": {
+            "title": "Content Type",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The mime type of the file.",
+            "examples": [
+              "image/png"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "The URL where the file can be downloaded from."
+          },
+          "file_size": {
+            "title": "File Size",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The size of the file in bytes.",
+            "examples": [
+              4404019
+            ]
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/fal-ai/flux-lora-fast-training/requests/{request_id}/status": {
+      "get": {
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Request ID"
+            }
+          },
+          {
+            "name": "logs",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "Whether to include logs (`1`) in the response or not (`0`)."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fal-ai/flux-lora-fast-training/requests/{request_id}/cancel": {
+      "put": {
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Request ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request was cancelled successfully."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fal-ai/flux-lora-fast-training": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FluxLoraFastTrainingInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The request status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fal-ai/flux-lora-fast-training/requests/{request_id}": {
+      "get": {
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Request ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result of the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FluxLoraFastTrainingOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://queue.fal.run"
+    }
+  ],
+  "security": [
+    {
+      "apiKeyAuth": []
+    }
+  ]
+}

@@ -151,7 +151,7 @@ impl Provider for Mock {
     }
 
     fn models(&self) -> Vec<ModelSpec> {
-        vec![
+        let mut models=vec![
             ModelSpec::new("mock", "image", "Mock image", MediaKind::Image, &[Task::TextToImage, Task::ImageEdit])
                 .input(InputSlot::new(InputRole::Reference, MediaKind::Image, 4))
                 .input(InputSlot::new(InputRole::Mask, MediaKind::Image, 1))
@@ -175,7 +175,10 @@ impl Provider for Mock {
                 .pricing(Pricing::PerVideo { usd: 0.05 })
                 .describe("Free fake video model (needs ffmpeg). Returns a test pattern clip.")
                 .tag("featured"),
-        ]
+        ];
+        models[0].meta["supports_loras"]=json!(true);
+        models[0].meta["lora_family"]=json!("flux1");
+        models
     }
 
     async fn check(&self, _ctx: &Ctx) -> ProviderResult<()> {
@@ -196,11 +199,17 @@ impl Provider for Mock {
                 "the mock refuses prompts containing 'fail please'".into(),
             ));
         }
+        if let Some(loras)=req.params.get("loras").and_then(serde_json::Value::as_array) {
+            for lora in loras {
+                if !lora.get("path").and_then(serde_json::Value::as_str).is_some_and(|path|std::path::Path::new(path).is_file()) {return Err(ProviderError::InvalidInput("Mock received no LoRA file.".into()));}
+            }
+        }
         let (w, h) = size_for(req);
         Ok(Submission::Pending(RemoteHandle::with(
             format!("mock-{}", ulid::Ulid::new()),
             json!({
                 "started": now_ms().to_string(), "model": model.remote_id(), "prompt": req.prompt, "w": w, "h": h,
+                "loras":req.params.get("loras"),
                 "n": req.num_outputs, "seconds": req.i64("duration").unwrap_or(2), "batch": model.is_batch(&req.params),
             }),
         )))

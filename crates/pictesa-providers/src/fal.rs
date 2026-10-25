@@ -105,6 +105,7 @@ fn category_kind(category: &str, endpoint: &str) -> Option<(MediaKind, Vec<Task>
         || endpoint.contains("lip-sync")
         || endpoint.contains("sync-lipsync");
     Some(match category {
+        "training" if pictesa_core::lora::family(endpoint,&Value::Null).is_some() => (MediaKind::Lora, vec![Task::Training]),
         "text-to-image" => (MediaKind::Image, vec![Task::TextToImage]),
         "image-to-image" if up => (MediaKind::Image, vec![Task::Upscale]),
         "image-to-image" => (MediaKind::Image, vec![Task::ImageEdit]),
@@ -167,7 +168,11 @@ fn price_of(p: &Value) -> Option<Pricing> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_ascii_lowercase();
-    Some(if unit.starts_with("second") {
+    Some(if unit == "step" || unit == "steps" {
+        Pricing::PerStep { usd }
+    } else if unit == "training" || unit == "trainings" || unit == "run" || unit == "runs" {
+        Pricing::PerRun { usd }
+    } else if unit.starts_with("second") {
         Pricing::PerSecond { usd }
     } else if unit.starts_with("image") {
         Pricing::PerImage { usd }
@@ -242,7 +247,9 @@ impl Provider for Fal {
     }
 
     fn models(&self) -> Vec<ModelSpec> {
-        Vec::new()
+        let mut m = ModelSpec::new("fal", "fal-ai/flux-lora-fast-training", "FLUX.1 LoRA fast training", MediaKind::Lora, &[Task::Training]);
+        m.complete = false; m.prompt = false;
+        vec![m]
     }
 
     async fn discover(&self, ctx: &Ctx) -> ProviderResult<Vec<ModelSpec>> {
@@ -363,18 +370,7 @@ impl Provider for Fal {
             .ok_or_else(|| {
                 ProviderError::NotSupported(format!("fal published no input schema for {endpoint}"))
             })?;
-        let read = schema::read_input_schema(&input_ref, Some(&schemas), model.output);
-        let mut spec = model.clone();
-        spec.params = read.params;
-        spec.inputs = read.inputs;
-        spec.prompt = read.has_prompt;
-        spec.negative_prompt = read.has_negative_prompt;
-        spec.max_outputs = read.max_outputs;
-        if let Some(obj) = spec.meta.as_object_mut() {
-            obj.insert("bindings".into(), read.bindings);
-        } else {
-            spec.meta = json!({ "bindings": read.bindings });
-        }
+        let mut spec = resolve_schema(model, &doc, &input_ref, &schemas)?;
         if spec.pricing.is_none() {
             if let Some(key) = auth(ctx) {
                 let req = ctx
@@ -419,6 +415,23 @@ impl Provider for Fal {
         })?;
         let bindings = model.meta.get("bindings").cloned().unwrap_or(Value::Null);
         let mut body: Map<String, Value> = schema::body_from_bindings(&bindings, req);
+        if model.output == MediaKind::Lora {
+            let temp = crate::training::Temp::new(ctx)?;
+            let archive = crate::training::archive(req, &temp.0).await?;
+            let zip_url = upload_archive(ctx, &archive).await?;
+            body = training_body(model, req, &zip_url)?;
+        } else if let Some(loras) = req.params.get("loras").and_then(Value::as_array) {
+            let mut attached = Vec::new();
+            for lora in loras {
+                let path = lora.get("path").and_then(Value::as_str).ok_or_else(||ProviderError::InvalidInput("Missing LoRA file.".into()))?;
+                let url = match lora.get("url").and_then(Value::as_str) {
+                    Some(url)=>url.to_string(),
+                    None=>upload_archive(ctx,std::path::Path::new(path)).await?,
+                };
+                attached.push(lora_binding(&url,lora.get("strength").and_then(Value::as_f64).unwrap_or(1.0)));
+            }
+            body.insert("loras".into(), json!(attached));
+        }
         for (role, field, array) in schema::input_bindings(&bindings) {
             let mut urls = Vec::new();
             for input in req.inputs(role) {
@@ -449,6 +462,7 @@ impl Provider for Fal {
                 "response_url": answer.get("response_url"),
                 "cancel_url": answer.get("cancel_url"),
                 "output": model.output,
+                "lora_output": model.meta.get("lora_output"),
             }),
         )))
     }
@@ -458,7 +472,7 @@ impl Provider for Fal {
         let status_url = handle
             .data_str("status_url")
             .ok_or_else(|| ProviderError::Failed("job has no status URL".into()))?;
-        let status = get_json(ctx.http.get(status_url).header("Authorization", &key)).await?;
+        let status = get_json(ctx.http.get(status_url).query(&[("logs", "1")]).header("Authorization", &key)).await?;
         match status.get("status").and_then(Value::as_str).unwrap_or("") {
             "IN_QUEUE" => Ok(PollStatus::Queued {
                 position: status
@@ -466,10 +480,10 @@ impl Provider for Fal {
                     .and_then(Value::as_u64)
                     .map(|p| p as u32),
             }),
-            "IN_PROGRESS" => Ok(PollStatus::Running {
-                progress: None,
-                message: None,
-            }),
+            "IN_PROGRESS" => {
+                let log = status.get("logs").and_then(Value::as_array).and_then(|logs|logs.last()).and_then(|l|l.get("message")).and_then(Value::as_str);
+                Ok(PollStatus::Running { progress:log.and_then(pictesa_core::lora::progress), message:log.map(|l|l.chars().take(300).collect()) })
+            },
             "COMPLETED" => {
                 if let Some(err) = status.get("error").and_then(Value::as_str) {
                     return Ok(PollStatus::Failed(failure(err)));
@@ -502,6 +516,13 @@ impl Provider for Fal {
                     .data
                     .get("output")
                     .and_then(|o| serde_json::from_value::<MediaKind>(o.clone()).ok());
+                if want == Some(MediaKind::Lora) {
+                    let key = handle.data_str("lora_output").ok_or_else(||ProviderError::Failed("Missing trainer output schema.".into()))?;
+                    return Ok(match training_output(&body, key) {
+                        Ok(url)=>PollStatus::Done(vec![Output::url(url)]),
+                        Err(e)=>PollStatus::Failed(e),
+                    });
+                }
                 let urls = collect_media_urls(&body, want);
                 if urls.is_empty() {
                     return Ok(PollStatus::Failed(ProviderError::Failed(format!(
@@ -634,3 +655,141 @@ mod tests {
         assert!(matches!(price(0.00125, "compute seconds"), Pricing::Variable { note } if note == "$0.00125 per compute second"));
     }
 }
+
+fn deref<'a>(node: &'a Value, schemas: &'a Value) -> &'a Value {
+    node.get("$ref").and_then(Value::as_str).and_then(|r|r.strip_prefix("#/components/schemas/")).and_then(|k|schemas.get(k)).unwrap_or(node)
+}
+
+fn resolve_schema(model: &ModelSpec, doc: &Value, input: &Value, schemas: &Value) -> ProviderResult<ModelSpec> {
+    let read = schema::read_input_schema(input, Some(schemas), model.output);
+    let mut spec=model.clone();
+    spec.params=read.params;spec.inputs=read.inputs;spec.prompt=read.has_prompt;spec.negative_prompt=read.has_negative_prompt;spec.max_outputs=read.max_outputs;
+    spec.meta["bindings"]=read.bindings;
+    let properties=deref(input,schemas).get("properties").cloned().unwrap_or(json!({}));
+    if properties.get("loras").is_some_and(|p|deref(p,schemas).get("type").and_then(Value::as_str)==Some("array")) {
+        spec.meta["supports_loras"]=json!(true);
+        spec.meta["lora_family"]=json!(pictesa_core::lora::family(&spec.id,&spec.meta));
+    }
+    if model.output==MediaKind::Lora {
+        let input_schema=deref(input,schemas);
+        let props=properties.as_object().ok_or_else(||ProviderError::NotSupported("Trainer has no input properties.".into()))?;
+        let field=["images_data_url","image_data_url","training_data_url"].into_iter().find(|k|props.contains_key(*k))
+            .ok_or_else(||ProviderError::NotSupported("This trainer does not accept an image ZIP URL.".into()))?;
+        let output=doc.get("paths").and_then(|paths|paths.get(format!("/{}/requests/{{request_id}}",model.remote_id()))).and_then(|p|p.pointer("/get/responses/200/content/application~1json/schema"))
+            .map(|s|deref(s,schemas))
+            .or_else(||schemas.as_object().and_then(|m|m.iter().find(|(k,_)|k.ends_with("Output")).map(|(_,v)|v)))
+            .ok_or_else(||ProviderError::NotSupported("Trainer has no output schema.".into()))?;
+        let output_key=output.get("properties").and_then(Value::as_object).and_then(|p|p.keys().find(|k|k.contains("lora") && k.ends_with("file")))
+            .ok_or_else(||ProviderError::NotSupported("Trainer does not publish a LoRA weights file output.".into()))?;
+        spec.meta["training_schema"]=input_schema.clone();
+        spec.meta["training_zip_field"]=json!(field);
+        spec.meta["lora_output"]=json!(output_key);
+        spec.meta["lora_family"]=json!(pictesa_core::lora::family(&model.id,&model.meta));
+        spec.params.clear();spec.prompt=false;spec.max_outputs=1;
+        spec.meta["bindings"]=json!({});
+        spec.inputs=vec![pictesa_core::InputSlot {min:3,..pictesa_core::InputSlot::new(InputRole::Reference,MediaKind::Image,100)}];
+    }
+    Ok(spec)
+}
+
+pub fn training_body(model: &ModelSpec, req: &GenerationRequest, zip_url: &str) -> ProviderResult<Map<String,Value>> {
+    let opts=crate::training::options(req)?;
+    let props=model.meta.pointer("/training_schema/properties").and_then(Value::as_object).ok_or_else(||ProviderError::NotSupported("Trainer has no published schema.".into()))?;
+    let field=model.meta.get("training_zip_field").and_then(Value::as_str).ok_or_else(||ProviderError::NotSupported("Trainer needs a ZIP URL field.".into()))?;
+    let mut body=Map::new(); body.insert(field.into(),json!(zip_url));
+    let steps=["steps","number_of_steps"].into_iter().find(|k|props.contains_key(*k));
+    if let Some(key)=steps {body.insert(key.into(),json!(opts.steps));}
+    let trigger=["trigger_word","trigger_phrase","default_caption"].into_iter().find(|k|props.contains_key(*k)).ok_or_else(||ProviderError::NotSupported("Trainer has no trigger word setting.".into()))?;
+    body.insert(trigger.into(),json!(opts.trigger_word));
+    if props.contains_key("learning_rate") {body.insert("learning_rate".into(),json!(opts.learning_rate));}
+    else if opts.learning_rate!=0.0001 {return Err(ProviderError::InvalidInput("This trainer fixes its learning rate. Use the default.".into()));}
+    if let Some(key)=["rank","lora_rank"].into_iter().find(|k|props.contains_key(*k)) {body.insert(key.into(),json!(opts.rank));}
+    else if opts.rank!=16 {return Err(ProviderError::InvalidInput("This trainer fixes its rank. Use the default.".into()));}
+    for (key,value) in &body {
+        if let Some(n)=value.as_f64() {
+            let spec=&props[key];
+            if spec.get("minimum").and_then(Value::as_f64).is_some_and(|min|n<min) || spec.get("maximum").and_then(Value::as_f64).is_some_and(|max|n>max) {
+                return Err(ProviderError::InvalidInput(format!("{key} is outside this trainer's published range.")));
+            }
+        }
+    }
+    for key in model.meta.pointer("/training_schema/required").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        if !body.contains_key(key) && props.get(key).and_then(|v|v.get("default")).is_none() {return Err(ProviderError::NotSupported(format!("This trainer requires an unsupported setting: {key}.")));}
+    }
+    Ok(body)
+}
+
+fn training_output(body:&Value, key:&str)->ProviderResult<String> {
+    let file=body.get(key).ok_or_else(||ProviderError::Failed("Trainer finished without LoRA weights.".into()))?;
+    let url=file.get("url").and_then(Value::as_str).or_else(||file.as_str()).filter(|s|s.starts_with("https://"))
+        .ok_or_else(||ProviderError::Failed("Trainer returned no HTTPS LoRA weights URL.".into()))?;
+    Ok(url.into())
+}
+
+async fn upload_archive(ctx:&Ctx,path:&std::path::Path)->ProviderResult<String> {
+    let key=auth(ctx).ok_or_else(||ProviderError::Auth("missing fal key".into()))?;
+    let mime=if path.extension().is_some_and(|e|e=="zip") {"application/zip"} else {"application/x-safetensors"};
+    let init=send_json(ctx.http.post(UPLOAD).header("Authorization",&key),&json!({"content_type":mime,"file_name":path.file_name().and_then(|n|n.to_str()).unwrap_or("input")})).await?;
+    let put=init.get("upload_url").and_then(Value::as_str).ok_or_else(||ProviderError::Failed("fal returned no upload URL.".into()))?;
+    let url=init.get("file_url").and_then(Value::as_str).ok_or_else(||ProviderError::Failed("fal returned no file URL.".into()))?;
+    let file=tokio::fs::File::open(path).await.map_err(|_|ProviderError::InvalidInput("Could not read training file.".into()))?;
+    let size=file.metadata().await.map_err(|_|ProviderError::InvalidInput("Could not stat training file.".into()))?.len();
+    use futures::stream::TryStreamExt;
+    let stream=futures::stream::try_unfold(file,|mut file|async move {
+        use tokio::io::AsyncReadExt;
+        let mut chunk=vec![0;65536];let n=file.read(&mut chunk).await?;
+        if n==0 {Ok::<_,std::io::Error>(None)}else {chunk.truncate(n);Ok(Some((chunk,file)))}
+    }).map_ok(bytes::Bytes::from);
+    let resp=ctx.http.put(put).header("Content-Type",mime).header("Content-Length",size).body(reqwest::Body::wrap_stream(stream)).send().await.map_err(net_error)?;
+    if !resp.status().is_success() {return Err(ProviderError::Failed(format!("fal upload failed (HTTP {}).",resp.status())));}
+    Ok(url.into())
+}
+
+#[cfg(test)]
+mod training_tests {
+    use super::*;
+    /// Published OpenAPI responses downloaded on 25.10.2026; no training calls.
+    #[test]
+    fn published_trainer_shapes_map_zip_settings_and_weights() {
+        for (id,raw,zip,step,trigger,output) in [
+            ("flux-lora-fast-training",include_str!("../tests/fixtures/training/flux-lora-fast-training.json"),"images_data_url","steps","trigger_word","diffusers_lora_file"),
+            ("qwen-image-trainer",include_str!("../tests/fixtures/training/qwen-image-trainer.json"),"image_data_url","steps","trigger_phrase","lora_file"),
+            ("qwen-image-2512-trainer",include_str!("../tests/fixtures/training/qwen-image-2512-trainer.json"),"image_data_url","steps","default_caption","diffusers_lora_file"),
+            ("wan-trainer/t2v",include_str!("../tests/fixtures/training/wan-trainer-t2v.json"),"training_data_url","number_of_steps","trigger_phrase","lora_file"),
+            ("wan-trainer",include_str!("../tests/fixtures/training/wan-trainer.json"),"training_data_url","number_of_steps","trigger_phrase","lora_file"),
+        ] {
+            let doc:Value=serde_json::from_str(raw).unwrap();let schemas=&doc["components"]["schemas"];
+            let input=schemas.as_object().unwrap().iter().find(|(k,_)|k.ends_with("Input")).unwrap().1;
+            let model=ModelSpec::new("fal",&format!("fal-ai/{id}"),id,MediaKind::Lora,&[Task::Training]);
+            let spec=resolve_schema(&model,&doc,input,schemas).unwrap();
+            let req=GenerationRequest{job_id:"j".into(),model:id.into(),prompt:String::new(),negative_prompt:None,params:json!({"_training":{"trigger_word":"maya","family":spec.meta["lora_family"]}}).as_object().unwrap().clone(),inputs:vec![],num_outputs:1};
+            let body=training_body(&spec,&req,"https://example.com/images.zip").unwrap();
+            assert_eq!(body[zip],"https://example.com/images.zip");assert_eq!(body[step],1000);assert_eq!(body[trigger],"maya");
+            assert!(!body.contains_key("_training"));assert!(!body.contains_key("rank"));
+            assert_eq!(spec.meta["lora_output"],output);
+            assert!(schema::input_bindings(&spec.meta["bindings"]).is_empty(),"training ZIP must not be overwritten by an inference image binding");
+            assert_eq!(training_output(&json!({output:{"url":"https://example.com/weights.safetensors"},"config_file":{"url":"https://example.com/config.yaml"}}),output).unwrap(),"https://example.com/weights.safetensors");
+            assert!(training_output(&json!({"config_file":{"url":"https://example.com/config.yaml"}}),output).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod lora_tests {
+    use super::*;
+    #[test]
+    fn lora_capability_comes_from_schema_and_has_a_family() {
+        let model=ModelSpec::new("fal","fal-ai/flux-lora","FLUX LoRA",MediaKind::Image,&[Task::TextToImage]);
+        let doc=json!({});
+        let schema=json!({"type":"object","properties":{"prompt":{"type":"string"},"loras":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"scale":{"type":"number"}}}}}});
+        let spec=resolve_schema(&model,&doc,&schema,&Value::Null).unwrap();
+        assert_eq!(lora_binding("https://example.com/maya.safetensors",0.75),json!({"path":"https://example.com/maya.safetensors","scale":0.75}));
+        assert_eq!(spec.meta["supports_loras"],true);assert_eq!(spec.meta["lora_family"],"flux1");
+        let absent=resolve_schema(&model,&doc,&json!({"type":"object","properties":{"prompt":{"type":"string"}}}),&Value::Null).unwrap();
+        assert_ne!(absent.meta["supports_loras"],true);
+        assert!(matches!(price_of(&json!({"unit_price":0.001,"unit":"steps"})),Some(Pricing::PerStep{usd}) if usd==0.001));
+    }
+}
+
+
+fn lora_binding(url:&str,strength:f64)->Value {json!({"path":url,"scale":strength})}

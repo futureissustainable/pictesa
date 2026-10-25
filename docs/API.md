@@ -48,7 +48,7 @@ Secret values are never returned, only `set` and `source`.
 
 ## Models
 
-`GET /api/models?output=image|video|audio&task=text_to_video&provider=fal&q=kling&configured=true&sort=arena`
+`GET /api/models?output=image|video|audio|lora&task=text_to_video&provider=fal&q=kling&configured=true&sort=arena`
 → `{ models: [ModelSpec & { configured: bool, arena?: [ArenaScore], released?: "YYYY-MM-DD" }] }`
 
 `sort`: `arena` (best rated first, in the arena of `task` when given), `newest` (by `released`) or `name`. Without it, set-up and featured models come first.
@@ -146,7 +146,7 @@ A generation with `preset` appends `prompt_suffix` to the prompt and merges `par
 `Asset`:
 ```json
 {
-  "id": "01J...", "kind": "image"|"video"|"audio", "mime": "image/png",
+  "id": "01J...", "kind": "image"|"video"|"audio"|"lora", "mime": "image/png",
   "width": 1024, "height": 1024, "duration_ms": null, "size": 812345,
   "url": "/files/01J...", "thumb_url": "/thumbs/01J..." ,
   "source": "generated"|"upload"|"import", "job_id": "01J...", "model": "fal:...", "prompt": "...",
@@ -191,7 +191,7 @@ Provider contracts: [OpenAI Batch API](https://developers.openai.com/api/docs/gu
 ## MCP
 
 `POST /mcp` speaks the Model Context Protocol (Streamable HTTP, JSON responses). `pictesa mcp` speaks it over stdio.
-Tools: `list_collections`, `add_to_collection`, `list_models`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
+Tools: `train_lora`, `get_training`, `list_loras`, `list_collections`, `add_to_collection`, `list_models`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
 
 ## Errors
 
@@ -376,3 +376,56 @@ Limits: inputs need a known duration of at most 600 seconds each; joined duratio
 ```
 
 The video editor's cloud tools use configured catalog models and their published parameter schemas: **Extend** selects video extension endpoints; **Upscale** selects video upscalers such as Topaz or SeedVR; **Create sound** selects video-to-audio or synchronized sound models. Models may return audio alone or a video with sound. Their prices and limits come from the provider. See [fal MMAudio](https://fal.ai/models/fal-ai/mmaudio-v2/api) and [Topaz](https://fal.ai/topaz). Catalog task `video_to_audio` is available as a model-list filter and through MCP `list_models`; existing generation tools handle it.
+
+## Character training and LoRAs
+
+Training uses the normal job queue, progress events, retry, cancellation, budgets and wallet reservations. No provider request starts during validation or estimation. Local ai-toolkit training is free and available only in local mode; fal training is paid. `PICTESA_DENY_PAID=1` blocks fal training too.
+
+| Method | Path | Body / query | Answer |
+|---|---|---|---|
+| GET | `/api/models?output=lora` | optional `configured=true` | Trainer models from the active fal catalog and local ai-toolkit |
+| POST | `/api/training/estimate` | Training request below | `{ run_count: 1, total_estimated_cost_usd, max_runs }`, without reserving funds |
+| POST | `/api/training` | Training request below | 201 `{ batch_id, jobs }` |
+| GET | `/api/training` | | Latest 50 training jobs |
+| GET | `/api/training/{id}` | | Normal `Job` with `output: "lora"`, progress and weights asset |
+| GET | `/api/loras` | optional `family`, `character` | `{ loras: [{ asset, character_id, family, trigger_word }] }` |
+
+```json
+{
+  "trainer": "ai-toolkit:flux1",
+  "character": "CHARACTER_ID",
+  "trigger_word": "maya_person",
+  "family": "flux1",
+  "steps": 1000,
+  "rank": 16,
+  "learning_rate": 0.0001
+}
+```
+
+Instead of `character`, send `asset_ids: ["IMAGE_ID", "..."]` to choose library images. Inputs must be 3 to 100 distinct, owned, nontrashed PNG, JPEG or WebP images, at least 256 px per side, no more than 8192 px per side, 24 megapixels or 32 MiB each, and no more than 512 MiB in total. Image count, dimensions, ownership, settings and published trainer limits are checked before money is reserved. Steps: 100 to 10,000; rank: 4 to 128; learning rate: 0.000001 to 0.001. The trigger contains 1 to 64 ASCII letters, numbers or underscores. Defaults are 1000 steps, rank 16, learning rate 0.0001.
+
+Supported families are `flux1`, `qwen_image`, `qwen_image_2512` and `wan21`. Local training currently supports the first, second and fourth. Families are matched conservatively: FLUX.2, FLUX Kontext, Qwen editing and Wan 2.2 do not inherit incompatible LoRAs. fal trainers use their published input and output schemas, including each ZIP field, steps field, trigger or caption field, exposed learning rate and weights output. Trainers without a published rank or learning-rate control keep their provider defaults; changing those unsupported settings is rejected. The API's default rank and learning-rate values act as placeholders for provider-fixed values, not a claim about those values. Steps outside the published schema's range are rejected. The Qwen Image 2512 trainer receives the trigger as `default_caption`, and every ZIP includes matching trigger captions.
+
+fal examples: `fal:fal-ai/flux-lora-fast-training`, `fal:fal-ai/qwen-image-2512-trainer`, `fal:fal-ai/wan-trainer/t2v`. Availability comes from the active catalog. The older `qwen-image-trainer` and bare `wan-trainer` endpoints are deprecated upstream; their recorded schemas remain contract test fixtures, not recommended endpoints. ZIP datasets stream to fal storage before submission. Only the schema's LoRA output is saved, never the trainer's config or debug archive. Published prices per training run or step produce estimates; compute-time or unknown pricing remains `null`. Existing budgets reject unknown-cost paid runs while a cap is active; hosted wallet runs require a known estimate. Cancellation after fal accepts a job can still cost money, as with ordinary paid generations.
+
+Configure **Settings > Providers > Local training (ai-toolkit)** with its installation folder, or set `PICTESA_AI_TOOLKIT_PATH`. The folder needs `run.py` and its dependencies; Pictesa uses `venv/bin/python` (`venv/Scripts/python.exe` on Windows) when present, else `python3`. An executable wrapper is also accepted and receives the generated config path as its sole argument. Pictesa does not install ai-toolkit, download model weights in advance or manage GPU drivers. Configs are generated in YAML 1.2's JSON subset, with escaped paths, dataset captions, the requested steps/rank/rate, batch size 1, gradient checkpointing, disabled samples and `push_to_hub: false`. stdout and stderr progress (`250/1000`, including carriage-return tqdm lines) becomes live job progress. One local training job runs at a time; cancellation kills its subprocess. A stopped local training process cannot resume its GPU state after a Pictesa restart: retry starts a fresh job. Temporary datasets and outputs are removed after completion, failure or cancellation.
+
+Weights have asset kind `lora`, MIME `application/x-safetensors`, a downloadable `/files/{id}` URL and no thumbnail. Default asset lists and live image grids exclude them; `/api/assets?kind=lora` lists them explicitly. Character links and trigger metadata are private to their owner. Deleting a character keeps the weights but clears their character link. Trashing weights removes them from the picker; deleting weights permanently removes their LoRA metadata.
+
+To generate, send up to four compatible LoRAs in normal generation params:
+
+```json
+{
+  "model": "fal:fal-ai/flux-lora",
+  "prompt": "at a lake at dawn",
+  "params": { "loras": [{ "asset_id": "LORA_ASSET_ID", "strength": 0.8 }] }
+}
+```
+
+Strength is 0 to 2. The engine checks the owner, asset state and family, then adds each missing trigger word once. Clients send asset IDs, never filesystem paths or arbitrary URLs. fal models expose the picker only when their published schema accepts a `loras` array, mapped to `{ path: <uploaded or signed URL>, scale: <strength> }`.
+
+For local generation, set `PICTESA_COMFYUI_LORA_DIR` or `PICTESA_SDCPP_LORA_DIR`, or the provider's **Shared LoRA directory** setting. This must be the directory the corresponding local server actually reads, accessible on Pictesa's filesystem. Weights are copied under content-hash filenames; these copies remain in that directory after library deletion. Without a shared directory, local LoRA use is unavailable. Shared-directory writes are restricted to local mode. ComfyUI workflows with a known family, a model link and the required LoRA loader node get a `LoraLoader` (or `LoraLoaderModelOnly`) inserted into their model/CLIP chain. Workflows with an existing LoRA chain keep their explicit routing and do not expose this picker. stable-diffusion.cpp must advertise the `lora` capability and receives structured `lora: [{ path, multiplier, is_high_noise: false }]` entries. No prompt tags are used. Remote local servers without a shared filesystem need manual weight installation and workflow configuration.
+
+The studio has **Characters > Train LoRA**, a **LoRAs** list with progress, cancel/retry and downloads, and a compatible-model composer picker with strength. Attaching a character offers its matching trained LoRA; using it is an explicit choice.
+
+Sources: [fal trainer schema](https://fal.ai/models/fal-ai/flux-lora-fast-training/api), [Qwen Image 2512 trainer](https://fal.ai/models/fal-ai/qwen-image-2512-trainer/api), [Wan T2V trainer](https://fal.ai/models/fal-ai/wan-trainer/t2v/api), [ai-toolkit example configs](https://github.com/ostris/ai-toolkit/tree/main/config/examples), [stable-diffusion.cpp LoRA API](https://github.com/leejet/stable-diffusion.cpp/blob/master/examples/server/api.md).
