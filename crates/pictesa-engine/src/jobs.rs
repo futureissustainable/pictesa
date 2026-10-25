@@ -37,11 +37,15 @@ impl Engine {
         self.check_local_catalogs(user).await;
         let mut configured = HashMap::new();
         let mut billed = HashMap::new();
+        let mut local = std::collections::HashSet::new();
         for p in self.inner.catalog.providers() {
             let info = p.info();
             let resolved = self.resolve_fields(user, p.as_ref()).await?;
             configured.insert(info.id.clone(), Self::is_configured(&info, &resolved));
             billed.insert(info.id.clone(), Self::uses_platform(&info, &resolved));
+            if info.kind == pictesa_core::ProviderKind::Local {
+                local.insert(info.id);
+            }
         }
         let markup = self.inner.billing.markup;
         let q = f.q.as_deref().map(str::to_lowercase).filter(|q| !q.is_empty());
@@ -68,6 +72,10 @@ impl Engine {
                 let is_billed = billed.get(&spec.provider).copied().unwrap_or(false);
                 if is_billed {
                     spec.pricing = spec.pricing.map(|p| with_markup(p, markup));
+                } else if local.contains(&spec.provider) {
+                    // Shows what a run costs: local providers are free unless the platform bills them
+                    // (mock models carry a sample price only for that case).
+                    spec.pricing = Some(Pricing::Local);
                 }
                 let released = spec.meta.get("date").and_then(Value::as_str).and_then(|d| d.get(..10)).map(String::from);
                 // Provider bindings are internal and heavy; the full spec comes from GET /api/models/{id}.

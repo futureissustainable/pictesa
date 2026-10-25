@@ -79,6 +79,16 @@ async fn bad_input_is_refused_with_the_field_named() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn local_mode_lists_mock_models_at_the_price_their_runs_cost() {
+    let e = engine("local-prices", Mode::Local).await;
+    let filter = pictesa_engine::ModelFilter { provider: Some("mock".into()), ..Default::default() };
+    let listed = e.models(LOCAL_USER, &filter).await.unwrap();
+    assert!(!listed.is_empty() && listed.iter().all(|m| matches!(m.spec.pricing, Some(pictesa_core::Pricing::Local))), "a sample price would contradict the free run");
+    let created = e.create_generation(LOCAL_USER, req("mock:video", "a free clip")).await.unwrap();
+    assert_eq!(created.jobs[0].cost_usd, Some(0.0));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn pins_belong_to_their_user_and_recent_models_follow_generations() {
     let e = engine("prefs", Mode::Local).await;
     let prefs = e.set_pinned_models(LOCAL_USER, vec!["mock:video".into(), "mock:image".into(), "mock:video".into()]).await.unwrap();
