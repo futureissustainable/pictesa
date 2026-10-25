@@ -30,12 +30,18 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 
 ## Quick start
 
-1. Download the binary for your system from the releases page (Windows, macOS, or Linux with glibc 2.34 or newer, such as Ubuntu 22.04, Debian 12 and RHEL 9), or build it (below).
+1. Download the binary for your system from the [releases page](https://github.com/futureissustainable/pictesa/releases/latest) (Windows, macOS, or Linux with glibc 2.34 or newer, such as Ubuntu 22.04, Debian 12 and RHEL 9), or build it (below).
 2. Run `pictesa`. The studio opens at http://127.0.0.1:4747.
 3. Open **Settings > Providers**, paste a key (fal or OpenRouter cover the most models), or point Pictesa at your ComfyUI.
 4. Write a prompt, pick a model, generate.
 
 Try it without any key: `PICTESA_MOCK=1 pictesa` adds free fake models (image, video and a background remover) that behave like real ones.
+
+Or run the Docker image, which includes ffmpeg:
+
+```bash
+docker run -p 4747:4747 -v pictesa:/data -e PICTESA_TOKEN=change-me ghcr.io/futureissustainable/pictesa
+```
 
 ### Build from source
 
