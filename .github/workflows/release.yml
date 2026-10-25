@@ -13,8 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux builds on the oldest supported Ubuntu: a binary linked against a newer glibc
-        # (24.04 has 2.39) does not start on Debian 12 or Ubuntu 22.04.
+        # Linux builds on the oldest supported Ubuntu, so the binary needs only glibc 2.34; one built
+        # on 24.04 (glibc 2.39) does not start on Debian 12 or Ubuntu 22.04.
         include:
           - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: pictesa-linux-x86_64 }
           - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, name: pictesa-linux-arm64 }
@@ -26,8 +26,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with: { version: 10 }
+      # No pnpm cache: on Windows its post-step fails the job, and a failed build skips the release.
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+        with: { node-version: 22 }
       - name: Build web UI
         run: pnpm --dir web install --frozen-lockfile && pnpm --dir web build
       - uses: dtolnay/rust-toolchain@stable
