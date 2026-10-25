@@ -23,8 +23,8 @@ fn now_ms() -> u128 {
         .unwrap_or(0)
 }
 
-/// A small PNG gradient whose colours depend on the prompt, so outputs differ.
-fn png(prompt: &str, w: u32, h: u32) -> Vec<u8> {
+/// Gradient pixels (RGB, row by row) whose colours depend on the prompt, so outputs differ.
+fn gradient(prompt: &str, w: u32, h: u32) -> Vec<u8> {
     let seed = prompt
         .bytes()
         .fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
@@ -33,69 +33,58 @@ fn png(prompt: &str, w: u32, h: u32) -> Vec<u8> {
         ((seed >> 8) & 0xff) as f32,
         ((seed >> 16) & 0xff) as f32,
     );
-    let mut raw = Vec::with_capacity(((w * 3 + 1) * h) as usize);
+    let mut out = Vec::with_capacity((w * h * 3) as usize);
     for y in 0..h {
-        raw.push(0);
         for x in 0..w {
             let t = x as f32 / w as f32;
             let u = y as f32 / h as f32;
-            raw.push((r0 * (1.0 - t) + 242.0 * t) as u8);
-            raw.push((g0 * (1.0 - u) + 105.0 * u) as u8);
-            raw.push((b0 * 0.5 + 61.0 * t) as u8);
+            out.push((r0 * (1.0 - t) + 242.0 * t) as u8);
+            out.push((g0 * (1.0 - u) + 105.0 * u) as u8);
+            out.push((b0 * 0.5 + 61.0 * t) as u8);
         }
     }
-    encode_png(w, h, &raw)
-}
-
-fn encode_png(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
-    fn crc(data: &[u8]) -> u32 {
-        let mut c = 0xffff_ffffu32;
-        for &b in data {
-            c ^= b as u32;
-            for _ in 0..8 {
-                c = if c & 1 != 0 {
-                    0xedb8_8320 ^ (c >> 1)
-                } else {
-                    c >> 1
-                };
-            }
-        }
-        !c
-    }
-    fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
-        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        let mut body = kind.to_vec();
-        body.extend_from_slice(data);
-        out.extend_from_slice(&body);
-        out.extend_from_slice(&crc(&body).to_be_bytes());
-    }
-    // Stored (uncompressed) deflate blocks keep this dependency-free.
-    let mut z = vec![0x78, 0x01];
-    let mut adler = (1u32, 0u32);
-    for (i, block) in raw.chunks(65_535).enumerate() {
-        let last = (i + 1) * 65_535 >= raw.len();
-        z.push(last as u8);
-        z.extend_from_slice(&(block.len() as u16).to_le_bytes());
-        z.extend_from_slice(&(!(block.len() as u16)).to_le_bytes());
-        z.extend_from_slice(block);
-        for &b in block {
-            adler.0 = (adler.0 + b as u32) % 65_521;
-            adler.1 = (adler.1 + adler.0) % 65_521;
-        }
-    }
-    z.extend_from_slice(&((adler.1 << 16) | adler.0).to_be_bytes());
-    let mut out = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-    let mut ihdr = Vec::new();
-    ihdr.extend_from_slice(&w.to_be_bytes());
-    ihdr.extend_from_slice(&h.to_be_bytes());
-    ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
-    chunk(&mut out, b"IHDR", &ihdr);
-    chunk(&mut out, b"IDAT", &z);
-    chunk(&mut out, b"IEND", &[]);
     out
 }
 
+/// A small PNG gradient.
+fn png(prompt: &str, w: u32, h: u32) -> Vec<u8> {
+    encode_png(w, h, &gradient(prompt, w, h), false)
+}
+
+/// A cut-out like a background remover returns: an opaque gradient ellipse (the "subject") on a
+/// fully transparent background.
+fn cutout(prompt: &str, w: u32, h: u32) -> Vec<u8> {
+    let rgb = gradient(prompt, w, h);
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for (i, px) in rgb.chunks(3).enumerate() {
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        let dx = (x as f32 + 0.5) / w as f32 - 0.5;
+        let dy = (y as f32 + 0.5) / h as f32 - 0.5;
+        // Fully opaque inside, a soft edge over the last few percent of the radius.
+        let alpha = ((1.0 - (dx * dx + dy * dy).sqrt() / 0.36) * 25.0).clamp(0.0, 1.0);
+        rgba.extend_from_slice(px);
+        rgba.push((alpha * 255.0) as u8);
+    }
+    encode_png(w, h, &rgba, true)
+}
+
+/// Encodes RGB (or RGBA with `alpha`) pixels, row by row, as a PNG.
+fn encode_png(w: u32, h: u32, pixels: &[u8], alpha: bool) -> Vec<u8> {
+    use image::ImageEncoder;
+    let mut out = Vec::new();
+    let color = if alpha { image::ExtendedColorType::Rgba8 } else { image::ExtendedColorType::Rgb8 };
+    match image::codecs::png::PngEncoder::new(&mut out).write_image(pixels, w, h, color) {
+        Ok(()) => out,
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Edits keep the shape of their source image, like real edit models; other runs follow the ratio.
 fn size_for(req: &GenerationRequest) -> (u32, u32) {
+    if let Some((w, h)) = req.input(InputRole::Reference).and_then(|i| Some((i.width?, i.height?))).filter(|(w, h)| *w > 0 && *h > 0) {
+        let scale = 768.0 / w.max(h) as f32;
+        return (((w as f32 * scale) as u32).max(16), ((h as f32 * scale) as u32).max(16));
+    }
     let ratio = req.str("aspect_ratio").unwrap_or("1:1");
     crate::util::ratio_to_size(ratio, 768).unwrap_or((768, 768))
 }
@@ -165,12 +154,18 @@ impl Provider for Mock {
         vec![
             ModelSpec::new("mock", "image", "Mock image", MediaKind::Image, &[Task::TextToImage, Task::ImageEdit])
                 .input(InputSlot::new(InputRole::Reference, MediaKind::Image, 4))
+                .input(InputSlot::new(InputRole::Mask, MediaKind::Image, 1))
                 .param(common::aspect_ratio(common::IMAGE_RATIOS, "1:1"))
                 .param(pictesa_core::ParamSpec::seed())
                 .max_outputs(4)
                 .pricing(Pricing::PerImage { usd: 0.01 })
                 .describe("Free fake model for trying Pictesa without keys. Returns a gradient. The price is fake and only used to test billing.")
                 .tag("featured"),
+            ModelSpec::new("mock", "remove-background", "Mock background remover", MediaKind::Image, &[Task::ImageEdit])
+                .input(InputSlot { label: Some("Image".into()), ..InputSlot::new(InputRole::Reference, MediaKind::Image, 1).required() })
+                .no_prompt()
+                .pricing(Pricing::PerImage { usd: 0.01 })
+                .describe("Free fake background remover. Returns a transparent PNG with a gradient shape as the subject."),
             ModelSpec::new("mock", "video", "Mock video", MediaKind::Video, &[Task::TextToVideo, Task::ImageToVideo])
                 .input(InputSlot::new(InputRole::StartFrame, MediaKind::Image, 1))
                 .input(InputSlot::new(InputRole::EndFrame, MediaKind::Image, 1))
@@ -244,6 +239,9 @@ impl Provider for Mock {
             handle.data.get("w").and_then(|v| v.as_u64()).unwrap_or(768) as u32,
             handle.data.get("h").and_then(|v| v.as_u64()).unwrap_or(768) as u32,
         );
+        if handle.data_str("model") == Some("remove-background") {
+            return Ok(PollStatus::Done(vec![Output::Bytes { data: cutout(prompt, w, h), mime: "image/png".into() }]));
+        }
         let n = handle
             .data
             .get("n")

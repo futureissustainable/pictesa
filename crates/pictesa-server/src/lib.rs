@@ -226,6 +226,8 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/assets/import", post(import_asset))
         .route("/assets/{id}", get(get_asset).patch(patch_asset).delete(delete_asset))
         .route("/assets/{id}/restore", post(restore_asset))
+        .route("/assets/{id}/mask", post(save_mask).layer(DefaultBodyLimit::max(pictesa_engine::edits::MAX_MASK_BYTES)))
+        .route("/assets/{id}/expand", post(expand_asset))
         .route("/events", get(events))
         .route("/workflows/import", post(import_workflow))
         .route("/characters", get(characters).post(create_character))
@@ -640,6 +642,18 @@ async fn delete_asset(State(s): State<AppState>, c: Caller, Path(id): Path<Strin
 
 async fn restore_asset(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(s.engine.restore(&c.user_id, &id).await?)))
+}
+
+/// Body: the painted mask as an image file (a canvas PNG export works as is).
+async fn save_mask(State(s): State<AppState>, c: Caller, Path(id): Path<String>, body: axum::body::Bytes) -> ApiResult<Response> {
+    if body.is_empty() {
+        return Err(bad("Send the mask image as the request body.", Some("mask")));
+    }
+    Ok((StatusCode::CREATED, Json(json!(s.engine.save_mask(&c.user_id, &id, body.to_vec()).await?))).into_response())
+}
+
+async fn expand_asset(State(s): State<AppState>, c: Caller, Path(id): Path<String>, Json(b): Json<pictesa_engine::edits::Padding>) -> ApiResult<Response> {
+    Ok((StatusCode::CREATED, Json(json!(s.engine.expand_canvas(&c.user_id, &id, b).await?))).into_response())
 }
 
 // ---------- ComfyUI workflow import ----------

@@ -176,7 +176,8 @@ export interface Job {
   outputs: Asset[];
 }
 
-export type AssetSource = "generated" | "upload" | "import";
+/** `edit`: masks and expanded canvases made by the edit view, hidden from library lists. */
+export type AssetSource = "generated" | "upload" | "import" | "edit";
 
 export interface Asset {
   id: string;
@@ -191,6 +192,8 @@ export interface Asset {
   source: AssetSource;
   /** Original file name of uploads and imports. */
   name?: string | null;
+  /** Edit helpers: the image this mask or expanded canvas was made from. */
+  origin_id?: string | null;
   job_id: string | null;
   model: string | null;
   prompt: string | null;
@@ -353,6 +356,14 @@ export interface Billing {
   markup: number;
   topups_usd: number[];
   ledger: LedgerEntry[];
+}
+
+/** Pixels added on each side of an image (POST /api/assets/{id}/expand). */
+export interface Padding {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 }
 
 export interface AssetQuery {

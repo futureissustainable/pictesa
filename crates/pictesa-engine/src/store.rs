@@ -105,6 +105,8 @@ pub struct AssetRow {
     pub deleted_at: Option<i64>,
     #[sqlx(default)]
     pub name: Option<String>,
+    #[sqlx(default)]
+    pub origin_id: Option<String>,
 }
 
 impl AssetRow {
@@ -127,6 +129,7 @@ impl AssetRow {
             created_at: self.created_at,
             deleted_at: self.deleted_at,
             name: self.name.clone(),
+            origin_id: self.origin_id.clone(),
         }
     }
 }

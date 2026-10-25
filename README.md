@@ -13,6 +13,7 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 - **Live previews.** Local runs show their image as it renders: ComfyUI's sampler previews stream into the job card and the feed, so a run that goes wrong can be stopped early.
 - **Real prices.** You pay providers directly, at their price. Models show the provider's published price (per image, second or megapixel; fal's whole catalog is priced this way), token-billed models say so, and every run records its cost estimate. No credits, no markup.
 - **Recipes.** Open multi-step pipelines: *Cinema shot* (compose a still with your lens and light, then animate it with a camera move), *Character shot*, *Product hero*, *Animate a photo*, *New angle* and *Upscale*. Each step uses the first model you have set up, cloud or local, and recipes are plain JSON you can fork.
+- **Edit any image.** Paint over a part and describe what goes there, expand the frame to a new shape, relight it or remove the background, with the models you have set up. Results land in the library next to the image they came from, ready to edit again.
 - **Characters.** Save a person, product or style as a named set of reference images and attach it to any run on any model that takes references.
 - **Compare.** Run one prompt on up to eight models side by side, with parameters adapted to each.
 - **Presets.** 76 camera moves and looks (dolly in, orbit, crane, FPV drone, bullet time, film stocks, light) as editable JSON.
@@ -27,7 +28,7 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 3. Open **Settings > Providers**, paste a key (fal or OpenRouter cover the most models), or point Pictesa at your ComfyUI.
 4. Write a prompt, pick a model, generate.
 
-Try it without any key: `PICTESA_MOCK=1 pictesa` adds two free fake models that behave like real ones.
+Try it without any key: `PICTESA_MOCK=1 pictesa` adds free fake models (image, video and a background remover) that behave like real ones.
 
 ### Build from source
 
