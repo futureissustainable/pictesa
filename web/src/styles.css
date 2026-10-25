@@ -416,8 +416,11 @@ code, pre { font-family: var(--font-mono); }
 .model-item { display: flex; align-items: center; gap: 2px; }
 .model-item .model-row { flex: 1; min-width: 0; }
 .model-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.model-arena { display: inline-flex; flex-shrink: 0; align-items: center; gap: 2px; font-size: var(--text-caption); color: #796347; font-variant-numeric: tabular-nums; }
+.model-arena { display: inline-flex; flex-shrink: 0; align-items: center; gap: 2px; font-size: var(--text-caption); color: var(--muted); font-variant-numeric: tabular-nums; }
 .model-arena .icon { font-size: 14px; }
+.model-arena.gold .icon { color: #c4911a; }
+.model-arena.silver .icon { color: #8b939b; }
+.model-arena.bronze .icon { color: #ad6631; }
 .model-pin { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 40px; height: 44px; border-radius: 5px; color: var(--muted); }
 .model-pin:hover { background: var(--stone); color: var(--ink); }
 .model-pin[aria-pressed="true"] { color: var(--picked-ink); }

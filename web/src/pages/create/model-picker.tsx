@@ -94,6 +94,9 @@ function sorter(filters: PickerFilters, providers: ProviderState[] | null): (a: 
   }
 }
 
+/** The top three ranks get a filled cup in their medal colour. */
+const MEDALS = ["gold", "silver", "bronze"];
+
 const arenaLabel = (score: ArenaScore) =>
   `LMArena ${taskName(score.arena).toLowerCase()}: #${score.rank} of ${score.of} as ${score.name}, ${score.votes.toLocaleString("en")} votes, ${score.published.split("-").reverse().join(".")}`;
 
@@ -383,8 +386,8 @@ function ModelRow({
           <span className="model-title">
             <span className="model-name">{model.name}</span>
             {score && (
-              <span className="model-arena" title={arenaLabel(score)}>
-                <Icon name="trophy" />
+              <span className={`model-arena ${MEDALS[score.rank - 1] ?? ""}`} title={arenaLabel(score)}>
+                <Icon name="trophy" filled={score.rank <= MEDALS.length} />
                 <span className="sr-only">Arena rank</span>
                 {score.rank}
               </span>
