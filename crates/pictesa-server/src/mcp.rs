@@ -69,7 +69,40 @@ fn tools() -> Value {
         },
         "required": ["role"]
     });
-    json!([
+    let prompt_tools = json!([
+        {
+            "name": "list_prompt_history", "description": "Search your distinct past prompts, newest first, with last model and use time.",
+            "inputSchema": { "type": "object", "properties": { "q": { "type": "string" }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "list_saved_prompts", "description": "Search your saved prompts and templates, including settings and placeholder names.",
+            "inputSchema": { "type": "object", "properties": { "q": { "type": "string" }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "save_prompt", "description": "Save a personal prompt or {placeholder} template with optional model settings.",
+            "inputSchema": { "type": "object", "properties": {
+                "name": { "type": "string" }, "prompt": { "type": "string" }, "negative_prompt": { "type": "string" },
+                "model": { "type": "string" }, "params": { "type": "object" }
+            }, "required": ["name", "prompt"] }
+        },
+        {
+            "name": "generate_batch", "description": "Expand prompts x seeds x parameter grid, up to 64 runs in one atomic batch. Call with dry_run:true first for count and total estimated USD. Queuing can cost money. Returns job ids for wait_for_job.",
+            "inputSchema": { "type": "object", "properties": {
+                "model": { "type": "string" }, "prompt": { "type": "string" }, "negative_prompt": { "type": "string" },
+                "params": { "type": "object" }, "inputs": { "type": "array", "items": input_item },
+                "preset": { "type": "string" }, "character": { "type": "string" },
+                "prompts": { "type": "array", "items": { "type": "string" }, "maxItems": 64 },
+                "prompt_list": { "type": "string" }, "prompt_format": { "type": "string", "enum": ["lines", "csv"], "default": "lines" },
+                "seeds": { "type": "object", "properties": { "start": { "type": "integer", "minimum": 0, "maximum": 9007199254740991u64 }, "count": { "type": "integer", "minimum": 1, "maximum": 64 } }, "required": ["start", "count"] },
+                "grid": { "type": "array", "maxItems": 3, "items": { "type": "object", "properties": { "key": { "type": "string" }, "values": { "type": "array", "minItems": 1, "items": {} } }, "required": ["key", "values"] } },
+                "dry_run": { "type": "boolean", "default": false }
+            }, "required": ["model"] },
+            "annotations": { "readOnlyHint": false, "openWorldHint": true }
+        }
+    ]);
+    let mut tools = json!([
         {
             "name": "list_collections", "description": "List your named library collections.",
             "inputSchema": { "type": "object", "properties": {} },
@@ -220,7 +253,9 @@ fn tools() -> Value {
                 "source_url": { "type": "string" }
             } }
         }
-    ])
+    ]);
+    tools.as_array_mut().unwrap().extend(prompt_tools.as_array().unwrap().iter().cloned());
+    tools
 }
 
 fn text(v: &Value) -> Vec<Value> {
@@ -352,6 +387,24 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
             let output: Option<MediaKind> = arg_str(args, "output").and_then(|o| serde_json::from_value(json!(o)).ok());
             let list: Vec<Value> = e.presets(output).iter().map(|p| json!({"id": p.id, "name": p.name, "output": p.output, "description": p.description})).collect();
             Ok(text(&json!({ "presets": list })))
+        }
+        "list_prompt_history" | "list_saved_prompts" => {
+            let filter = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
+            if name == "list_prompt_history" { Ok(text(&json!({ "history": e.prompt_history(user, &filter).await.map_err(err)? }))) }
+            else { Ok(text(&json!({ "prompts": e.saved_prompts(user, &filter).await.map_err(err)? }))) }
+        }
+        "save_prompt" => {
+            let input = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
+            Ok(text(&json!(e.save_prompt(user, input).await.map_err(err)?)))
+        }
+        "generate_batch" => {
+            let mut body = args.as_object().cloned().ok_or("arguments must be an object")?;
+            let mut inputs = Vec::new();
+            for item in args.get("inputs").and_then(Value::as_array).into_iter().flatten() { inputs.push(resolve_input(ctx, item).await?); }
+            body.insert("inputs".into(), json!(inputs));
+            let req: pictesa_engine::batches::BatchRequest = serde_json::from_value(Value::Object(body)).map_err(|e| e.to_string())?;
+            if req.dry_run { Ok(text(&json!(e.estimate_batch(user, req).await.map_err(err)?))) }
+            else { Ok(text(&json!(e.create_batch(user, req).await.map_err(err)?))) }
         }
         "generate" => {
             let model = arg_str(args, "model").ok_or("model is required (call list_models)")?;

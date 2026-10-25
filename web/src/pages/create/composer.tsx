@@ -31,6 +31,8 @@ import { Icon, Spinner } from "../../ui/icon";
 import { InputSlots, slotLabel } from "./inputs";
 import { ComparePicker, ModelPicker, providerName } from "./model-picker";
 import { ParamControl, ParamField } from "./params";
+import { BatchDialog } from "./batch";
+import { PromptHistoryControl, PromptsControl, SavePromptDialog, usePromptSuggestions } from "./prompts";
 import { PresetsStrip } from "./presets";
 
 const COUNTS = [1, 2, 3, 4];
@@ -73,6 +75,13 @@ export function Composer() {
     }
     return usd === null ? null : ({ kind: "total", usd } as const);
   }, [model, values, draft.count, compareModels]);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [suggestionIndex, setSuggestionIndex] = useState(-1);
+  const [suggestionsOff, setSuggestionsOff] = useState(false);
+  const suggestions = usePromptSuggestions(draft.prompt);
+  const showSuggestions = focused && !suggestionsOff && suggestions.length > 0;
   const [busy, setBusy] = useState(false);
   const [invalid, setInvalid] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -175,6 +184,21 @@ export function Composer() {
     attachFiles([...event.dataTransfer.files]);
   };
 
+  function generationRequest(): GenerationRequest {
+    if (!model) throw new Error("Choose a model first.");
+    return {
+      model: model.id,
+      prompt: model.prompt ? draft.prompt.trim() : "",
+      negative_prompt: model.negative_prompt && draft.negativePrompt.trim() ? draft.negativePrompt.trim() : null,
+      params: requestParams(model, explicit),
+      inputs: attached.flatMap((input) => (input.asset ? [{ asset_id: input.asset.id, role: input.role }] : [])),
+      count: draft.count,
+      ...(preset ? { preset: preset.id } : {}),
+      ...(compare.length ? { compare } : {}),
+      ...(characterId && takesCharacter(model) ? { character: characterId } : {}),
+    } satisfies GenerationRequest;
+  }
+
   async function submit() {
     if (!model || busy) return;
     if (!model.configured) {
@@ -199,17 +223,7 @@ export function Composer() {
     }
     setInvalid(null);
     setBusy(true);
-    const body: GenerationRequest = {
-      model: model.id,
-      prompt: model.prompt ? draft.prompt.trim() : "",
-      negative_prompt: model.negative_prompt && draft.negativePrompt.trim() ? draft.negativePrompt.trim() : null,
-      params: requestParams(model, explicit),
-      inputs: attached.flatMap((input) => (input.asset ? [{ asset_id: input.asset.id, role: input.role }] : [])),
-      count: draft.count,
-      ...(preset ? { preset: preset.id } : {}),
-      ...(compare.length ? { compare } : {}),
-      ...(characterId && takesCharacter(model) ? { character: characterId } : {}),
-    };
+    const body = generationRequest();
     try {
       const { batch_id: batchId, jobs } = await api.generate(body);
       if (compare.length) trackCompare(batchId, jobs);
@@ -286,16 +300,36 @@ export function Composer() {
                 rows={2}
                 maxLength={50000}
                 value={draft.prompt}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={Boolean(showSuggestions)}
+                aria-controls="prompt-suggestions"
+                aria-activedescendant={showSuggestions && suggestionIndex >= 0 ? `prompt-suggestion-${suggestionIndex}` : undefined}
+                onFocus={() => setFocused(true)}
+                onBlur={() => { setFocused(false); setSuggestionIndex(-1); }}
                 aria-invalid={invalid === "prompt" || undefined}
                 aria-busy={enhancing || undefined}
                 aria-describedby={enhanceError ? "prompt-help-error" : undefined}
                 placeholder={mode === "video" ? "Describe the shot and the motion" : mode === "audio" ? "Describe the sound" : "Describe your image"}
                 onChange={(event) => {
                   setPrompt(event.target.value);
+                  setSuggestionsOff(false);
+                  setSuggestionIndex(-1);
                   setEnhanceError(null);
                 }}
                 onPaste={onPromptPaste}
                 onKeyDown={(event) => {
+                  if (showSuggestions && !event.ctrlKey && !event.metaKey) {
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setSuggestionIndex((index) => event.key === "ArrowDown" ? (index + 1) % suggestions.length : index < 0 ? suggestions.length - 1 : (index + suggestions.length - 1) % suggestions.length);
+                      return;
+                    }
+                    if (event.key === "Escape") { event.preventDefault(); setSuggestionsOff(true); return; }
+                    if (event.key === "Enter" && suggestionIndex >= 0) {
+                      event.preventDefault(); setPrompt(suggestions[suggestionIndex].prompt); setSuggestionsOff(true); setSuggestionIndex(-1); return;
+                    }
+                  }
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault();
                     void submit();
@@ -307,6 +341,9 @@ export function Composer() {
                   }
                 }}
               />
+              <div id="prompt-suggestions" role="listbox" aria-label="Past prompt suggestions" className="prompt-suggestions" hidden={!showSuggestions}>
+                {showSuggestions && suggestions.map((item, index) => <button key={item.prompt} id={`prompt-suggestion-${index}`} type="button" role="option" aria-selected={index === suggestionIndex} tabIndex={-1} className="choice" onPointerDown={(event) => event.preventDefault()} onClick={() => { setPrompt(item.prompt); setSuggestionsOff(true); promptRef.current?.focus(); }}><span className="choice-body prompt-excerpt">{item.prompt}</span></button>)}
+              </div>
               {enhanceError && (
                 <p className="prompt-error" id="prompt-help-error" role="alert">
                   {enhanceError}
@@ -314,6 +351,8 @@ export function Composer() {
               )}
               </div>
               <div className="prompt-tools">
+                <PromptHistoryControl />
+                <PromptsControl />
                 {undo && draft.prompt === undo.after && (
                   <button type="button" className="text-button prompt-undo" onClick={restorePrompt}>
                     Undo
@@ -387,7 +426,7 @@ export function Composer() {
                 {model.max_outputs < draft.count && <p className="control-help">{model.name} makes {model.max_outputs} per run, so this starts several runs.</p>}
               </Control>
             )}
-            {model && (advanced.length > 0 || model.negative_prompt) && (
+            {model && (
               <Control
                 label="More settings"
                 icon="more_horiz"
@@ -397,6 +436,8 @@ export function Composer() {
                 size="wide"
               >
                 <div className="more-fields">
+                  <Choice icon="grid_view" onPick={() => setBatchOpen(true)} disabled={uploading || !model.configured}>Batch</Choice>
+                  <Choice icon="draft" onPick={() => setSaveOpen(true)} disabled={!draft.prompt.trim()}>Save prompt</Choice>
                   {model.negative_prompt && (
                     <label className="field">
                       <span>Avoid</span>
@@ -428,6 +469,8 @@ export function Composer() {
           </button>
         </div>
       </div>
+      {batchOpen && model && <BatchDialog model={model} request={generationRequest()} onClose={() => setBatchOpen(false)} />}
+      {saveOpen && model && <SavePromptDialog request={{ ...generationRequest(), params: values }} onClose={() => setSaveOpen(false)} />}
       {models.error && (
         <p className="notice error composer-error" role="alert">
           {models.error}

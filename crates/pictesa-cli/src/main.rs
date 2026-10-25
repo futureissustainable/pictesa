@@ -68,6 +68,8 @@ enum Command {
         negative: Option<String>,
         #[arg(long)]
         preset: Option<String>,
+        #[command(flatten)]
+        batch: BatchOptions,
         /// Copy the results into this folder.
         #[arg(short, long)]
         out: Option<PathBuf>,
@@ -77,6 +79,11 @@ enum Command {
         /// Print JSON (for scripts and agents).
         #[arg(long)]
         json: bool,
+    },
+    /// Search personal history or manage saved prompts and templates.
+    Prompts {
+        #[command(subcommand)]
+        action: PromptCommand,
     },
     /// Save results from outside tools in the library with their prompt and settings.
     Import {
@@ -228,6 +235,74 @@ fn data_dir(cli: &Cli) -> PathBuf {
     cli.data_dir.clone().unwrap_or_else(Config::default_data_dir)
 }
 
+#[derive(clap::Args, Debug, Clone, Default)]
+struct BatchOptions {
+    /// Prompt lines, or CSV first column when the extension is .csv (no header).
+    #[arg(long)]
+    prompts_file: Option<PathBuf>,
+    /// Consecutive seeds as START:COUNT, e.g. --seeds 42:4.
+    #[arg(long)]
+    seeds: Option<String>,
+    /// Parameter grid as key=a,b (repeatable, at most 3). JSON arrays also work.
+    #[arg(long, value_name = "KEY=A,B")]
+    grid: Vec<String>,
+    /// Validate and print run count and estimated cost without queuing.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Subcommand)]
+enum PromptCommand {
+    History { #[arg(short, long)] q: Option<String> },
+    List { #[arg(short, long)] q: Option<String> },
+    Save {
+        name: String,
+        prompt: String,
+        #[arg(short, long)] model: Option<String>,
+        #[arg(long)] negative: Option<String>,
+        #[arg(short, long = "param")] params: Vec<String>,
+    },
+}
+
+async fn batch_request(generation: CreateGeneration, options: &BatchOptions) -> anyhow::Result<Option<pictesa_engine::batches::BatchRequest>> {
+    use pictesa_engine::batches::{BatchRequest, GridAxis, PromptFormat, SeedSweep};
+    if options.prompts_file.is_none() && options.seeds.is_none() && options.grid.is_empty() && !options.dry_run { return Ok(None); }
+    let prompt_list = if let Some(path) = &options.prompts_file { Some(tokio::fs::read_to_string(path).await.with_context(|| format!("reading {}", path.display()))?) } else { None };
+    let prompt_format = if options.prompts_file.as_ref().and_then(|p| p.extension()).is_some_and(|ext| ext.eq_ignore_ascii_case("csv")) { PromptFormat::Csv } else { PromptFormat::Lines };
+    let seeds = options.seeds.as_ref().map(|s| -> anyhow::Result<SeedSweep> {
+        let (start, count) = s.split_once(':').ok_or_else(|| anyhow!("Use --seeds START:COUNT."))?;
+        Ok(SeedSweep { start: start.parse().context("seed start must be a nonnegative integer")?, count: count.parse().context("seed count must be a positive integer")? })
+    }).transpose()?;
+    let grid = options.grid.iter().map(|s| -> anyhow::Result<GridAxis> {
+        let (key, values) = s.split_once('=').ok_or_else(|| anyhow!("Use --grid key=a,b."))?;
+        let values = if values.trim_start().starts_with('[') { serde_json::from_str(values).context("grid must be a JSON array")? } else { values.split(',').map(|v| serde_json::from_str(v.trim()).unwrap_or_else(|_| json!(v.trim()))).collect() };
+        Ok(GridAxis { key: key.to_string(), values })
+    }).collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(Some(BatchRequest { generation, prompt_list, prompt_format, seeds, grid, dry_run: options.dry_run, ..Default::default() }))
+}
+
+async fn prompts_command(cli: &Cli, action: PromptCommand) -> anyhow::Result<()> {
+    let (path, query, input) = match action {
+        PromptCommand::History { q } => ("/api/prompts/history", q, None),
+        PromptCommand::List { q } => ("/api/prompts", q, None),
+        PromptCommand::Save { name, prompt, model, negative, params } => ("/api/prompts", None, Some(pictesa_engine::prompts::SavePrompt { name, prompt, negative_prompt: negative, model, params: if params.is_empty() { None } else { Some(parse_params(&params)?) } })),
+    };
+    let result = if let Some(remote) = Remote::connect(cli).await {
+        if let Some(input) = input { remote.json(remote.req(reqwest::Method::POST, path).json(&input)).await? }
+        else { remote.json(remote.req(reqwest::Method::GET, path).query(&[("q", query.as_deref().unwrap_or_default())])).await? }
+    } else {
+        let engine = open_engine(cli, Mode::Local, None).await?;
+        if let Some(input) = input { json!(engine.save_prompt(LOCAL_USER, input).await?) }
+        else {
+            let filter = pictesa_engine::prompts::PromptFilter { q: query, ..Default::default() };
+            if path.ends_with("history") { json!({ "history": engine.prompt_history(LOCAL_USER, &filter).await? }) }
+            else { json!({ "prompts": engine.saved_prompts(LOCAL_USER, &filter).await? }) }
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
 async fn open_engine(cli: &Cli, mode: Mode, public_url: Option<String>) -> anyhow::Result<Engine> {
     let dir = data_dir(cli);
     let cfg = Config { data_dir: dir.clone(), mode, preset_dirs: vec![dir.join("presets")], public_url };
@@ -267,13 +342,14 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
         }
         Command::Mcp => run_mcp(&cli).await,
 
-        Command::Generate { prompt, model, params, inputs, count, negative, preset, out, no_wait, json } => {
+        Command::Generate { prompt, model, params, inputs, count, negative, preset, batch, out, no_wait, json } => {
             let params = parse_params(&params)?;
             if let Some(client) = Remote::connect(&cli).await {
-                return client.generate(prompt, model, params, inputs, count, negative, preset, out, no_wait, json).await;
+                return client.generate(prompt, model, params, inputs, count, negative, preset, out, no_wait, json, batch).await;
             }
-            generate_local(&cli, prompt, model, params, inputs, count, negative, preset, out, no_wait, json).await
+            generate_local(&cli, prompt, model, params, inputs, count, negative, preset, out, no_wait, json, batch).await
         }
+        Command::Prompts { action } => prompts_command(&cli, action).await,
         Command::Models { output, task, provider, q, all, featured, sort, json } => {
             let engine = open_engine(&cli, Mode::Local, None).await?;
             let f = ModelFilter { output, task, provider, q, configured: (!all).then_some(true), featured: featured.then_some(true), sort };
@@ -524,6 +600,7 @@ async fn generate_local(
     out: Option<PathBuf>,
     no_wait: bool,
     json_out: bool,
+    batch: BatchOptions,
 ) -> anyhow::Result<()> {
     let engine = open_engine(cli, Mode::Local, None).await?;
     engine.start_scoped();
@@ -539,9 +616,11 @@ async fn generate_local(
         let asset = engine.upload(LOCAL_USER, &bytes, name.as_deref(), None).await?;
         job_inputs.push(JobInput { asset_id: asset.id, role });
     }
-    let created = engine
-        .create_generation(LOCAL_USER, CreateGeneration { model, prompt: prompt.unwrap_or_default(), negative_prompt: negative, params, inputs: job_inputs, count: Some(count), preset, compare: Vec::new(), character: None })
-        .await?;
+    let generation = CreateGeneration { model, prompt: prompt.unwrap_or_default(), negative_prompt: negative, params, inputs: job_inputs, count: Some(count), preset, compare: Vec::new(), character: None };
+    let created = if let Some(batch) = batch_request(generation.clone(), &batch).await? {
+        if batch.dry_run { println!("{}", serde_json::to_string_pretty(&engine.estimate_batch(LOCAL_USER, batch).await?)?); return Ok(()); }
+        engine.create_batch(LOCAL_USER, batch).await?
+    } else { engine.create_generation(LOCAL_USER, generation).await? };
     if no_wait {
         eprintln!("No server is running, so the job would stop when this command exits. Waiting instead.");
     }
@@ -645,6 +724,7 @@ impl Remote {
         out: Option<PathBuf>,
         no_wait: bool,
         json_out: bool,
+        batch: BatchOptions,
     ) -> anyhow::Result<()> {
         let mut job_inputs = Vec::new();
         for raw in &inputs {
@@ -660,8 +740,10 @@ impl Remote {
             let id = v.pointer("/assets/0/id").and_then(Value::as_str).ok_or_else(|| anyhow!("upload failed"))?;
             job_inputs.push(json!({ "asset_id": id, "role": role }));
         }
-        let body = json!({ "model": model, "prompt": prompt.unwrap_or_default(), "negative_prompt": negative, "params": params, "inputs": job_inputs, "count": count, "preset": preset });
-        let created = self.json(self.req(reqwest::Method::POST, "/api/generations").json(&body)).await?;
+        let generation: CreateGeneration = serde_json::from_value(json!({ "model": model, "prompt": prompt.unwrap_or_default(), "negative_prompt": negative, "params": params, "inputs": job_inputs, "count": count, "preset": preset }))?;
+        let (path, body) = if let Some(batch) = batch_request(generation.clone(), &batch).await? { ("/api/generations/batch", json!(batch)) } else { ("/api/generations", json!(generation)) };
+        let created = self.json(self.req(reqwest::Method::POST, path).json(&body)).await?;
+        if batch.dry_run { println!("{}", serde_json::to_string_pretty(&created)?); return Ok(()); }
         let ids: Vec<String> = created["jobs"].as_array().into_iter().flatten().filter_map(|j| j["id"].as_str().map(String::from)).collect();
         if no_wait {
             println!("{}", if json_out { serde_json::to_string_pretty(&created)? } else { ids.join("\n") });
@@ -780,4 +862,25 @@ fn open_browser(url: &str) {
         ("xdg-open", vec![url])
     };
     let _ = std::process::Command::new(cmd).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    #[tokio::test]
+    async fn flags_parse_csv_seed_zero_and_typed_grid_without_losing_quoted_commas() {
+        let path = std::env::temp_dir().join(format!("pictesa-cli-prompts-{}.CSV", pictesa_engine::new_id()));
+        tokio::fs::write(&path, "\"a cabin, at dawn\",ignored\n").await.unwrap();
+        let cli = Cli::try_parse_from(["pictesa", "generate", "-m", "mock:image", "--prompts-file", path.to_str().unwrap(), "--seeds", "0:2", "--grid", "aspect_ratio=1:1,16:9", "--grid", "label=[\"a,b\",\"c\"]", "--dry-run", "--json"]).unwrap();
+        let Command::Generate { model, batch, .. } = cli.command.unwrap() else { panic!("generate expected") };
+        let request = batch_request(CreateGeneration { model, ..Default::default() }, &batch).await.unwrap().unwrap();
+        assert!(request.dry_run);
+        assert_eq!((request.seeds.as_ref().unwrap().start, request.seeds.as_ref().unwrap().count), (0, 2));
+        assert_eq!(request.grid[0].values, [json!("1:1"), json!("16:9")]);
+        assert_eq!(request.grid[1].values, [json!("a,b"), json!("c")]);
+        assert_eq!(pictesa_engine::batches::parse_prompt_list(request.prompt_list.as_ref().unwrap(), request.prompt_format).unwrap(), ["a cabin, at dawn"]);
+        assert!(batch_request(CreateGeneration::default(), &BatchOptions { seeds: Some("-1:2".into()), ..Default::default() }).await.is_err());
+        assert!(batch_request(CreateGeneration::default(), &BatchOptions { grid: vec!["missing separator".into()], ..Default::default() }).await.is_err());
+        tokio::fs::remove_file(path).await.unwrap();
+    }
 }

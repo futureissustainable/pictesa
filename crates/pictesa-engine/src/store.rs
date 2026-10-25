@@ -87,6 +87,8 @@ pub struct AssetRow {
     pub id: String,
     pub user_id: String,
     pub job_id: Option<String>,
+    #[sqlx(default)]
+    pub batch_id: Option<String>,
     pub kind: String,
     pub mime: String,
     pub hash: String,
@@ -127,6 +129,7 @@ impl AssetRow {
             thumb_url: self.has_thumb.then(|| format!("/thumbs/{}", self.id)),
             source: self.source.clone(),
             job_id: self.job_id.clone(),
+            batch_id: self.batch_id.clone(),
             model: self.model.clone(),
             prompt: self.prompt.clone(),
             negative_prompt: self.negative_prompt.clone(),
@@ -160,7 +163,7 @@ pub async fn job_row_any(db: &SqlitePool, id: &str) -> Result<JobRow> {
 }
 
 pub async fn outputs_of(db: &SqlitePool, job_id: &str) -> Result<Vec<Asset>> {
-    let rows = sqlx::query_as::<_, AssetRow>("SELECT * FROM assets WHERE job_id = ? AND deleted_at IS NULL ORDER BY id")
+    let rows = sqlx::query_as::<_, AssetRow>("SELECT assets.*, (SELECT batch_id FROM jobs WHERE jobs.id = assets.job_id AND jobs.user_id = assets.user_id) AS batch_id FROM assets WHERE job_id = ? AND deleted_at IS NULL ORDER BY id")
         .bind(job_id)
         .fetch_all(db)
         .await?;
@@ -172,7 +175,7 @@ pub async fn job_view(db: &SqlitePool, row: &JobRow) -> Result<Job> {
 }
 
 pub async fn asset_row(db: &SqlitePool, user: &str, id: &str) -> Result<AssetRow> {
-    Ok(sqlx::query_as::<_, AssetRow>("SELECT * FROM assets WHERE id = ? AND user_id = ?").bind(id).bind(user).fetch_one(db).await?)
+    Ok(sqlx::query_as::<_, AssetRow>("SELECT assets.*, (SELECT batch_id FROM jobs WHERE jobs.id = assets.job_id AND jobs.user_id = assets.user_id) AS batch_id FROM assets WHERE id = ? AND user_id = ?").bind(id).bind(user).fetch_one(db).await?)
 }
 
 /// Stores one value of the `settings` table (per user, or `system` for the server's own).

@@ -5,6 +5,7 @@ pub mod mcp;
 mod web;
 mod library;
 mod zip;
+mod prompts;
 
 use std::{convert::Infallible, net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -219,6 +220,12 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/models/{*id}", get(model))
         .route("/presets", get(presets))
         .route("/prompt/enhance", post(enhance_prompt))
+        .route("/prompts/history", get(prompts::history))
+        .route("/prompts", get(prompts::list).post(prompts::save))
+        .route("/prompts/{id}", axum::routing::patch(prompts::rename).delete(prompts::delete))
+        .route("/prompts/{id}/render", post(prompts::render))
+        .route("/generations/batch", post(create_batch))
+        .route("/generations/{id}/variations", post(variations))
         .route("/generations", get(list_jobs).post(create_job))
         .route("/generations/{id}", get(get_job).delete(delete_job))
         .route("/generations/{id}/cancel", post(cancel_job))
@@ -552,6 +559,15 @@ async fn enhance_prompt(State(s): State<AppState>, c: Caller, Json(b): Json<Enha
 async fn create_job(State(s): State<AppState>, c: Caller, Json(b): Json<CreateGeneration>) -> ApiResult<Response> {
     let created = s.engine.create_generation(&c.user_id, b).await?;
     Ok((StatusCode::CREATED, Json(json!(created))).into_response())
+}
+
+async fn create_batch(State(s): State<AppState>, c: Caller, Json(b): Json<pictesa_engine::batches::BatchRequest>) -> ApiResult<Response> {
+    if b.dry_run { return Ok(Json(json!(s.engine.estimate_batch(&c.user_id, b).await?)).into_response()); }
+    Ok((StatusCode::CREATED, Json(json!(s.engine.create_batch(&c.user_id, b).await?))).into_response())
+}
+
+async fn variations(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Response> {
+    Ok((StatusCode::CREATED, Json(json!(s.engine.variations(&c.user_id, &id).await?))).into_response())
 }
 
 async fn list_jobs(State(s): State<AppState>, c: Caller, Query(f): Query<JobFilter>) -> ApiResult<Json<Value>> {

@@ -16,6 +16,7 @@ import { assetTitle } from "../../lib/names";
 import { CodeBlock, CopyButton } from "../../ui/code";
 import { Choice, Control } from "../../ui/control";
 import { Dialog } from "../../ui/dialog";
+import { Variations } from "../../ui/variations";
 import { Icon, Spinner } from "../../ui/icon";
 
 /** Full-size viewer over any page (`?asset=<id>`). Arrow keys and swipes step through the page's list. */
@@ -227,6 +228,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
         </div>
       ) : (
         <div className="detail-actions">
+          {job?.status === "succeeded" && <Variations jobId={job.id} />}
           {(job || listedModel) && (
             <button type="button" className="text-button" disabled={working} onClick={() => void run(() => reuseSettings({ ...asset, job }))}>
               <Icon name="replay" />
