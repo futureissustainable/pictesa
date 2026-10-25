@@ -22,6 +22,8 @@ const PAINT = "#f2693d";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+const cursorTransform = (at: { x: number; y: number }, size: number) => `translate(${at.x - size / 2}px, ${at.y - size / 2}px)`;
+
 function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke) {
   if ("clear" in stroke) {
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
@@ -76,7 +78,9 @@ export const MaskCanvas = forwardRef<MaskHandle, Props>(function MaskCanvas({ as
   const [redo, setRedo] = useState<Stroke[]>([]);
   const strokesRef = useRef(strokes);
   strokesRef.current = strokes;
-  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
+  const [hovering, setHovering] = useState(false);
+  const cursorRef = useRef<HTMLSpanElement>(null);
+  const cursorAt = useRef({ x: 0, y: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
 
   // Pointer state lives in refs: it changes on every move and needs no render.
@@ -115,6 +119,22 @@ export const MaskCanvas = forwardRef<MaskHandle, Props>(function MaskCanvas({ as
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     list.forEach((stroke) => drawStroke(ctx, stroke));
   }, []);
+
+  // The committed strokes as a picture, taken when a stroke starts: each move then draws one
+  // image and the live stroke instead of replaying every stroke so far.
+  const baseRef = useRef<HTMLCanvasElement | null>(null);
+  const snapshot = (canvas: HTMLCanvasElement) => {
+    const base = baseRef.current ?? document.createElement("canvas");
+    base.width = canvas.width;
+    base.height = canvas.height;
+    base.getContext("2d")?.drawImage(canvas, 0, 0);
+    baseRef.current = base;
+  };
+  const drawLive = (ctx: CanvasRenderingContext2D, stroke: Stroke) => {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    if (baseRef.current) ctx.drawImage(baseRef.current, 0, 0);
+    drawStroke(ctx, stroke);
+  };
 
   useEffect(() => redraw(strokes), [strokes, redraw, maskSize?.w, maskSize?.h]);
   useEffect(() => onPaintChange?.(painted(strokes)), [strokes, onPaintChange]);
@@ -265,12 +285,17 @@ export const MaskCanvas = forwardRef<MaskHandle, Props>(function MaskCanvas({ as
     const [x, y] = toMask(event);
     const stroke = { erase: tool === "eraser", size, points: [x, y] };
     gesture.current = { kind: "paint", stroke };
+    snapshot(canvas);
     const ctx = canvas.getContext("2d");
     if (ctx) drawStroke(ctx, stroke);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== "touch") setCursor(local(event));
+    if (event.pointerType !== "touch") {
+      cursorAt.current = local(event);
+      if (cursorRef.current) cursorRef.current.style.transform = cursorTransform(cursorAt.current, brush);
+      setHovering(true);
+    }
     if (!pointers.current.has(event.pointerId)) return;
     pointers.current.set(event.pointerId, local(event));
     const current = gesture.current;
@@ -294,8 +319,7 @@ export const MaskCanvas = forwardRef<MaskHandle, Props>(function MaskCanvas({ as
         current.stroke.points.push(x, y);
       }
       // Redraw the live stroke as one path so its overlaps stay even.
-      redraw(strokesRef.current);
-      drawStroke(ctx, current.stroke);
+      drawLive(ctx, current.stroke);
     }
   };
 
@@ -346,7 +370,7 @@ export const MaskCanvas = forwardRef<MaskHandle, Props>(function MaskCanvas({ as
         onPointerUp={onPointerEnd}
         onPointerCancel={onPointerEnd}
         onPointerLeave={(event) => {
-          if (!pointers.current.has(event.pointerId)) setCursor(null);
+          if (!pointers.current.has(event.pointerId)) setHovering(false);
         }}
         onContextMenu={(event) => event.preventDefault()}
       >
@@ -365,8 +389,8 @@ export const MaskCanvas = forwardRef<MaskHandle, Props>(function MaskCanvas({ as
           {/* Kept while other tools are open, so the painting survives a tool switch. */}
           {maskSize && <canvas ref={canvasRef} className="edit-mask" width={maskSize.w} height={maskSize.h} hidden={!paint} />}
         </div>
-        {paint && !panning && cursor && (
-          <span className="brush-cursor" aria-hidden="true" style={{ width: brush, height: brush, transform: `translate(${cursor.x - brush / 2}px, ${cursor.y - brush / 2}px)` }} />
+        {paint && !panning && hovering && (
+          <span ref={cursorRef} className="brush-cursor" aria-hidden="true" style={{ width: brush, height: brush, transform: cursorTransform(cursorAt.current, brush) }} />
         )}
       </div>
       <div className="edit-toolbar" role="toolbar" aria-label="Canvas tools">

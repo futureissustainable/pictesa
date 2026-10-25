@@ -72,9 +72,13 @@ impl Engine {
                 let released = spec.meta.get("date").and_then(Value::as_str).and_then(|d| d.get(..10)).map(String::from);
                 // Provider bindings are internal and heavy; the full spec comes from GET /api/models/{id}.
                 spec.meta = Value::Null;
-                ModelView { arena: arenas.scores(&spec), spec, configured: ok, billed: is_billed, released }
+                ModelView { arena: Vec::new(), spec, configured: ok, billed: is_billed, released }
             })
             .filter(|v| f.configured != Some(true) || v.configured)
+            .map(|mut v| {
+                v.arena = arenas.scores(&v.spec);
+                v
+            })
             .collect();
         out.sort_by_key(|v| (!v.configured, !v.spec.tags.iter().any(|t| t == "featured")));
         match f.sort.as_deref() {
@@ -644,6 +648,9 @@ impl Engine {
     /// Fills missing provenance only. Reimports cannot overwrite earlier prompts or settings.
     pub async fn fill_asset_metadata(&self, user: &str, id: &str, metadata: &ImportMetadata) -> Result<Asset> {
         metadata.validate()?;
+        if metadata.is_empty() {
+            return Ok(store::asset_row(&self.inner.db, user, id).await.map_err(|_| EngineError::not_found("file"))?.to_asset());
+        }
         let mut tx = self.inner.db.begin().await?;
         let updated = sqlx::query("UPDATE assets SET prompt = coalesce(nullif(prompt, ''), nullif(?, '')),
             negative_prompt = coalesce(nullif(negative_prompt, ''), nullif(?, '')),
@@ -912,6 +919,11 @@ pub fn estimate_cost(spec: &ModelSpec, params: &Map<String, Value>, outputs: u32
 
 
 impl ImportMetadata {
+    pub fn is_empty(&self) -> bool {
+        let ImportMetadata { prompt, negative_prompt, origin, model, model_label, params, source_url } = self;
+        [prompt, negative_prompt, origin, model, model_label, source_url].iter().all(|v| v.as_deref().is_none_or(str::is_empty)) && params.is_empty()
+    }
+
     pub fn validate(&self) -> Result<()> {
         for (field, value, max) in [
             ("prompt", &self.prompt, 20_000), ("negative_prompt", &self.negative_prompt, 20_000),

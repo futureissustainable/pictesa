@@ -83,13 +83,18 @@ export function useAssetList(query: AssetQuery): AssetList {
   }, [key, fetchPage]);
 
   useEffect(() => {
-    const merge = (asset: Asset) => {
+    // Collection, tag and cost membership need a server query; a burst of events makes one.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refetch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fetchPage(null), 250);
+    };
+    const serverSide = () => {
       const current = queryRef.current;
-      // Collection, tag and cost membership need a server query.
-      if (current.collection || current.tag || current.provider || current.cost_min !== undefined || current.cost_max !== undefined) {
-        fetchPage(null);
-        return;
-      }
+      return Boolean(current.collection || current.tag || current.provider || current.cost_min !== undefined || current.cost_max !== undefined);
+    };
+    const merge = (asset: Asset) => {
+      if (serverSide()) return refetch();
       setState((list) => {
         if (list.key !== key || !list.loaded) return list;
         const current = queryRef.current;
@@ -112,7 +117,10 @@ export function useAssetList(query: AssetQuery): AssetList {
     };
     const remove = (id: string) => setState((list) => ({ ...list, items: list.items.filter((item) => item.id !== id) }));
     const offEvents = subscribeEvents({
-      library: () => fetchPage(null),
+      library: () => {
+        const current = queryRef.current;
+        if (current.collection || current.tag) refetch();
+      },
       asset: merge,
       removed: remove,
       job: (job) => {
@@ -121,6 +129,7 @@ export function useAssetList(query: AssetQuery): AssetList {
     });
     const offReconnect = onReconnect(() => fetchPage(null));
     return () => {
+      clearTimeout(timer);
       offEvents();
       offReconnect();
     };

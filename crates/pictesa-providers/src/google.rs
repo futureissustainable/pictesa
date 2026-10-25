@@ -372,7 +372,7 @@ impl Provider for Google {
                 .header("x-goog-api-key", key),
         )
         .await?;
-        if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+        if handle.is_batch() {
             return batch_status(&v);
         }
         if !v.get("done").and_then(Value::as_bool).unwrap_or(false) {
@@ -387,7 +387,7 @@ impl Provider for Google {
         Ok(PollStatus::Done(video_output(&v, key)?))
     }
     async fn cancel(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<()> {
-        if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+        if handle.is_batch() {
             get_json(
                 ctx.http
                     .post(format!("{API}/{}:cancel", handle.id))

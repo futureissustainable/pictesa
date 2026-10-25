@@ -633,9 +633,10 @@ async fn upload_assets(State(s): State<AppState>, c: Caller, mut form: Multipart
         return Err(bad(&first, Some("file")));
     }
     let metadata: ImportMetadata = serde_json::from_value(Value::Object(metadata)).map_err(|e| bad(&format!("Invalid import metadata: {e}"), Some("metadata")))?;
-    metadata.validate()?;
-    for asset in &mut out {
-        *asset = s.engine.fill_asset_metadata(&c.user_id, &asset.id, &metadata).await?;
+    if !metadata.is_empty() {
+        for asset in &mut out {
+            *asset = s.engine.fill_asset_metadata(&c.user_id, &asset.id, &metadata).await?;
+        }
     }
     Ok(Json(json!({ "assets": out, "errors": errors })))
 }

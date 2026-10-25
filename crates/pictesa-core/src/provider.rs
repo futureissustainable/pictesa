@@ -120,6 +120,10 @@ impl RemoteHandle {
     pub fn data_str(&self, key: &str) -> Option<&str> {
         self.data.get(key).and_then(Value::as_str)
     }
+    /// Submitted to a provider's asynchronous batch API (polled slowly, may take a day).
+    pub fn is_batch(&self) -> bool {
+        self.data.get("batch").and_then(Value::as_bool) == Some(true)
+    }
 }
 
 /// A finished output. URLs are downloaded by the engine with the given headers.
@@ -195,7 +199,7 @@ pub trait Provider: Send + Sync + 'static {
     }
 
     fn poll_interval_for(&self, handle: &RemoteHandle, attempt: u32) -> Duration {
-        if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+        if handle.is_batch() {
             Duration::from_secs(60)
         } else {
             self.poll_interval(attempt)

@@ -207,31 +207,24 @@ fn batch_handle(
     ))
 }
 
-fn batch_outputs(text: &str, handle: &RemoteHandle) -> ProviderResult<Vec<Output>> {
-    for line in text.lines().filter(|s| !s.trim().is_empty()) {
-        let v: Value = serde_json::from_str(line)
-            .map_err(|_| failure("OpenAI returned invalid batch JSONL"))?;
-        if v["custom_id"].as_str() != handle.data_str("custom_id") {
-            continue;
-        }
-        if let Some(message) = v.pointer("/error/message").and_then(Value::as_str) {
-            return Err(failure(message));
-        }
-        let status = v
-            .pointer("/response/status_code")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| failure("OpenAI batch response has no status code"))?;
-        let body = &v["response"]["body"];
-        if !(200..300).contains(&status) {
-            return Err(ProviderError::from_http(
-                status as u16,
-                &body.to_string(),
-                None,
-            ));
-        }
-        return image_outputs(body, handle.data_str("output_format"));
+/// This job's result in a batch output or error file, if the file has it.
+fn batch_outputs(text: &str, handle: &RemoteHandle) -> Option<ProviderResult<Vec<Output>>> {
+    let v = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|v| v["custom_id"].as_str() == handle.data_str("custom_id"))?;
+    if let Some(message) = v.pointer("/error/message").and_then(Value::as_str) {
+        return Some(Err(failure(message)));
     }
-    Err(failure("OpenAI batch has no result for this job"))
+    let Some(status) = v.pointer("/response/status_code").and_then(Value::as_u64) else {
+        return Some(Err(failure("OpenAI batch response has no status code")));
+    };
+    let body = &v["response"]["body"];
+    Some(if (200..300).contains(&status) {
+        image_outputs(body, handle.data_str("output_format"))
+    } else {
+        Err(ProviderError::from_http(status as u16, &body.to_string(), None))
+    })
 }
 
 async fn batch_file(ctx: &Ctx, id: &str) -> ProviderResult<String> {
@@ -264,17 +257,12 @@ async fn poll_batch(ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStat
             message: Some("Batch processing (up to 24 hours)".into()),
         }),
         "completed" | "failed" | "expired" | "cancelled" => {
-            if let Some(file) = v["output_file_id"].as_str() {
-                return Ok(PollStatus::Done(batch_outputs(
-                    &batch_file(ctx, file).await?,
-                    handle,
-                )?));
-            }
-            if let Some(file) = v["error_file_id"].as_str() {
-                return match batch_outputs(&batch_file(ctx, file).await?, handle) {
-                    Ok(out) => Ok(PollStatus::Done(out)),
-                    Err(e) => Ok(PollStatus::Failed(e)),
-                };
+            for file in [&v["output_file_id"], &v["error_file_id"]].into_iter().filter_map(Value::as_str) {
+                match batch_outputs(&batch_file(ctx, file).await?, handle) {
+                    Some(Ok(out)) => return Ok(PollStatus::Done(out)),
+                    Some(Err(e)) => return Ok(PollStatus::Failed(e)),
+                    None => {}
+                }
             }
             let message = v
                 .pointer("/errors/data/0/message")
@@ -423,7 +411,7 @@ impl Provider for OpenAI {
         }
     }
     async fn poll(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
-        if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+        if handle.is_batch() {
             return poll_batch(ctx, handle).await;
         }
         let v = get_json(
@@ -456,7 +444,7 @@ impl Provider for OpenAI {
         }
     }
     async fn cancel(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<()> {
-        let resource = if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+        let resource = if handle.is_batch() {
             "batches"
         } else {
             "videos"
@@ -477,13 +465,11 @@ impl Provider for OpenAI {
 /// already carry transparency are taken as OpenAI-style and sent as they are.
 fn alpha_mask(bytes: &[u8]) -> ProviderResult<Vec<u8>> {
     let img = image::load_from_memory(bytes).map_err(|e| ProviderError::InvalidInput(format!("the mask is not a readable image: {e}")))?;
-    let has_transparency = img.color().has_alpha() && img.to_rgba8().pixels().any(|p| p.0[3] < 255);
-    let out = if has_transparency {
-        img.to_rgba8()
-    } else {
+    let transparent = img.color().has_alpha().then(|| img.to_rgba8()).filter(|rgba| rgba.pixels().any(|p| p.0[3] < 255));
+    let out = transparent.unwrap_or_else(|| {
         let gray = img.to_luma8();
         image::RgbaImage::from_fn(gray.width(), gray.height(), |x, y| image::Rgba([0, 0, 0, if gray.get_pixel(x, y).0[0] >= 128 { 0 } else { 255 }]))
-    };
+    });
     let mut png = std::io::Cursor::new(Vec::new());
     out.write_to(&mut png, image::ImageFormat::Png).map_err(|e| ProviderError::InvalidInput(format!("could not prepare the mask: {e}")))?;
     Ok(png.into_inner())
@@ -600,7 +586,7 @@ mod tests {
             r#"{"custom_id":"job-1","response":{"status_code":200,"body":{"data":[{"b64_json":"YQ=="}]}},"error":null}"#
         );
         assert!(
-            matches!(&batch_outputs(text, &h).unwrap()[0], Output::Bytes { data, mime } if data == b"a" && mime == "image/webp")
+            matches!(&batch_outputs(text, &h).unwrap().unwrap()[0], Output::Bytes { data, mime } if data == b"a" && mime == "image/webp")
         );
         assert_eq!(
             OpenAI.poll_interval_for(&h, 0),
@@ -609,10 +595,12 @@ mod tests {
         for text in [
             r#"{"custom_id":"job-1","response":null,"error":{"code":"batch_expired","message":"expired"}}"#,
             r#"{"custom_id":"job-1","response":{"status_code":400,"body":{"error":{"message":"bad input"}}}}"#,
-            "invalid json",
-            "",
         ] {
-            assert!(batch_outputs(text, &h).is_err());
+            assert!(batch_outputs(text, &h).unwrap().is_err());
+        }
+        // A file without this job's line sends the poll on to the error file.
+        for text in ["invalid json", "", r#"{"custom_id":"other","response":{"status_code":200,"body":{}}}"#] {
+            assert!(batch_outputs(text, &h).is_none());
         }
     }
 }

@@ -306,7 +306,7 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
 
     if outputs.is_none() {
         let handle = handle.expect("handle set when not done");
-        let batch = handle.data.get("batch").and_then(serde_json::Value::as_bool) == Some(true);
+        let batch = handle.is_batch();
         let runtime = if batch { MAX_BATCH_RUNTIME } else { MAX_RUNTIME };
         let started_at = job.started_at.unwrap_or_else(now_ms);
         let mut attempt: u32 = 0;

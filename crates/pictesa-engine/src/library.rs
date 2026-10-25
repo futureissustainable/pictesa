@@ -29,6 +29,13 @@ pub struct ZipEntry {
     pub size: u64,
 }
 
+fn check_count(ids: &[String]) -> Result<()> {
+    if ids.is_empty() || ids.len() > MAX_ZIP_ASSETS {
+        return Err(EngineError::invalid("Choose 1 to 100 assets.", Some("asset_ids")));
+    }
+    Ok(())
+}
+
 fn label(value: &str, max: usize, field: &str) -> Result<String> {
     let value = value.trim();
     if value.is_empty() || value.chars().count() > max || value.chars().any(char::is_control) {
@@ -145,15 +152,15 @@ impl Engine {
 
     pub async fn bulk_assets(&self, user: &str, ids: &[String], action: &str) -> Result<()> {
         self.validate_asset_ids(user, ids).await?;
-        let sql = match action {
-            "favorite" => "UPDATE assets SET favorite = 1 WHERE id = ? AND user_id = ?",
-            "unfavorite" => "UPDATE assets SET favorite = 0 WHERE id = ? AND user_id = ?",
-            "trash" => "UPDATE assets SET deleted_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = ? AND user_id = ?",
+        let (sql, value) = match action {
+            "favorite" => ("UPDATE assets SET favorite = ?3 WHERE id = ?1 AND user_id = ?2", 1),
+            "unfavorite" => ("UPDATE assets SET favorite = ?3 WHERE id = ?1 AND user_id = ?2", 0),
+            "trash" => ("UPDATE assets SET deleted_at = ?3 WHERE id = ?1 AND user_id = ?2", now_ms()),
             _ => return Err(EngineError::invalid("Choose favorite, unfavorite or trash.", Some("action"))),
         };
         let mut tx = self.inner.db.begin_with("BEGIN IMMEDIATE").await?;
         for id in ids {
-            sqlx::query(sql).bind(id).bind(user).execute(&mut *tx).await?;
+            sqlx::query(sql).bind(id).bind(user).bind(value).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         for id in ids {
@@ -163,9 +170,7 @@ impl Engine {
     }
 
     pub async fn validate_asset_ids(&self, user: &str, ids: &[String]) -> Result<()> {
-        if ids.is_empty() || ids.len() > MAX_ZIP_ASSETS {
-            return Err(EngineError::invalid("Choose 1 to 100 assets.", Some("asset_ids")));
-        }
+        check_count(ids)?;
         for id in ids {
             store::asset_row(&self.inner.db, user, id).await?;
         }
@@ -174,7 +179,8 @@ impl Engine {
 
     /// Open originals before starting the response, with no media buffered in memory.
     pub async fn zip_entries(&self, user: &str, ids: &[String]) -> Result<Vec<ZipEntry>> {
-        self.validate_asset_ids(user, ids).await?;
+        // Each row is read below; a missing or foreign one fails before any byte is sent.
+        check_count(ids)?;
         let mut seen = HashSet::new();
         let mut entries = Vec::new();
         let mut total = 0u64;
