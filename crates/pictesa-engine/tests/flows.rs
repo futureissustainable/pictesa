@@ -210,6 +210,11 @@ async fn brand_kits_and_paired_steps_flow_through_recipes() {
     assert_eq!(job.inputs.iter().map(|i| i.asset_id.as_str()).collect::<Vec<_>>(), [product.as_str(), logo.as_str()], "brand images follow the person's files");
 
     // Explainer: every scene line becomes a still, and each clip starts from its own still.
+    // The mock video model encodes with ffmpeg, which some CI machines lack.
+    if !e.has_ffmpeg() {
+        eprintln!("skipping the explainer: ffmpeg is not installed");
+        return;
+    }
     let mut req = run_request(json!({ "scenes": "1. A kettle on a stove\n2. Steam rising\n3. Tea poured into a cup", "duration": "5" }), &[]);
     req.character = Some(kit.id.clone());
     let run = finish(&e, e.run_recipe(LOCAL_USER, "video/explainer", req).await.unwrap()).await;
