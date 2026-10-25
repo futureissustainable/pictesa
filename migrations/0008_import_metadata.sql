@@ -1,0 +1,4 @@
+ALTER TABLE assets ADD COLUMN negative_prompt TEXT;
+ALTER TABLE assets ADD COLUMN origin TEXT;
+ALTER TABLE assets ADD COLUMN model_label TEXT;
+ALTER TABLE assets ADD COLUMN params TEXT NOT NULL DEFAULT '{}';

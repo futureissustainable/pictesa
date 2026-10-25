@@ -130,6 +130,7 @@ pub struct ParamSpec {
 
 /// Shared parameter names. Providers translate them to their own field names.
 pub mod keys {
+    pub const SPEED: &str = "speed";
     pub const ASPECT_RATIO: &str = "aspect_ratio";
     pub const RESOLUTION: &str = "resolution";
     pub const WIDTH: &str = "width";
@@ -295,6 +296,25 @@ fn one() -> u32 {
 }
 
 impl ModelSpec {
+    /// Opt in to the provider's half-price asynchronous batch API.
+    pub fn batch(mut self) -> Self {
+        if !self.meta.is_object() {
+            self.meta = serde_json::json!({});
+        }
+        self.meta["batch"] = Value::Bool(true);
+        self.params.push(
+            ParamSpec::enumeration(keys::SPEED, "Speed", &[("standard", "Standard"), ("batch", "Batch")])
+                .default_value("standard")
+                .help("Batch is half price and can take up to 24 hours."),
+        );
+        self
+    }
+
+    pub fn is_batch(&self, params: &serde_json::Map<String, Value>) -> bool {
+        self.meta.get("batch").and_then(Value::as_bool) == Some(true)
+            && params.get(keys::SPEED).and_then(Value::as_str) == Some("batch")
+    }
+
     pub fn new(provider: &str, model: &str, name: &str, output: MediaKind, tasks: &[Task]) -> Self {
         Self {
             id: format!("{provider}:{model}"),

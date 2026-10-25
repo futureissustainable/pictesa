@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     files::Stored,
     store::{self, AssetRow, JobRow},
-    Asset, AssetFilter, CreateGeneration, Created, Engine, EngineError, Job, JobFilter, ModelFilter, ModelView, Result,
+    Asset, AssetFilter, ImportMetadata, CreateGeneration, Created, Engine, EngineError, Job, JobFilter, ModelFilter, ModelView, Result,
 };
 
 pub const MAX_COUNT: u32 = 16;
@@ -516,7 +516,8 @@ impl Engine {
         let name = name.map(|n| n.chars().filter(|c| !c.is_control()).take(200).collect::<String>()).filter(|n| !n.trim().is_empty());
         sqlx::query(
             "INSERT INTO assets (id, user_id, job_id, kind, mime, hash, ext, size, width, height, duration_ms, has_thumb, source, model, prompt, source_url, created_at, name)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE ? OR NOT EXISTS (SELECT 1 FROM assets WHERE user_id = ? AND hash = ? AND deleted_at IS NULL)",
         )
         .bind(&id)
         .bind(user)
@@ -535,10 +536,21 @@ impl Engine {
         .bind(job.map(|j| j.prompt.clone()))
         .bind(source_url)
         .bind(now_ms())
-        .bind(name)
+        .bind(&name)
+        .bind(job.is_some())
+        .bind(user)
+        .bind(&stored.hash)
         .execute(&self.inner.db)
         .await?;
-        let asset = store::asset_row(&self.inner.db, user, &id).await?.to_asset();
+        let asset = if job.is_some() {
+            store::asset_row(&self.inner.db, user, &id).await?.to_asset()
+        } else {
+            let row = sqlx::query_as::<_, AssetRow>("SELECT * FROM assets WHERE user_id = ? AND hash = ? AND deleted_at IS NULL ORDER BY id LIMIT 1")
+                .bind(user).bind(&stored.hash).fetch_one(&self.inner.db).await?;
+            sqlx::query("UPDATE assets SET name = coalesce(name, ?), source_url = coalesce(source_url, ?) WHERE id = ? AND user_id = ?")
+                .bind(&name).bind(source_url).bind(&row.id).bind(user).execute(&self.inner.db).await?;
+            store::asset_row(&self.inner.db, user, &row.id).await?.to_asset()
+        };
         self.emit(user, "asset", json!(asset));
         Ok(asset)
     }
@@ -561,6 +573,11 @@ impl Engine {
     }
 
     pub async fn import_url(&self, user: &str, url: &str) -> Result<Asset> {
+        self.import_url_with_metadata(user, url, &ImportMetadata::default()).await
+    }
+
+    pub async fn import_url_with_metadata(&self, user: &str, url: &str, metadata: &ImportMetadata) -> Result<Asset> {
+        metadata.validate()?;
         let parsed = url::Url::parse(url).map_err(|_| EngineError::invalid("That is not a valid URL.", Some("url")))?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(EngineError::invalid("Only http and https URLs can be imported.", Some("url")));
@@ -577,7 +594,42 @@ impl Engine {
         }
         let stored = self.inner.files.store_response(resp, Some(parsed.path()), false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("url")))?;
         let name = parsed.path_segments().and_then(|mut s| s.next_back()).filter(|n| !n.is_empty()).map(String::from);
-        self.insert_named_asset(user, &stored, "import", None, Some(url), name.as_deref()).await
+        let asset = self.insert_named_asset(user, &stored, "import", None, metadata.source_url.as_deref().or(Some(url)), name.as_deref()).await?;
+        self.fill_asset_metadata(user, &asset.id, metadata).await
+    }
+
+    /// Fills missing provenance only. Reimports cannot overwrite earlier prompts or settings.
+    pub async fn fill_asset_metadata(&self, user: &str, id: &str, metadata: &ImportMetadata) -> Result<Asset> {
+        metadata.validate()?;
+        let mut tx = self.inner.db.begin().await?;
+        let updated = sqlx::query("UPDATE assets SET prompt = coalesce(nullif(prompt, ''), nullif(?, '')),
+            negative_prompt = coalesce(nullif(negative_prompt, ''), nullif(?, '')),
+            origin = coalesce(nullif(origin, ''), nullif(?, '')),
+            model = coalesce(nullif(model, ''), nullif(?, '')),
+            model_label = coalesce(nullif(model_label, ''), nullif(?, '')),
+            source_url = coalesce(nullif(source_url, ''), nullif(?, ''))
+            WHERE id = ? AND user_id = ?")
+            .bind(&metadata.prompt).bind(&metadata.negative_prompt).bind(&metadata.origin)
+            .bind(&metadata.model).bind(&metadata.model_label).bind(&metadata.source_url)
+            .bind(id).bind(user).execute(&mut *tx).await?;
+        if updated.rows_affected() == 0 { return Err(EngineError::not_found("file")); }
+        // The update above holds the write lock, so concurrent reimports cannot lose keys.
+        let params: String = sqlx::query_scalar("SELECT params FROM assets WHERE id = ? AND user_id = ?")
+            .bind(id).bind(user).fetch_one(&mut *tx).await?;
+        let mut params: Map<String, Value> = serde_json::from_str(&params).map_err(anyhow::Error::from)?;
+        for (key, value) in &metadata.params { params.entry(key.clone()).or_insert_with(|| value.clone()); }
+        sqlx::query("UPDATE assets SET params = ? WHERE id = ? AND user_id = ?")
+            .bind(serde_json::to_string(&params).map_err(anyhow::Error::from)?).bind(id).bind(user).execute(&mut *tx).await?;
+        tx.commit().await?;
+        let asset = store::asset_row(&self.inner.db, user, id).await?.to_asset();
+        self.emit(user, "asset", json!(asset));
+        Ok(asset)
+    }
+
+    pub async fn upload_with_metadata(&self, user: &str, bytes: &[u8], name: Option<&str>, mime: Option<&str>, metadata: &ImportMetadata) -> Result<Asset> {
+        metadata.validate()?;
+        let asset = self.upload(user, bytes, name, mime).await?;
+        self.fill_asset_metadata(user, &asset.id, metadata).await
     }
 
     pub async fn assets(&self, user: &str, f: &AssetFilter) -> Result<(Vec<Asset>, Option<String>)> {
@@ -795,9 +847,28 @@ pub fn estimate_cost(spec: &ModelSpec, params: &Map<String, Value>, outputs: u32
         Pricing::Local => 0.0,
         Pricing::Variable { .. } => return None,
     };
-    Some((usd * 10_000.0).round() / 10_000.0)
+    let usd = (usd * 10_000.0).round() / 10_000.0;
+    Some(if spec.is_batch(params) { usd * 0.5 } else { usd })
 }
 
+
+impl ImportMetadata {
+    pub fn validate(&self) -> Result<()> {
+        for (field, value, max) in [
+            ("prompt", &self.prompt, 20_000), ("negative_prompt", &self.negative_prompt, 20_000),
+            ("origin", &self.origin, 200), ("model", &self.model, 500),
+            ("model_label", &self.model_label, 500), ("source_url", &self.source_url, 4000),
+        ] {
+            if value.as_ref().is_some_and(|v| v.chars().count() > max) {
+                return Err(EngineError::invalid(format!("{field} is longer than {max} characters."), Some(field)));
+            }
+        }
+        if self.params.len() > 64 || serde_json::to_vec(&self.params).map_err(anyhow::Error::from)?.len() > 64 * 1024 {
+            return Err(EngineError::invalid("Import params must fit in 64 KB and contain at most 64 keys.", Some("params")));
+        }
+        Ok(())
+    }
+}
 
 /// Result of turning a ComfyUI workflow into a model.
 #[derive(Debug, Clone, serde::Serialize)]

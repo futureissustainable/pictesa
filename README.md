@@ -46,11 +46,14 @@ pictesa model fal:kling/v4/image-to-video
 pictesa generate "a timber cabin on a misty lake at dawn" -m fal:google/nano-banana-2.1 -p aspect_ratio=16:9 -n 4 -o ./out
 pictesa generate "slow push in" -m fal:kling/v4/image-to-video -i start_frame=./out/cabin.png -p duration=5
 pictesa recipe run cinema/shot -v scene="a lighthouse in a storm" -v camera=camera/crane-up
+pictesa import result.png --prompt-file prompt.txt --origin gemini-api --model google:gemini-3-pro-image --label "Nano Banana Pro" -p resolution=2K --json
 pictesa workflow import my-flow.json --name "My flow"   # any ComfyUI workflow becomes a model
 pictesa keys set fal api_key        # reads the key from stdin; stored encrypted
 ```
 
-When the studio is running, CLI jobs run there and appear live in the UI.
+When the studio is running, CLI jobs and imports run there and appear live in the UI. Otherwise imports use the local library. `pictesa import <file>...` accepts `--prompt TEXT` or `--prompt-file FILE`, `--negative`, `--model`, `--label`, `--origin`, repeatable `-p key=value`, `--source-url`, and `--json`. Reimporting the same file fills missing metadata without replacing existing values.
+
+OpenAI and Gemini image models offer **Speed: Batch** (`-p speed=batch`): half price, with a turnaround of up to 24 hours. Accepted jobs resume after restarts and can be canceled in the studio.
 
 ## Agents
 

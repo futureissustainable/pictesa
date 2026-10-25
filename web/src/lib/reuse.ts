@@ -4,7 +4,7 @@ import { composer, loadSettings, placeAsset, selectModel, setCharacter, setMode,
 import { kindLabel, roleLabel } from "./format";
 import { notify } from "./notices";
 import { navigate } from "./router";
-import type { Asset, AssetDetail, Character, InputRole, MediaKind, ModelSpec } from "./types";
+import type { Asset, AssetDetail, Character, InputRole, MediaKind, ModelSpec, ParamValues } from "./types";
 
 // Moves library items into Create: reuse a job's settings, or use an asset as an input.
 
@@ -54,7 +54,16 @@ export async function sendToCreate(asset: Asset, mode: MediaKind, role: InputRol
 /** "Reuse settings": model, prompt, params, preset, count and the original inputs. */
 export async function reuseSettings(detail: AssetDetail) {
   const job = detail.job;
-  if (!job) return;
+  if (!job) {
+    if (!detail.model) return;
+    await loadModels(detail.kind);
+    const model = (peekModels(detail.kind) ?? []).find((item) => item.id === detail.model);
+    if (!model) return notify("This model is not available in Pictesa.", { tone: "error" });
+    const params = Object.fromEntries(Object.entries(detail.params ?? {}).filter(([, value]) => value === null || ["string", "number", "boolean"].includes(typeof value))) as ParamValues;
+    loadSettings({ mode: detail.kind, model, prompt: detail.prompt ?? "", negativePrompt: detail.negative_prompt ?? null, params, inputs: [], preset: null, count: 1 });
+    navigate("/", { replace: true });
+    return;
+  }
   await loadModels(job.output);
   const model = (peekModels(job.output) ?? []).find((item) => item.id === job.model) ?? null;
   const results = await Promise.allSettled((job.inputs ?? []).map((input) => api.asset(input.asset_id).then((asset) => ({ role: input.role, asset: asset as Asset }))));

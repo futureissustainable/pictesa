@@ -170,6 +170,11 @@ export interface Asset {
   job_id: string | null;
   model: string | null;
   prompt: string | null;
+  negative_prompt?: string | null;
+  origin?: string | null;
+  model_label?: string | null;
+  params?: Record<string, unknown>;
+  source_url?: string | null;
   favorite: boolean;
   created_at: number;
   deleted_at: number | null;

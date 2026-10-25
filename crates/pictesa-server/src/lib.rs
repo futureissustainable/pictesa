@@ -20,7 +20,7 @@ use axum::{
 };
 use futures::Stream;
 use pictesa_core::MediaKind;
-use pictesa_engine::{AssetFilter, CreateGeneration, Engine, EngineError, JobFilter, Mode, ModelFilter, User, LOCAL_USER};
+use pictesa_engine::{AssetFilter, CreateGeneration, Engine, EngineError, JobFilter, ImportMetadata, Mode, ModelFilter, User, LOCAL_USER};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tower::ServiceExt;
@@ -570,7 +570,29 @@ async fn list_assets(State(s): State<AppState>, c: Caller, Query(f): Query<Asset
 async fn upload_assets(State(s): State<AppState>, c: Caller, mut form: Multipart) -> ApiResult<Json<Value>> {
     let mut out = Vec::new();
     let mut errors = Vec::new();
-    while let Some(field) = form.next_field().await.map_err(|e| bad(&format!("Upload failed: {e}"), Some("file")))? {
+    let mut metadata = Map::new();
+    while let Some(mut field) = form.next_field().await.map_err(|e| bad(&format!("Upload failed: {e}"), Some("file")))? {
+        let field_name = field.name().unwrap_or("").to_string();
+        if field_name != "file" && field.file_name().is_none() {
+            if !["metadata", "prompt", "negative_prompt", "origin", "model", "model_label", "params", "source_url"].contains(&field_name.as_str()) {
+                return Err(bad("Unknown import metadata field.", Some("metadata")));
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = field.chunk().await.map_err(|e| bad(&e.to_string(), Some("metadata")))? {
+                if bytes.len() + chunk.len() > MAX_JSON { return Err(bad("Import metadata is too large.", Some("metadata"))); }
+                bytes.extend_from_slice(&chunk);
+            }
+            let text = String::from_utf8(bytes).map_err(|_| bad("Import metadata must be UTF-8.", Some("metadata")))?;
+            if field_name == "metadata" {
+                let value: Map<String, Value> = serde_json::from_str(&text).map_err(|_| bad("metadata must be a JSON object.", Some("metadata")))?;
+                metadata.extend(value);
+            } else if field_name == "params" {
+                metadata.insert(field_name, serde_json::from_str(&text).map_err(|_| bad("params must be a JSON object.", Some("params")))?);
+            } else {
+                metadata.insert(field_name, json!(text));
+            }
+            continue;
+        }
         let name = field.file_name().map(String::from);
         let stream = field.map(|chunk| chunk.map_err(|e| std::io::Error::other(e.to_string())));
         match s.engine.upload_stream(&c.user_id, Box::pin(stream), name.as_deref()).await {
@@ -583,16 +605,23 @@ async fn upload_assets(State(s): State<AppState>, c: Caller, mut form: Multipart
         let first = errors.first().and_then(|e| e["error"].as_str()).unwrap_or("Choose at least one file.").to_string();
         return Err(bad(&first, Some("file")));
     }
+    let metadata: ImportMetadata = serde_json::from_value(Value::Object(metadata)).map_err(|e| bad(&format!("Invalid import metadata: {e}"), Some("metadata")))?;
+    metadata.validate()?;
+    for asset in &mut out {
+        *asset = s.engine.fill_asset_metadata(&c.user_id, &asset.id, &metadata).await?;
+    }
     Ok(Json(json!({ "assets": out, "errors": errors })))
 }
 
 #[derive(Deserialize)]
 struct ImportBody {
     url: String,
+    #[serde(flatten)]
+    metadata: ImportMetadata,
 }
 
 async fn import_asset(State(s): State<AppState>, c: Caller, Json(b): Json<ImportBody>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!({ "assets": [s.engine.import_url(&c.user_id, &b.url).await?] })))
+    Ok(Json(json!({ "assets": [s.engine.import_url_with_metadata(&c.user_id, &b.url, &b.metadata).await?] })))
 }
 
 async fn get_asset(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {

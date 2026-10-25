@@ -51,7 +51,7 @@ fn image_spec(id: &str) -> ModelSpec {
     m.pricing = Some(Pricing::Variable {
         note: "OpenAI image token pricing".into(),
     });
-    m
+    m.batch()
 }
 fn video_spec(id: &str) -> ModelSpec {
     let mut m = ModelSpec::new(
@@ -146,6 +146,152 @@ fn image_outputs(v: &Value, requested_format: Option<&str>) -> ProviderResult<Ve
     }
 }
 
+async fn image_request(
+    model: &ModelSpec,
+    req: &GenerationRequest,
+) -> ProviderResult<(String, Value)> {
+    let mut body = image_body(model, req);
+    let refs: Vec<_> = req.inputs(InputRole::Reference).collect();
+    let endpoint = if refs.is_empty() {
+        "/images/generations"
+    } else {
+        "/images/edits"
+    };
+    if !refs.is_empty() {
+        let mut images = Vec::new();
+        for input in refs {
+            // Hosted file links expire before the batch's 24-hour processing window.
+            let url = if model.is_batch(&req.params) {
+                input.data_uri().await?
+            } else {
+                input.url_or_data_uri().await?
+            };
+            images.push(json!({"image_url":url}));
+        }
+        body["images"] = json!(images);
+        if let Some(mask) = req.input(InputRole::Mask) {
+            let url = if model.is_batch(&req.params) {
+                mask.data_uri().await?
+            } else {
+                mask.url_or_data_uri().await?
+            };
+            body["mask"] = json!({"image_url":url});
+        }
+    } else if req.input(InputRole::Mask).is_some() {
+        return Err(ProviderError::InvalidInput(
+            "mask needs a reference image".into(),
+        ));
+    }
+    Ok((endpoint.into(), body))
+}
+
+// https://developers.openai.com/api/docs/guides/batch
+fn batch_line(job: &str, endpoint: &str, body: Value) -> Value {
+    json!({"custom_id":job,"method":"POST","url":format!("/v1{endpoint}"),"body":body})
+}
+
+fn batch_body(file: &str, endpoint: &str) -> Value {
+    json!({"input_file_id":file,"endpoint":format!("/v1{endpoint}"),"completion_window":"24h"})
+}
+
+fn batch_handle(
+    v: &Value,
+    req: &GenerationRequest,
+    input_file: &str,
+) -> ProviderResult<RemoteHandle> {
+    let id = v["id"]
+        .as_str()
+        .ok_or_else(|| failure("OpenAI returned no batch id"))?;
+    Ok(RemoteHandle::with(
+        id,
+        json!({"batch":true,"custom_id":req.job_id,
+        "input_file_id":input_file,"output_format":req.str(keys::OUTPUT_FORMAT)}),
+    ))
+}
+
+fn batch_outputs(text: &str, handle: &RemoteHandle) -> ProviderResult<Vec<Output>> {
+    for line in text.lines().filter(|s| !s.trim().is_empty()) {
+        let v: Value = serde_json::from_str(line)
+            .map_err(|_| failure("OpenAI returned invalid batch JSONL"))?;
+        if v["custom_id"].as_str() != handle.data_str("custom_id") {
+            continue;
+        }
+        if let Some(message) = v.pointer("/error/message").and_then(Value::as_str) {
+            return Err(failure(message));
+        }
+        let status = v
+            .pointer("/response/status_code")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| failure("OpenAI batch response has no status code"))?;
+        let body = &v["response"]["body"];
+        if !(200..300).contains(&status) {
+            return Err(ProviderError::from_http(
+                status as u16,
+                &body.to_string(),
+                None,
+            ));
+        }
+        return image_outputs(body, handle.data_str("output_format"));
+    }
+    Err(failure("OpenAI batch has no result for this job"))
+}
+
+async fn batch_file(ctx: &Ctx, id: &str) -> ProviderResult<String> {
+    let resp = ctx
+        .http
+        .get(format!("{API}/files/{id}/content"))
+        .timeout(crate::util::API_TIMEOUT)
+        .bearer_auth(ctx.api_key()?)
+        .send()
+        .await
+        .map_err(net_error)?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(net_error)?;
+    if !status.is_success() {
+        return Err(ProviderError::from_http(status.as_u16(), &text, None));
+    }
+    Ok(text)
+}
+
+async fn poll_batch(ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
+    let v = get_json(
+        ctx.http
+            .get(format!("{API}/batches/{}", handle.id))
+            .bearer_auth(ctx.api_key()?),
+    )
+    .await?;
+    match v["status"].as_str().unwrap_or("") {
+        "validating" | "in_progress" | "finalizing" | "cancelling" => Ok(PollStatus::Running {
+            progress: None,
+            message: Some("Batch processing (up to 24 hours)".into()),
+        }),
+        "completed" | "failed" | "expired" | "cancelled" => {
+            if let Some(file) = v["output_file_id"].as_str() {
+                return Ok(PollStatus::Done(batch_outputs(
+                    &batch_file(ctx, file).await?,
+                    handle,
+                )?));
+            }
+            if let Some(file) = v["error_file_id"].as_str() {
+                return match batch_outputs(&batch_file(ctx, file).await?, handle) {
+                    Ok(out) => Ok(PollStatus::Done(out)),
+                    Err(e) => Ok(PollStatus::Failed(e)),
+                };
+            }
+            let message = v
+                .pointer("/errors/data/0/message")
+                .and_then(Value::as_str)
+                .unwrap_or("OpenAI batch ended without images");
+            if v["status"] == "failed" {
+                Ok(PollStatus::Failed(failure(message)))
+            } else {
+                Err(failure(message))
+            }
+        }
+        other => Err(failure(&format!("Unknown OpenAI batch state: {other}"))),
+    }
+}
+
 #[async_trait]
 impl Provider for OpenAI {
     fn info(&self) -> ProviderInfo {
@@ -210,31 +356,32 @@ impl Provider for OpenAI {
     ) -> ProviderResult<Submission> {
         let key = ctx.api_key()?;
         if model.output == MediaKind::Image {
-            let mut body = image_body(model, req);
-            let refs: Vec<_> = req.inputs(InputRole::Reference).collect();
-            let endpoint = if refs.is_empty() {
-                "generations"
-            } else {
-                "edits"
-            };
-            if !refs.is_empty() {
-                let mut images = Vec::new();
-                for input in refs {
-                    images.push(json!({"image_url":input.url_or_data_uri().await?}));
-                }
-                body["images"] = json!(images);
-                if let Some(mask) = req.input(InputRole::Mask) {
-                    body["mask"] = json!({"image_url":mask.url_or_data_uri().await?});
-                }
-            } else if req.input(InputRole::Mask).is_some() {
-                return Err(ProviderError::InvalidInput(
-                    "mask needs a reference image".into(),
-                ));
+            let (endpoint, body) = image_request(model, req).await?;
+            if model.is_batch(&req.params) {
+                let line = batch_line(&req.job_id, &endpoint, body);
+                let file = Part::text(format!("{line}\n"))
+                    .file_name("pictesa-batch.jsonl")
+                    .mime_str("application/jsonl")
+                    .map_err(|e| ProviderError::InvalidInput(e.to_string()))?;
+                let uploaded = get_json(
+                    ctx.http
+                        .post(format!("{API}/files"))
+                        .bearer_auth(key)
+                        .multipart(Form::new().text("purpose", "batch").part("file", file)),
+                )
+                .await?;
+                let file_id = uploaded["id"]
+                    .as_str()
+                    .ok_or_else(|| failure("OpenAI returned no batch input file id"))?;
+                let v = send_json(
+                    ctx.http.post(format!("{API}/batches")).bearer_auth(key),
+                    &batch_body(file_id, &endpoint),
+                )
+                .await?;
+                return Ok(Submission::Pending(batch_handle(&v, req, file_id)?));
             }
             let v = send_json(
-                ctx.http
-                    .post(format!("{API}/images/{endpoint}"))
-                    .bearer_auth(key),
+                ctx.http.post(format!("{API}{endpoint}")).bearer_auth(key),
                 &body,
             )
             .await?;
@@ -278,6 +425,9 @@ impl Provider for OpenAI {
         }
     }
     async fn poll(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
+        if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+            return poll_batch(ctx, handle).await;
+        }
         let v = get_json(
             ctx.http
                 .get(format!("{API}/videos/{}", handle.id))
@@ -308,9 +458,14 @@ impl Provider for OpenAI {
         }
     }
     async fn cancel(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<()> {
+        let resource = if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+            "batches"
+        } else {
+            "videos"
+        };
         let r = ctx
             .http
-            .post(format!("{API}/videos/{}/cancel", handle.id))
+            .post(format!("{API}/{resource}/{}/cancel", handle.id))
             .bearer_auth(ctx.api_key()?)
             .send()
             .await
@@ -349,5 +504,89 @@ mod tests {
         assert_eq!(body["size"], "1536x864");
         assert_eq!(body["quality"], "max");
         assert_eq!(body["n"], 2);
+    }
+    #[tokio::test]
+    async fn batch_requests_use_documented_jsonl_for_generations_and_edits() {
+        let model = image_spec("gpt-image-2.5-sunburst");
+        let mut req = GenerationRequest {
+            job_id: "job-1".into(),
+            model: model.id.clone(),
+            prompt: "draw".into(),
+            negative_prompt: None,
+            params: serde_json::from_value(json!({"speed":"batch","output_format":"webp"}))
+                .unwrap(),
+            inputs: vec![],
+            num_outputs: 2,
+        };
+        let (endpoint, body) = image_request(&model, &req).await.unwrap();
+        assert_eq!(
+            batch_line(&req.job_id, &endpoint, body),
+            json!({
+                "custom_id":"job-1","method":"POST","url":"/v1/images/generations",
+                "body":{"model":"gpt-image-2.5-sunburst","prompt":"draw","n":2,"output_format":"webp"}
+            })
+        );
+        let path = std::env::temp_dir().join(format!("pictesa-openai-batch-{}", ulid::Ulid::new()));
+        tokio::fs::write(&path, b"a").await.unwrap();
+        req.inputs = vec![pictesa_core::MediaInput {
+            role: InputRole::Reference,
+            kind: MediaKind::Image,
+            mime: "image/png".into(),
+            path: path.clone(),
+            url: Some("https://example.com/ref.png".into()),
+            width: None,
+            height: None,
+        }];
+        let (endpoint, body) = image_request(&model, &req).await.unwrap();
+        assert_eq!(
+            batch_line(&req.job_id, &endpoint, body)["url"],
+            "/v1/images/edits"
+        );
+        assert_eq!(
+            batch_body("file-1", &endpoint),
+            json!({"input_file_id":"file-1","endpoint":"/v1/images/edits","completion_window":"24h"})
+        );
+        let (_, body) = image_request(&model, &req).await.unwrap();
+        assert_eq!(
+            body["images"],
+            json!([{"image_url":"data:image/png;base64,YQ=="}])
+        );
+        let mut mask = req.inputs[0].clone();
+        mask.role = InputRole::Mask;
+        req.inputs.push(mask);
+        let (_, body) = image_request(&model, &req).await.unwrap();
+        assert_eq!(
+            body["mask"],
+            json!({"image_url":"data:image/png;base64,YQ=="})
+        );
+        req.params.insert(keys::SPEED.into(), json!("standard"));
+        let (_, body) = image_request(&model, &req).await.unwrap();
+        assert_eq!(
+            body["images"],
+            json!([{"image_url":"https://example.com/ref.png"}])
+        );
+        tokio::fs::remove_file(&path).await.unwrap();
+        let h = batch_handle(&json!({"id":"batch-1"}), &req, "file-1").unwrap();
+        let h: RemoteHandle = serde_json::from_str(&serde_json::to_string(&h).unwrap()).unwrap();
+        let text = concat!(
+            r#"{"custom_id":"other","response":{"status_code":200,"body":{}}}"#,
+            "\n",
+            r#"{"custom_id":"job-1","response":{"status_code":200,"body":{"data":[{"b64_json":"YQ=="}]}},"error":null}"#
+        );
+        assert!(
+            matches!(&batch_outputs(text, &h).unwrap()[0], Output::Bytes { data, mime } if data == b"a" && mime == "image/webp")
+        );
+        assert_eq!(
+            OpenAI.poll_interval_for(&h, 0),
+            std::time::Duration::from_secs(60)
+        );
+        for text in [
+            r#"{"custom_id":"job-1","response":null,"error":{"code":"batch_expired","message":"expired"}}"#,
+            r#"{"custom_id":"job-1","response":{"status_code":400,"body":{"error":{"message":"bad input"}}}}"#,
+            "invalid json",
+            "",
+        ] {
+            assert!(batch_outputs(text, &h).is_err());
+        }
     }
 }

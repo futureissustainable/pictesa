@@ -78,6 +78,29 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Save results from outside tools in the library with their prompt and settings.
+    Import {
+        #[arg(required = true, num_args = 1..)]
+        files: Vec<PathBuf>,
+        #[arg(long, conflicts_with = "prompt_file")]
+        prompt: Option<String>,
+        #[arg(long)]
+        prompt_file: Option<PathBuf>,
+        #[arg(long)]
+        negative: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        origin: Option<String>,
+        #[arg(short, long = "param", value_name = "KEY=VALUE")]
+        params: Vec<String>,
+        #[arg(long)]
+        source_url: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// List models.
     Models {
         #[arg(long)]
@@ -344,6 +367,36 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
                     println!("{}  {:<9} {:<40} {}", j.id, j.status.as_str(), j.model, j.prompt.chars().take(60).collect::<String>());
                 }
             }
+            Ok(())
+        }
+        Command::Import { files, prompt, prompt_file, negative, model, label, origin, params, source_url, json: json_out } => {
+            let prompt = match prompt_file {
+                Some(path) => Some(tokio::fs::read_to_string(&path).await.with_context(|| format!("reading {}", path.display()))?),
+                None => prompt,
+            };
+            let metadata = pictesa_engine::ImportMetadata {
+                prompt, negative_prompt: negative, model, model_label: label, origin,
+                params: parse_params(&params)?, source_url,
+            };
+            metadata.validate()?;
+            let remote = Remote::connect(&cli).await;
+            let engine = if remote.is_none() { Some(open_engine(&cli, Mode::Local, None).await?) } else { None };
+            let mut assets = Vec::new();
+            for file in files {
+                let bytes = tokio::fs::read(&file).await.with_context(|| format!("reading {}", file.display()))?;
+                let name = file.file_name().map(|n| n.to_string_lossy().into_owned());
+                let asset = if let Some(remote) = &remote {
+                    let part = reqwest::multipart::Part::bytes(bytes).file_name(name.unwrap_or_else(|| "import".into()));
+                    let form = reqwest::multipart::Form::new().text("metadata", serde_json::to_string(&metadata)?).part("file", part);
+                    let v = remote.json(remote.req(reqwest::Method::POST, "/api/assets").multipart(form)).await?;
+                    v.pointer("/assets/0").cloned().ok_or_else(|| anyhow!("import returned no asset"))?
+                } else {
+                    serde_json::to_value(engine.as_ref().unwrap().upload_with_metadata(LOCAL_USER, &bytes, name.as_deref(), None, &metadata).await?)?
+                };
+                if !json_out { println!("{}  {}", asset["id"].as_str().unwrap_or_default(), file.display()); }
+                assets.push(asset);
+            }
+            if json_out { println!("{}", serde_json::to_string_pretty(&json!({"assets": assets}))?); }
             Ok(())
         }
         // Both go through a running server when there is one, so its model list changes at once.

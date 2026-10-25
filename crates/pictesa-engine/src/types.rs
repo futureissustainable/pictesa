@@ -91,12 +91,31 @@ pub struct Asset {
     pub job_id: Option<String>,
     pub model: Option<String>,
     pub prompt: Option<String>,
+    pub negative_prompt: Option<String>,
+    pub origin: Option<String>,
+    pub model_label: Option<String>,
+    #[serde(default)]
+    pub params: Map<String, Value>,
+    pub source_url: Option<String>,
     pub favorite: bool,
     pub created_at: i64,
     pub deleted_at: Option<i64>,
     /// Original file name for uploads and imports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+/// Provenance supplied by an outside tool. It describes the asset without creating a job.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImportMetadata {
+    pub prompt: Option<String>,
+    pub negative_prompt: Option<String>,
+    pub origin: Option<String>,
+    pub model: Option<String>,
+    pub model_label: Option<String>,
+    pub params: Map<String, Value>,
+    pub source_url: Option<String>,
 }
 
 /// Body of `POST /api/generations`.

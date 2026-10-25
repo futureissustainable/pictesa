@@ -64,8 +64,9 @@ export type Estimate = { kind: "total"; usd: number } | { kind: "unit"; text: st
  * otherwise the unit price is returned so nothing is invented.
  */
 export function estimateCost(model: ModelSpec, values: ParamValues, count: number): Estimate | null {
-  const pricing = model.pricing;
-  if (!pricing || pricing.unit === "local" || pricing.unit === "variable") return null;
+  const standard = model.pricing;
+  if (!standard || standard.unit === "local" || standard.unit === "variable") return null;
+  const pricing = model.meta?.batch === true && values.speed === "batch" ? { ...standard, usd: standard.usd * 0.5 } : standard;
   const unitText = priceHint(pricing) ?? "";
   switch (pricing.unit) {
     case "per_image":

@@ -15,3 +15,13 @@ Pictesa is installed as the `pictesa` command. Prefer the MCP tools when the cli
 4. Read the JSON: each job has `status`, `error` and `files[].path`. Open the files to check the result before reporting.
 
 Rules: generations on paid providers cost money, so make one test run before large batches and never loop on failures. Do not print API keys; they live in Pictesa's settings (`pictesa keys set <provider> api_key` reads the value from stdin).
+
+## Save results from other tools
+
+Save images made outside Pictesa with their prompt and settings:
+
+```bash
+pictesa import result.png --prompt-file prompt.txt --origin gemini-api --model google:gemini-3-pro-image --label "Nano Banana Pro" -p resolution=2K --json
+```
+
+Use `--prompt TEXT` for short prompts. Add `--negative TEXT` or `--source-url URL` when available. Multiple files share the metadata. Reimports fill missing metadata without replacing saved values. A catalog model ID enables **Reuse settings**. MCP `import_asset` accepts the same metadata (`model_label` for `--label`, `negative_prompt` for `--negative`) with `path` or `url`.
