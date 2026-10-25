@@ -1,14 +1,18 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toggleFavorite, useAssetList } from "../../lib/assets";
-import { useModelNames, useModels } from "../../lib/catalog";
+import { useModelNames, useModels, useProviders } from "../../lib/catalog";
 import { kindIcon } from "../../lib/format";
 import { Link, navigate, useLocation, withParams } from "../../lib/router";
 import { MAX_CHARACTER_IMAGES } from "../../lib/characters";
 import { assetTitle } from "../../lib/names";
-import { notify } from "../../lib/notices";
-import type { Asset, AssetQuery, AssetSource, MediaKind } from "../../lib/types";
+import { subscribeEvents } from "../../lib/events";
+import { api, downloadZip, errorMessage } from "../../lib/api";
+import { notify, notifyError } from "../../lib/notices";
+import type { Asset, AssetQuery, AssetSource, Collection, MediaKind } from "../../lib/types";
 import { openViewer, useSequence } from "../../lib/viewer";
 import { Choice, Control } from "../../ui/control";
+import { Dialog } from "../../ui/dialog";
+import { Collections } from "./collections";
 import { AssetGrid } from "../../ui/grid";
 import { Icon, Spinner } from "../../ui/icon";
 import { SizeSlider, useImageSize } from "../../ui/size-slider";
@@ -33,6 +37,11 @@ function queryFrom(url: URL): AssetQuery {
     favorite: params.get("favorite") === "true" || undefined,
     source: source === "generated" || source === "upload" || source === "import" ? source : undefined,
     model: params.get("model") || undefined,
+    collection: params.get("collection") || undefined,
+    tag: params.get("tag") || undefined,
+    provider: params.get("provider") || undefined,
+    cost_min: params.has("cost_min") ? Number(params.get("cost_min")) : undefined,
+    cost_max: params.has("cost_max") ? Number(params.get("cost_max")) : undefined,
     trash: params.get("trash") === "true" || undefined,
     q: params.get("q") || undefined,
   };
@@ -47,7 +56,24 @@ export default function LibraryPage() {
   const audio = useModels("audio");
   const [search, setSearch] = useState(query.q ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
-  // Selecting images to save them as a character.
+  const providers = useProviders().data ?? [];
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const loadOrganization = () => {
+    setOrganizationError(null);
+    Promise.all([api.collections(), api.tags()]).then(([groups, labels]) => {
+      setCollections(groups.collections); setTags(labels.tags);
+    }).catch((error) => setOrganizationError(errorMessage(error)));
+  };
+  useEffect(() => { loadOrganization(); return subscribeEvents({ library: loadOrganization }); }, []);
+  const [tagging, setTagging] = useState(false);
+  const [tag, setTag] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [selectionTags, setSelectionTags] = useState<string[]>([]);
+  const showCollections = url.searchParams.get("collections") === "true";
+  const currentCollection = collections.find((item) => item.id === query.collection);
+  // One selection mode serves organization, downloads and character creation.
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Map<string, Asset>>(new Map());
   const [saving, setSaving] = useState(false);
@@ -56,8 +82,7 @@ export default function LibraryPage() {
     setPicked(new Map());
   };
   const togglePick = (asset: Asset) => {
-    if (asset.kind !== "image") return notify("Characters are made of images.");
-    if (!picked.has(asset.id) && picked.size >= MAX_CHARACTER_IMAGES) return notify(`A character holds up to ${MAX_CHARACTER_IMAGES} images.`);
+    if (!picked.has(asset.id) && picked.size >= 100) return notify("Select up to 100 assets.");
     setPicked((current) => {
       const next = new Map(current);
       if (next.has(asset.id)) next.delete(asset.id);
@@ -67,6 +92,15 @@ export default function LibraryPage() {
   };
   // Trashed images cannot become a character: opening the trash ends a selection.
   if (query.trash && selecting) stopSelecting();
+  useEffect(() => { setPicked(new Map()); setSelecting(false); }, [url.pathname, url.search]);
+  const perform = async (action: () => Promise<unknown>, message: string, end = true) => {
+    setBusy(true);
+    try { await action(); notify(message); list.reload(); loadOrganization(); if (end) stopSelecting(); }
+    catch (error) { notifyError(errorMessage(error)); }
+    finally { setBusy(false); }
+  };
+  const ids = [...picked.keys()];
+  const canSaveCharacter = picked.size > 0 && picked.size <= MAX_CHARACTER_IMAGES && [...picked.values()].every((asset) => asset.kind === "image");
   useSequence(list.items, list.hasMore, list.loadMore);
 
   // Typing updates the URL after a short pause; the URL is the source of truth for filters.
@@ -92,15 +126,15 @@ export default function LibraryPage() {
 
   const set = (changes: Record<string, string | null>) => navigate(withParams(changes), { replace: true });
   const kinds: (MediaKind | "")[] = audio.data?.length ? ["", "image", "video", "audio"] : ["", "image", "video"];
-  const title = query.trash ? "Trash" : query.favorite ? "Favorites" : query.source === "upload" ? "Uploads" : "Library";
-  const intro = query.trash
+  const title = showCollections ? "Collections" : query.collection ? currentCollection?.name ?? "Collection" : query.trash ? "Trash" : query.favorite ? "Favorites" : query.source === "upload" ? "Uploads" : "Library";
+  const intro = showCollections ? "Named groups for your work." : query.collection ? "Select assets to organize this collection." : query.trash
     ? "Restore what you need, or delete it for good."
     : query.favorite
       ? "The ones worth coming back to."
       : query.source === "upload"
         ? "Your references, all in one place."
         : "Everything you have made, ready for the next step.";
-  const filtered = Boolean(query.q || query.kind || query.model || (query.source && query.source !== "upload"));
+  const filtered = Boolean(query.q || query.kind || query.model || query.provider || query.tag || query.cost_min !== undefined || query.cost_max !== undefined || (query.source && query.source !== "upload"));
 
   return (
     <div className="workspace">
@@ -109,10 +143,13 @@ export default function LibraryPage() {
           <h1>{title}.</h1>
           <p>{intro}</p>
         </div>
-        <button type="button" className="icon-button" aria-label="Refresh" title="Refresh" onClick={list.reload}>
+        <button type="button" className="icon-button" aria-label="Refresh" title="Refresh" onClick={() => { list.reload(); loadOrganization(); }}>
           <Icon name="refresh" />
         </button>
       </div>
+      {organizationError && <p className="notice error" role="alert">{organizationError} <button type="button" className="text-button" onClick={loadOrganization}>Try again</button></p>}
+      {showCollections ? <Collections items={collections} reload={loadOrganization} /> : <>
+      {query.collection && <Link className="text-button" to="/library?collections=true"><Icon name="arrow_back" />All collections</Link>}
       <div className="gallery-toolbar">
         <SizeSlider />
         <div className="segmented" role="group" aria-label="Kind">
@@ -139,8 +176,17 @@ export default function LibraryPage() {
           </Control>
         )}
         <ModelFilter value={query.model} nameOf={nameOf} onChange={(model) => set({ model })} />
+        <Control label="Filters" icon="filter_list" value={query.tag || query.provider || (query.cost_min !== undefined || query.cost_max !== undefined ? "Cost" : "All")} className={query.tag || query.provider || query.cost_min !== undefined || query.cost_max !== undefined ? "has-changes" : ""}>
+          <div className="more-fields library-filters">
+            <label className="field"><span>Provider</span><select aria-label="Provider" value={query.provider ?? ""} onChange={(event) => set({ provider: event.target.value || null })}><option value="">All providers</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
+            <label className="field"><span>Tag</span><select aria-label="Tag" value={query.tag ?? ""} onChange={(event) => set({ tag: event.target.value || null })}><option value="">All tags</option>{[...new Set([...tags, ...(query.tag ? [query.tag] : [])])].map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>
+            <label className="field"><span>Minimum cost (USD)</span><input type="number" min="0" step="any" value={query.cost_min ?? ""} onChange={(event) => set({ cost_min: event.target.value || null })} /></label>
+            <label className="field"><span>Maximum cost (USD)</span><input type="number" min="0" step="any" value={query.cost_max ?? ""} onChange={(event) => set({ cost_max: event.target.value || null })} /></label>
+            <button type="button" className="text-button" onClick={() => set({ provider: null, tag: null, cost_min: null, cost_max: null })}>Clear filters</button>
+          </div>
+        </Control>
         {!query.trash && (
-          <button type="button" className={`filter-button ${selecting ? "active" : ""}`} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))} title="Select images to save as a character">
+          <button type="button" className={`filter-button ${selecting ? "active" : ""}`} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))} title="Select assets for bulk actions">
             <Icon name="checklist" />
             <span className="segmented-label">Select</span>
           </button>
@@ -148,6 +194,7 @@ export default function LibraryPage() {
         {/* Phones have no sidebar: characters and trash sit behind one button. */}
         <span className="mobile-only">
           <Control label="More" icon="more_horiz" caret={false} placement="below">
+            <Choice icon="folder_open" onPick={() => navigate("/library?collections=true")}>Collections</Choice>
             <Choice icon="face" onPick={() => navigate("/characters")}>
               Characters
             </Choice>
@@ -200,7 +247,7 @@ export default function LibraryPage() {
           <Icon name="cloud_off" />
           <h2>The library did not load.</h2>
           <p>{list.error}</p>
-          <button type="button" className="primary-button" onClick={list.reload}>
+          <button type="button" className="primary-button" onClick={() => { list.reload(); loadOrganization(); }}>
             Try again
             <Icon name="refresh" />
           </button>
@@ -219,7 +266,7 @@ export default function LibraryPage() {
                   : "Everything you make or upload appears here."}
           </p>
           {filtered ? (
-            <button type="button" className="primary-button" onClick={() => set({ q: null, kind: null, model: null, source: query.source === "upload" ? "upload" : null })}>
+            <button type="button" className="primary-button" onClick={() => set({ q: null, kind: null, model: null, provider: null, tag: null, cost_min: null, cost_max: null, source: query.source === "upload" ? "upload" : null })}>
               Clear filters
               <Icon name="close" />
             </button>
@@ -234,20 +281,37 @@ export default function LibraryPage() {
         </div>
       )}
       {selecting && (
-        <div className="selection-bar" role="region" aria-label="Selection">
-          <p>
-            {picked.size ? `${picked.size} selected` : "Select images"}
-            <span className="selection-limit">, up to {MAX_CHARACTER_IMAGES}</span>
-          </p>
-          <button type="button" className="text-button" onClick={stopSelecting}>
-            Cancel
-          </button>
-          <button type="button" className="primary-button" disabled={!picked.size} onClick={() => setSaving(true)}>
-            <Icon name="face" />
-            Save as character
-          </button>
+        <div className="selection-bar library-selection" role="region" aria-label="Selection" aria-busy={busy}>
+          <p>{picked.size} selected<span className="selection-limit">, up to 100</span></p>
+          <button type="button" className="text-button" disabled={busy} onClick={() => setPicked(new Map(list.items.slice(0, 100).map((item) => [item.id, item])))}>Select loaded</button>
+          <fieldset disabled={busy || !picked.size} className="bulk-actions">
+            <Control label="Actions" icon="more_horiz" placement="above">
+              <Choice icon="favorite" onPick={() => void perform(() => api.bulkAssets(ids, "favorite"), "Added to favorites.")}>Favorite</Choice>
+              <Choice onPick={() => void perform(() => api.bulkAssets(ids, "unfavorite"), "Removed from favorites.")}>Remove favorite</Choice>
+              <Choice onPick={() => { setTag(""); setTagging(true); setSelectionTags([]); if (ids.length === 1) void api.assetTags(ids[0]!).then((data) => setSelectionTags(data.tags)).catch((error) => notifyError(errorMessage(error))); }}>Tag</Choice>
+              <Choice icon="delete" onPick={() => void perform(() => api.bulkAssets(ids, "trash"), "Moved to trash.")}>Move to trash</Choice>
+              <Choice icon="download" onPick={() => void perform(() => downloadZip(ids), "ZIP downloaded.")}>Download ZIP</Choice>
+              {query.collection && <Choice onPick={() => void perform(() => api.collectionAssets(query.collection!, ids, true), "Removed from collection.")}>Remove from collection</Choice>}
+              <Choice icon="face" disabled={!canSaveCharacter} onPick={() => setSaving(true)}>Save as character (up to {MAX_CHARACTER_IMAGES} images)</Choice>
+            </Control>
+            <Control label="Add to collection" icon="folder_open" placement="above">
+              {collections.length ? collections.map((collection) => <Choice key={collection.id} onPick={() => void perform(() => api.collectionAssets(collection.id, ids), "Added to collection.")}>{collection.name}</Choice>) : <p className="hint">Create a collection from Collections first.</p>}
+            </Control>
+          </fieldset>
+          <button type="button" className="text-button" disabled={busy} onClick={stopSelecting}>Cancel</button>
         </div>
       )}
+      {tagging && <Dialog title="Tag selected assets" onClose={() => setTagging(false)}>
+        <div className="library-form">
+          <label className="field"><span>Tag</span><input autoFocus list="library-tags" maxLength={60} value={tag} onChange={(event) => setTag(event.target.value)} /></label>
+          <datalist id="library-tags">{tags.map((item) => <option key={item} value={item} />)}</datalist>
+          {selectionTags.length > 0 && <p className="hint">Current tags: {selectionTags.join(", ")}</p>}
+          <div className="dialog-actions">
+            <button type="button" className="text-button" disabled={busy || !tag.trim()} onClick={() => void perform(async () => { await api.tagAssets(ids, tag, true); setTagging(false); }, "Tag removed.")}>Remove tag</button>
+            <button type="button" className="primary-button" disabled={busy || !tag.trim()} onClick={() => void perform(async () => { await api.tagAssets(ids, tag); setTagging(false); }, "Tag added.")}>Add tag</button>
+          </div>
+        </div>
+      </Dialog>}
       {saving && (
         <Suspense fallback={null}>
           <CharacterEditor
@@ -266,6 +330,7 @@ export default function LibraryPage() {
           <span className="sr-only">Loading more</span>
         </div>
       )}
+      </>}
     </div>
   );
 }

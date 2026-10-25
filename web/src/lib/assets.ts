@@ -83,7 +83,13 @@ export function useAssetList(query: AssetQuery): AssetList {
   }, [key, fetchPage]);
 
   useEffect(() => {
-    const merge = (asset: Asset) =>
+    const merge = (asset: Asset) => {
+      const current = queryRef.current;
+      // Collection, tag and cost membership need a server query.
+      if (current.collection || current.tag || current.provider || current.cost_min !== undefined || current.cost_max !== undefined) {
+        fetchPage(null);
+        return;
+      }
       setState((list) => {
         if (list.key !== key || !list.loaded) return list;
         const current = queryRef.current;
@@ -103,8 +109,10 @@ export function useAssetList(query: AssetQuery): AssetList {
         items.splice(at === -1 ? items.length : at, 0, asset);
         return { ...list, items, fresh: new Set(list.fresh).add(asset.id) };
       });
+    };
     const remove = (id: string) => setState((list) => ({ ...list, items: list.items.filter((item) => item.id !== id) }));
     const offEvents = subscribeEvents({
+      library: () => fetchPage(null),
       asset: merge,
       removed: remove,
       job: (job) => {

@@ -23,7 +23,7 @@ args = ["mcp"]
 
 Remote or shared, over Streamable HTTP: point the client at `http://127.0.0.1:4747/mcp` (add `Authorization: Bearer <token>` when the server requires one; hosted users create tokens in Settings > Agents).
 
-Tools: `list_models`, `get_model`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
+Tools: `list_collections`, `add_to_collection`, `list_models`, `get_model`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
 `list_models` returns each model's LMArena rank per task when people have rated it; pass `sort: "arena"` with a `task` to get the best rated first, or `sort: "newest"`.
 `generate` waits for the result by default and returns local file paths, so an agent can open the image right away. Pass `include_preview: true` to also receive small JPEG previews for vision models.
 
@@ -60,3 +60,12 @@ Pass multiple files to apply the same metadata to each. Use `--prompt` instead o
 MCP `import_asset` accepts `path` (local mode) or `url`, plus `prompt`, `negative_prompt`, `origin`, `model`, `model_label`, `params` (object) and `source_url`. It returns the saved asset with its metadata. The library stores duplicate content once per user and only fills missing metadata on reimport. A catalog model ID enables **Reuse settings**; an unknown ID or a display label still records how the file was made. Imported prompts are searchable with `list_assets`.
 
 For nonurgent OpenAI or Gemini image generation, pass `params: { "speed": "batch" }` or CLI `-p speed=batch`. Batch costs half the standard price and may take up to 24 hours. Use `get_job` or `wait_for_job` again when the wait times out; do not resubmit accepted jobs.
+
+## File outputs into collections
+
+- `list_collections {}` returns your collections as `{ collections: [{ id, name, created_at, asset_count }] }`.
+- `add_to_collection { collection_id, asset_ids: ["..."] }` adds 1 to 100 of your assets to a collection and returns `{ ok: true }`. Adding the same asset twice is safe. Assets may belong to several collections.
+
+Create or rename collections in the studio's Collections section or through the HTTP API. Call `list_collections`, generate or import assets, then call `add_to_collection` with their library IDs. Hosted agents can only list and change their own collections and assets.
+
+Settings > Spend shows recent costs and optional daily and monthly budgets. All generation paths, including MCP, CLI, comparisons and recipe steps, check the caps before queuing. A refusal names the cap and remaining USD. Local runs count as zero; known wallet charges include markup; direct-key runs use estimates. See [API.md](API.md) for spend, tags, filters and ZIP routes.

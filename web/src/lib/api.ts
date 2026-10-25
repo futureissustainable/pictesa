@@ -2,6 +2,8 @@ import type {
   ApiToken,
   Asset,
   Billing,
+  Collection,
+  Spend,
   Character,
   AssetDetail,
   AssetQuery,
@@ -165,6 +167,18 @@ export const api = {
     request<Character>("PATCH", `/api/characters/${id(characterId)}`, patch),
   deleteCharacter: (characterId: string) => request<void>("DELETE", `/api/characters/${id(characterId)}`),
 
+  collections: () => request<{ collections: Collection[] }>("GET", "/api/collections"),
+  createCollection: (name: string) => request<Collection>("POST", "/api/collections", { name }),
+  renameCollection: (collectionId: string, name: string) => request<void>("PATCH", `/api/collections/${id(collectionId)}`, { name }),
+  deleteCollection: (collectionId: string) => request<void>("DELETE", `/api/collections/${id(collectionId)}`),
+  collectionAssets: (collectionId: string, assetIds: string[], remove = false) => request<void>(remove ? "DELETE" : "POST", `/api/collections/${id(collectionId)}/assets`, { asset_ids: assetIds }),
+  tags: () => request<{ tags: string[] }>("GET", "/api/tags"),
+  assetTags: (assetId: string) => request<{ tags: string[] }>("GET", `/api/assets/${id(assetId)}/tags`),
+  tagAssets: (assetIds: string[], tag: string, remove = false) => request<void>("POST", "/api/tags", { asset_ids: assetIds, tag, remove }),
+  bulkAssets: (assetIds: string[], action: "favorite" | "unfavorite" | "trash") => request<void>("POST", "/api/assets/bulk", { asset_ids: assetIds, action }),
+  spend: () => request<Spend>("GET", "/api/spend"),
+  setBudgets: (daily_usd: number | null, monthly_usd: number | null) => request<Spend>("PUT", "/api/spend/budgets", { daily_usd, monthly_usd }),
+
   billing: () => request<Billing>("GET", "/api/billing"),
   checkout: (amountCents: number, requestId: string) => request<{ url: string }>("POST", "/api/billing/checkout", { amount_cents: amountCents, request_id: requestId }),
 };
@@ -213,4 +227,21 @@ export function errorMessage(error: unknown): string {
 
 export function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+/** Downloads a bounded server-streamed ZIP. */
+export async function downloadZip(assetIds: string[]): Promise<void> {
+  const response = await fetch("/api/assets/download", {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ asset_ids: assetIds }),
+  });
+  if (response.status === 401) unauthorized.forEach((listener) => listener());
+  if (!response.ok) throw errorFrom(response.status, await response.json().catch(() => null));
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "pictesa-library.zip";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

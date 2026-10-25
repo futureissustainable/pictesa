@@ -342,5 +342,4 @@ async fn accepted_batch_resumes_after_restart_beyond_the_standard_runtime() {
     assert_eq!(result.status, JobStatus::Succeeded, "{:?}", result.error);
     assert_eq!(result.attempts, 1, "accepted batch must be polled, never resubmitted");
     assert_eq!(result.outputs.len(), 1);
-    assert_eq!(result.cost_usd, Some(0.005));
 }

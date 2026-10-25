@@ -117,6 +117,10 @@ impl Engine {
                 .execute(&mut *tx)
                 .await?;
         }
+        if let Some(job) = job.filter(|job| id == format!("refund:{job}")) {
+            sqlx::query("UPDATE spend_runs SET actual_micros = 0 WHERE job_id = ? AND user_id = ?")
+                .bind(job).bind(user).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(added.rows_affected() == 1)
     }
@@ -147,11 +151,16 @@ impl Engine {
 
     /// Returns a job's charge to the wallet (failed or canceled runs cost nothing).
     pub(crate) async fn refund_job(&self, job_id: &str) {
-        let row: Option<(String, i64)> = sqlx::query_as("SELECT user_id, charged_micros FROM jobs WHERE id = ?").bind(job_id).fetch_optional(&self.inner.db).await.ok().flatten();
+        // History may be deleted while a failed run is being refunded.
+        let row: Option<(String, i64)> = sqlx::query_as("SELECT user_id, COALESCE(actual_micros, 0) FROM spend_runs WHERE job_id = ?").bind(job_id).fetch_optional(&self.inner.db).await.ok().flatten();
         if let Some((user, charged)) = row.filter(|(_, c)| *c > 0) {
             if let Err(e) = self.credit(&user, &format!("refund:{job_id}"), charged, "Refund for a run that did not finish", Some(job_id)).await {
                 tracing::error!("refund for {job_id} failed: {e}");
             }
+            return;
+        }
+        if let Err(e) = sqlx::query("UPDATE spend_runs SET actual_micros = 0 WHERE job_id = ?").bind(job_id).execute(&self.inner.db).await {
+            tracing::error!("spend refund for {job_id} failed: {e}");
         }
     }
 
@@ -342,6 +351,19 @@ pub fn verify_stripe(body: &[u8], header: &str, secret: &str, now_secs: i64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn refund_survives_deleted_job_history_and_is_idempotent() {
+        let dir = std::env::temp_dir().join(format!("pictesa-refund-deleted-{}", crate::new_id()));
+        let e = Engine::open(crate::Config::local(dir)).await.unwrap();
+        e.credit(crate::LOCAL_USER, "initial", 500_000, "Remaining balance", None).await.unwrap();
+        sqlx::query("INSERT INTO spend_runs (job_id,user_id,model,provider,estimated_micros,actual_micros,created_at) VALUES ('deleted','local','model','provider',400000,500000,?)")
+            .bind(now_ms()).execute(e.db()).await.unwrap();
+        e.refund_job("deleted").await;
+        e.refund_job("deleted").await;
+        assert_eq!(e.billing_view(crate::LOCAL_USER).await.unwrap().balance_usd, 1.0);
+        assert_eq!(e.spend_view(crate::LOCAL_USER).await.unwrap().today_usd, 0.0);
+    }
 
     #[test]
     fn stripe_signature_roundtrip() {

@@ -22,7 +22,7 @@ const TokenPage = lazy(() => import("./pages/auth/auth-page").then((module) => (
 const Viewer = lazy(() => import("./pages/viewer/viewer"));
 const EditPage = lazy(() => import("./pages/edit/edit-page"));
 
-type Section = "create" | "library" | "favorites" | "uploads" | "characters" | "trash" | "settings" | "none";
+type Section = "create" | "library" | "favorites" | "uploads" | "collections" | "characters" | "trash" | "settings" | "none";
 
 interface NavItem {
   id: Section;
@@ -36,19 +36,21 @@ const primary: NavItem[] = [
   { id: "library", label: "Library", icon: "grid_view", to: "/library" },
 ];
 const collections: NavItem[] = [
+  { id: "collections", label: "Collections", icon: "folder_open", to: "/library?collections=true" },
   { id: "favorites", label: "Favorites", icon: "favorite", to: "/library?favorite=true" },
   { id: "uploads", label: "Uploads", icon: "upload", to: "/library?source=upload" },
   { id: "characters", label: "Characters", icon: "face", to: "/characters" },
   { id: "trash", label: "Trash", icon: "delete", to: "/library?trash=true" },
 ];
 const settingsItem: NavItem = { id: "settings", label: "Settings", icon: "tune", to: "/settings" };
-const mobileItems = [primary[0]!, primary[1]!, collections[0]!, settingsItem];
+const mobileItems = [primary[0]!, primary[1]!, collections[1]!, settingsItem];
 
 function sectionOf(url: URL): Section {
   if (url.pathname === "/" || url.pathname === "/recipes" || url.pathname === "/edit") return "create";
   if (url.pathname.startsWith("/settings")) return "settings";
   if (url.pathname === "/characters") return "characters";
   if (url.pathname === "/library") {
+    if (url.searchParams.has("collection") || url.searchParams.has("collections")) return "collections";
     if (url.searchParams.get("trash") === "true") return "trash";
     if (url.searchParams.get("favorite") === "true") return "favorites";
     if (url.searchParams.get("source") === "upload") return "uploads";
@@ -61,6 +63,7 @@ const titles: Record<Section, string> = {
   create: "Create",
   library: "Library",
   favorites: "Favorites",
+  collections: "Collections",
   uploads: "Uploads",
   characters: "Characters",
   trash: "Trash",

@@ -12,10 +12,12 @@ pub mod enhance;
 pub mod files;
 pub mod jobs;
 pub mod leaderboard;
+pub mod library;
 pub mod netguard;
 pub mod presets;
 pub mod queue;
 pub mod recipes;
+pub mod spend;
 pub mod store;
 pub mod types;
 

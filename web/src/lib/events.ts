@@ -15,6 +15,7 @@ export interface PreviewEvent {
 }
 
 interface Handlers {
+  library?: () => void;
   job?: (job: Job) => void;
   asset?: (asset: Asset) => void;
   recipe?: (run: RecipeRun) => void;
@@ -76,6 +77,7 @@ export function startEvents() {
     const job = parse<Job>(event as MessageEvent);
     if (job) handlers.forEach((handler) => handler.job?.(job));
   });
+  stream.addEventListener("library", () => handlers.forEach((handler) => handler.library?.()));
   stream.addEventListener("asset", (event) => {
     const asset = parse<Asset>(event as MessageEvent);
     if (asset) handlers.forEach((handler) => handler.asset?.(asset));
