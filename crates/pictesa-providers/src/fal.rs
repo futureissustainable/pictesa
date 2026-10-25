@@ -174,6 +174,11 @@ fn price_of(p: &Value) -> Option<Pricing> {
         Pricing::PerVideo { usd }
     } else if unit.contains("megapixel") || unit == "mp" {
         Pricing::PerMegapixel { usd }
+    } else if unit == "units" && usd == 1.0 {
+        // Token-billed models come back as "$1 per units", a placeholder that says nothing.
+        Pricing::Variable {
+            note: "Priced by usage on fal".into(),
+        }
     } else {
         Pricing::Variable {
             note: format!("${usd} per {unit}"),
@@ -520,53 +525,80 @@ impl Provider for Fal {
     }
 }
 
-/// Fetches prices for the whole catalog in batches (the pricing API accepts many ids per call
-/// and rate-limits per call, so one request per model would be throttled).
+/// Prices looked up in the last day (`None`: the pricing API has none), so a refresh only asks
+/// about new models: a full pass takes minutes at the API's pace.
+fn price_cache() -> &'static std::sync::Mutex<HashMap<String, (Option<Pricing>, std::time::Instant)>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, (Option<Pricing>, std::time::Instant)>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// Fetches prices for the whole catalog in batches: the pricing API takes up to 50 ids per call
+/// (more answers 400) and rate-limits per call, so one request per model would be throttled.
+/// It answers 404 for a whole batch when any id in it has no price; such a batch is split in two
+/// until the unpriced ids stand alone.
 async fn attach_prices(ctx: &Ctx, key: &str, models: &mut [ModelSpec]) {
-    let ids: Vec<String> = models.iter().map(|m| m.remote_id().to_string()).collect();
+    const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
     let mut prices: HashMap<String, Pricing> = HashMap::new();
-    for chunk in ids.chunks(100) {
-        let query: Vec<(&str, &str)> = chunk
-            .iter()
-            .map(|id| ("endpoint_id", id.as_str()))
-            .collect();
-        let mut answer = None;
-        for attempt in 0..3 {
-            match get_json(
-                ctx.http
-                    .get(format!("{CATALOG}/pricing"))
-                    .query(&query)
-                    .header("Authorization", key),
-            )
-            .await
-            {
+    let mut ids: Vec<String> = Vec::new();
+    if let Ok(cache) = price_cache().lock() {
+        for m in models.iter() {
+            match cache.get(m.remote_id()).filter(|(_, at)| at.elapsed() < DAY) {
+                Some((price, _)) => prices.extend(price.clone().map(|p| (m.remote_id().to_string(), p))),
+                None => ids.push(m.remote_id().to_string()),
+            }
+        }
+    }
+    let mut batches: Vec<&[String]> = ids.chunks(50).rev().collect();
+    while let Some(batch) = batches.pop() {
+        let query: Vec<(&str, &str)> = batch.iter().map(|id| ("endpoint_id", id.as_str())).collect();
+        let (mut answer, mut unknown) = (None, false);
+        for attempt in 0..5 {
+            match get_json(ctx.http.get(format!("{CATALOG}/pricing")).query(&query).header("Authorization", key)).await {
                 Ok(v) => {
                     answer = Some(v);
                     break;
                 }
                 Err(ProviderError::RateLimited { retry_after_ms }) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        retry_after_ms.unwrap_or(1500 * (attempt + 1)),
-                    ))
-                    .await;
+                    tokio::time::sleep(std::time::Duration::from_millis(retry_after_ms.unwrap_or(2000 * (attempt + 1)))).await;
                 }
-                Err(_) => break,
+                Err(ProviderError::InvalidInput(d)) if d.starts_with("HTTP 404") => {
+                    if batch.len() > 1 {
+                        let (a, b) = batch.split_at(batch.len() / 2);
+                        batches.push(b);
+                        batches.push(a);
+                    } else {
+                        unknown = true;
+                    }
+                    break;
+                }
+                Err(e) => {
+                    if batch.len() > 1 {
+                        tracing::warn!("fal prices for {} models failed: {e}", batch.len());
+                    }
+                    break;
+                }
             }
         }
-        let Some(v) = answer else { continue };
-        for p in v
-            .get("prices")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            if let (Some(id), Some(price)) =
-                (p.get("endpoint_id").and_then(Value::as_str), price_of(p))
-            {
-                prices.insert(id.to_string(), price);
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        let Some(v) = answer else {
+            // A lone id the API does not know has no price: remember that for the day too.
+            if let (true, Ok(mut cache)) = (unknown, price_cache().lock()) {
+                cache.insert(batch[0].clone(), (None, std::time::Instant::now()));
+            }
+            continue;
+        };
+        let mut found: HashMap<String, Pricing> = HashMap::new();
+        for p in v.get("prices").and_then(Value::as_array).into_iter().flatten() {
+            if let (Some(id), Some(price)) = (p.get("endpoint_id").and_then(Value::as_str), price_of(p)) {
+                found.insert(id.to_string(), price);
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        if let Ok(mut cache) = price_cache().lock() {
+            for id in batch {
+                cache.insert(id.clone(), (found.get(id).cloned(), std::time::Instant::now()));
+            }
+        }
+        prices.extend(found);
     }
     for m in models.iter_mut() {
         if let Some(p) = prices.remove(m.remote_id()) {
@@ -577,4 +609,19 @@ async fn attach_prices(ctx: &Ctx, key: &str, models: &mut [ModelSpec]) {
 
 fn json_pointer_escape(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Shapes returned by `GET /v1/models/pricing` on 25.10.2026.
+    #[test]
+    fn prices_read_like_the_pricing_api_answers() {
+        let price = |unit_price: f64, unit: &str| price_of(&json!({ "endpoint_id": "x", "unit_price": unit_price, "unit": unit, "currency": "USD" })).unwrap();
+        assert!(matches!(price(0.003, "megapixels"), Pricing::PerMegapixel { usd } if usd == 0.003));
+        assert!(matches!(price(0.01625, "seconds"), Pricing::PerSecond { .. }));
+        assert!(matches!(price(1.0, "units"), Pricing::Variable { note } if note == "Priced by usage on fal"));
+        assert!(matches!(price(0.0214, "1000 tokens"), Pricing::Variable { note } if note == "$0.0214 per 1000 tokens"));
+    }
 }

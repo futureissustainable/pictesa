@@ -482,11 +482,21 @@ async fn model(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> 
     Ok(Json(json!(s.engine.model(&c.user_id, &id).await?)))
 }
 
-async fn refresh_models(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
+#[derive(Deserialize)]
+struct RefreshQuery {
+    /// Only this provider's catalog; every catalog when absent.
+    provider: Option<String>,
+}
+
+async fn refresh_models(State(s): State<AppState>, c: Caller, Query(q): Query<RefreshQuery>) -> ApiResult<Json<Value>> {
     if s.engine.mode() == Mode::Hosted && c.user.as_ref().is_none_or(|u| u.role != "admin") {
         return Err(ApiError(EngineError::Forbidden("Only the administrator can refresh catalogs.".into())));
     }
-    Ok(Json(json!({ "models": s.engine.refresh_models(&c.user_id).await })))
+    let models = match q.provider {
+        Some(p) => s.engine.refresh_models_for(&c.user_id, &p).await?,
+        None => s.engine.refresh_models(&c.user_id).await,
+    };
+    Ok(Json(json!({ "models": models })))
 }
 
 #[derive(Deserialize)]

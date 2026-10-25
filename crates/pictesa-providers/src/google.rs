@@ -186,10 +186,10 @@ impl Provider for Google {
                     && methods
                         .is_some_and(|m| m.iter().any(|s| s.as_str() == Some("generateContent")))
                 {
-                    Some(image_spec(
-                        id,
-                        x.get("displayName").and_then(Value::as_str).unwrap_or(id),
-                    ))
+                    // Google names a model and its preview the same; keep them apart in the picker.
+                    let name = x.get("displayName").and_then(Value::as_str).unwrap_or(id);
+                    let name = if id.contains("preview") && !name.to_lowercase().contains("preview") { format!("{name} (preview)") } else { name.to_string() };
+                    Some(image_spec(id, &name))
                 } else if id.starts_with("veo-")
                     && methods
                         .is_some_and(|m| m.iter().any(|s| s.as_str() == Some("predictLongRunning")))

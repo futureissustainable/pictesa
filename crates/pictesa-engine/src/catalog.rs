@@ -68,7 +68,12 @@ impl Catalog {
             if !m.complete {
                 if let Some(full) = resolved.get(&m.id) {
                     let tags = std::mem::take(&mut m.tags);
+                    // The catalog's price is refreshed daily, the resolved schema weekly.
+                    let price = m.pricing.take();
                     *m = full.clone();
+                    if price.is_some() {
+                        m.pricing = price;
+                    }
                     for t in tags {
                         if !m.tags.contains(&t) {
                             m.tags.push(t);
