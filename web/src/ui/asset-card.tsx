@@ -39,6 +39,8 @@ export interface CardProps {
   fresh?: boolean;
   selected?: boolean;
   selectable?: boolean;
+  /** What a click does, for the accessible name: "Open" by default. */
+  verb?: string;
   onOpen(asset: Asset, index: number): void;
   onFavorite?(asset: Asset): void;
   /** Position and size from the masonry layout. */
@@ -51,7 +53,7 @@ function startDrag(event: DragEvent, asset: Asset) {
   event.dataTransfer.setData("text/uri-list", new URL(asset.url, location.origin).href);
 }
 
-export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, selected, selectable, onOpen, onFavorite, style }: CardProps) {
+export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, selected, selectable, verb = "Open", onOpen, onFavorite, style }: CardProps) {
   const [playing, setPlaying] = useState(false);
   const detail = asset.kind === "image" ? dimensions(asset.width, asset.height) : asset.duration_ms ? clock(asset.duration_ms) : null;
   const label = asset.prompt ? `${title}: ${asset.prompt.slice(0, 120)}` : title;
@@ -60,7 +62,7 @@ export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, s
       <button
         type="button"
         className="asset-open"
-        aria-label={selectable ? `Select ${label}` : `Open ${label}`}
+        aria-label={selectable ? `Select ${label}` : `${verb} ${label}`}
         aria-pressed={selectable ? Boolean(selected) : undefined}
         draggable={!selectable}
         onDragStart={(event) => startDrag(event, asset)}

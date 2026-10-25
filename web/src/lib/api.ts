@@ -2,6 +2,12 @@ import type {
   ApiToken,
   Asset,
   Billing,
+  Board,
+  BoardChanges,
+  BoardMember,
+  BoardOp,
+  BoardRole,
+  BoardSummary,
   Collection,
   Spend,
   Character,
@@ -15,10 +21,12 @@ import type {
   ModelPrefs,
   ModelSpec,
   Padding,
+  Person,
   Preset,
   ProviderState,
   Recipe,
   RecipeRun,
+  StepRun,
   User,
   WorkflowImport,
 } from "./types";
@@ -35,12 +43,15 @@ export class ApiError extends Error {
   readonly field?: string;
   /** Uploads: the files the server refused, with its reason for each. */
   readonly errors?: FileError[];
-  constructor(message: string, status: number, kind?: string, field?: string, errors?: FileError[]) {
+  /** The whole answer, for errors that carry more (a board conflict sends the current state). */
+  readonly body?: unknown;
+  constructor(message: string, status: number, kind?: string, field?: string, errors?: FileError[], body?: unknown) {
     super(message);
     this.status = status;
     this.kind = kind;
     this.field = field;
     this.errors = errors;
+    this.body = body;
   }
 }
 
@@ -69,7 +80,7 @@ function errorFrom(status: number, data: unknown): ApiError {
   const body = (data && typeof data === "object" ? data : {}) as { error?: unknown; kind?: unknown; field?: unknown; errors?: unknown };
   const message = typeof body.error === "string" && body.error ? body.error : `The request failed (${status}).`;
   const errors = Array.isArray(body.errors) ? (body.errors as FileError[]) : undefined;
-  return new ApiError(message, status, typeof body.kind === "string" ? body.kind : undefined, typeof body.field === "string" ? body.field : undefined, errors);
+  return new ApiError(message, status, typeof body.kind === "string" ? body.kind : undefined, typeof body.field === "string" ? body.field : undefined, errors, data);
 }
 
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -178,6 +189,21 @@ export const api = {
   bulkAssets: (assetIds: string[], action: "favorite" | "unfavorite" | "trash") => request<void>("POST", "/api/assets/bulk", { asset_ids: assetIds, action }),
   spend: () => request<Spend>("GET", "/api/spend"),
   setBudgets: (daily_usd: number | null, monthly_usd: number | null) => request<Spend>("PUT", "/api/spend/budgets", { daily_usd, monthly_usd }),
+
+  boards: () => request<{ boards: BoardSummary[] }>("GET", "/api/boards"),
+  createBoard: (name: string) => request<Board>("POST", "/api/boards", { name }),
+  board: (boardId: string) => request<Board>("GET", `/api/boards/${id(boardId)}`),
+  renameBoard: (boardId: string, name: string) => request<BoardChanges>("PATCH", `/api/boards/${id(boardId)}`, { name }),
+  deleteBoard: (boardId: string) => request<void>("DELETE", `/api/boards/${id(boardId)}`),
+  /** Answers 409 with `{ current: BoardChanges }` when an item changed since its `base`. */
+  boardOps: (boardId: string, ops: BoardOp[]) => request<BoardChanges>("POST", `/api/boards/${id(boardId)}/ops`, { ops }),
+  runStep: (boardId: string, nodeId: string, downstream = false) =>
+    request<{ steps: string[]; run: StepRun }>("POST", `/api/boards/${id(boardId)}/steps/${id(nodeId)}/run`, { downstream }),
+  cancelStep: (boardId: string, nodeId: string) => request<StepRun>("POST", `/api/boards/${id(boardId)}/steps/${id(nodeId)}/cancel`),
+  shareBoard: (boardId: string, email: string, role: BoardRole) => request<{ members: BoardMember[] }>("POST", `/api/boards/${id(boardId)}/members`, { email, role }),
+  removeMember: (boardId: string, userId: string) => request<void>("DELETE", `/api/boards/${id(boardId)}/members/${id(userId)}`),
+  boardPresence: (boardId: string, client: string) => request<{ viewers: Person[] }>("POST", `/api/boards/${id(boardId)}/presence`, { client }),
+  copyBoardAssets: (boardId: string, assetIds: string[]) => request<{ assets: Asset[] }>("POST", `/api/boards/${id(boardId)}/copy`, { asset_ids: assetIds }),
 
   billing: () => request<Billing>("GET", "/api/billing"),
   checkout: (amountCents: number, requestId: string) => request<{ url: string }>("POST", "/api/billing/checkout", { amount_cents: amountCents, request_id: requestId }),

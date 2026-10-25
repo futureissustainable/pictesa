@@ -16,6 +16,7 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 - **Edit any image.** Paint over a part and describe what goes there, expand the frame to a new shape, relight it or remove the background, with the models you have set up. Results land in the library next to the image they came from, ready to edit again.
 - **Characters.** Save a person, product or style as a named set of reference images and attach it to any run on any model that takes references.
 - **Compare.** Run one prompt on up to eight models side by side, with parameters adapted to each.
+- **Boards.** A canvas for moodboards and chained steps: add files, notes and steps, connect them and run. Results land next to their step, and a step's results can feed the next one. Share a board in hosted mode and edit it live with others and with agents.
 - **Presets.** 76 camera moves and looks (dolly in, orbit, crane, FPV drone, bullet time, film stocks, light) as editable JSON.
 - **Built for agents.** An MCP server (stdio and HTTP), a CLI with `--json`, and a REST API with live events. Agents and people share one library, so an image you make can go straight to an agent and back. See [docs/AGENTS.md](docs/AGENTS.md).
 - **One fast binary.** Rust (Tokio, Axum, SQLite) with the web UI embedded. No Python, Docker or Node at runtime. Files are stored once by content hash, with thumbnails, range-streamed video and full-text prompt search. It starts in 17 ms, and the studio page loads in 41 requests and 308 KB where Higgsfield's video page needs 745 and 7.8 MB ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)).
@@ -63,7 +64,7 @@ OpenAI and Gemini image models offer **Speed: Batch** (`-p speed=batch`): half p
 claude mcp add pictesa -- pictesa mcp          # Claude Code
 ```
 
-Tools: `list_models`, `get_model`, `list_presets`, `list_recipes`, `list_characters`, `generate`, `run_recipe`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `import_workflow`. `generate` waits for the result and returns file paths. Setup for Codex, Cursor and HTTP clients is in [docs/AGENTS.md](docs/AGENTS.md); the HTTP API is in [docs/API.md](docs/API.md).
+Tools: `list_models`, `get_model`, `list_presets`, `list_recipes`, `list_characters`, `generate`, `run_recipe`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `import_workflow`, `list_boards`, `create_board`, `get_board`, `add_to_board`, `run_board_step`. `generate` waits for the result and returns file paths. Setup for Codex, Cursor and HTTP clients is in [docs/AGENTS.md](docs/AGENTS.md); the HTTP API is in [docs/API.md](docs/API.md).
 
 ## Hosting Pictesa for others
 

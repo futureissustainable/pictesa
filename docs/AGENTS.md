@@ -23,7 +23,7 @@ args = ["mcp"]
 
 Remote or shared, over Streamable HTTP: point the client at `http://127.0.0.1:4747/mcp` (add `Authorization: Bearer <token>` when the server requires one; hosted users create tokens in Settings > Agents).
 
-Tools: `list_collections`, `add_to_collection`, `list_models`, `get_model`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
+Tools: `list_collections`, `add_to_collection`, `list_models`, `get_model`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `list_boards`, `create_board`, `get_board`, `add_to_board`, `run_board_step`.
 `list_models` returns each model's LMArena rank per task when people have rated it; pass `sort: "arena"` with a `task` to get the best rated first, or `sort: "newest"`.
 `generate` waits for the result by default and returns local file paths, so an agent can open the image right away. Pass `include_preview: true` to also receive small JPEG previews for vision models.
 
@@ -69,3 +69,21 @@ For nonurgent OpenAI or Gemini image generation, pass `params: { "speed": "batch
 Create or rename collections in the studio's Collections section or through the HTTP API. Call `list_collections`, generate or import assets, then call `add_to_collection` with their library IDs. Hosted agents can only list and change their own collections and assets.
 
 Settings > Spend shows recent costs and optional daily and monthly budgets. All generation paths, including MCP, CLI, comparisons and recipe steps, check the caps before queuing. A refusal names the cap and remaining USD. Local runs count as zero; known wallet charges include markup; direct-key runs use estimates. See [API.md](API.md) for spend, tags, filters and ZIP routes.
+
+## Work on boards
+
+Boards are shared canvases of files, notes and steps that chain generations. People who have a board open see an agent's changes at once; over stdio MCP the running studio picks them up within about two seconds.
+
+- `list_boards {}` returns the boards you own or that were shared with you.
+- `create_board { name }` returns `{ id, name, version }`.
+- `get_board { id }` returns the nodes, edges, the latest run of each step and the files on the board (`assets`, with local paths in local mode).
+- `add_to_board { board_id, nodes, edges }` adds items. A node is `{ kind: "asset", asset_id | url | path }`, `{ kind: "note", text }` or `{ kind: "step", model, prompt, params, count }`, with optional `id`, `x`, `y` and `w`. Give new nodes an `id` to connect them in the same call. An edge `{ from, to, role? }` from a file or a step into a step feeds it; `role` picks the model's slot (`reference`, `start_frame`, `end_frame`, `video`, `audio`, `mask`), otherwise the first free one. Nodes without a position go in a row below the board's content.
+- `run_board_step { board_id, node_id, downstream?, wait?, timeout_seconds? }` runs a step as an ordinary generation, so budgets and the wallet apply and paid providers cost money. `downstream: true` also runs every step that takes its results, in order. It waits by default and returns the runs and the new files; the results land on the board, linked to their step.
+
+```json
+{ "board_id": "01J...", "nodes": [
+    { "id": "still", "kind": "step", "model": "fal:fal-ai/flux/dev", "prompt": "a lighthouse in a storm" },
+    { "id": "clip", "kind": "step", "model": "fal:kling/v4/image-to-video", "prompt": "slow push in" } ],
+  "edges": [ { "from": "still", "to": "clip", "role": "start_frame" } ] }
+```
+Then `run_board_step { "board_id": "01J...", "node_id": "still", "downstream": true }` makes the still, animates it and puts both on the board. Hosted agents act as their user: they see that user's boards and the boards shared with them, and as a viewer they cannot change or run anything.

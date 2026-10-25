@@ -5,7 +5,10 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use pictesa_core::{InputRole, MediaKind};
-use pictesa_engine::{Asset, AssetFilter, CreateGeneration, Engine, EngineError, Job, JobInput, ModelFilter};
+use pictesa_engine::{
+    boards::{Board, Op, RunStatus},
+    Asset, AssetFilter, CreateGeneration, Engine, EngineError, Job, JobInput, ModelFilter,
+};
 use serde_json::{json, Map, Value};
 
 pub struct McpContext {
@@ -20,7 +23,8 @@ const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const INSTRUCTIONS: &str = "Pictesa generates images and videos with many providers and local models. \
 Typical flow: list_models (filter by output image or video), optionally get_model for its parameters, then generate \
 (it waits for the result by default and returns file paths). Pass input images or videos to generate as {role, path|url|asset_id}; \
-roles are reference, start_frame, end_frame, video, audio, mask. Presets (list_presets) add camera moves or looks.";
+roles are reference, start_frame, end_frame, video, audio, mask. Presets (list_presets) add camera moves or looks. \
+Boards (list_boards, get_board, add_to_board, run_board_step) are shared canvases of files, notes and chained steps; people see your changes live.";
 
 pub async fn handle(ctx: &McpContext, msg: Value) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
@@ -69,7 +73,7 @@ fn tools() -> Value {
         },
         "required": ["role"]
     });
-    json!([
+    let mut list = json!([
         {
             "name": "list_collections", "description": "List your named library collections.",
             "inputSchema": { "type": "object", "properties": {} },
@@ -220,7 +224,73 @@ fn tools() -> Value {
                 "source_url": { "type": "string" }
             } }
         }
-    ])
+    ]);
+    if let Value::Array(items) = &mut list {
+        items.extend(board_tools());
+    }
+    list
+}
+
+/// Boards: read them, add to them and run their steps.
+fn board_tools() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "list_boards",
+            "title": "List boards",
+            "description": "Boards you own or that were shared with you: canvases of library files, notes and steps that chain generations.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "create_board",
+            "title": "Create a board",
+            "description": "Create an empty board for references, notes and chained generation steps.",
+            "inputSchema": { "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] }
+        }),
+        json!({
+            "name": "get_board",
+            "title": "Read a board",
+            "description": "A board's nodes (asset, note, step), edges, the latest run of each step and its files (with local paths in local mode).",
+            "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "add_to_board",
+            "title": "Add to a board",
+            "description": "Add nodes and edges to a board. People who have it open see them at once. A node is {kind: \"asset\", asset_id | url | path}, {kind: \"note\", text} or {kind: \"step\", model, prompt, params, count}. Give new nodes an id to connect them in the same call. An edge from a file or a step into a step feeds it: role picks the model's slot, otherwise the first free one. Nodes without x and y go in a row below the board's content.",
+            "inputSchema": { "type": "object", "properties": {
+                "board_id": { "type": "string" },
+                "nodes": { "type": "array", "maxItems": 100, "items": { "type": "object", "properties": {
+                    "id": { "type": "string", "description": "Optional: 1 to 64 letters, digits, - or _" },
+                    "kind": { "type": "string", "enum": ["asset", "note", "step"] },
+                    "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number" },
+                    "asset_id": { "type": "string" }, "url": { "type": "string" }, "path": { "type": "string", "description": "Local file path (local mode only)" },
+                    "text": { "type": "string" },
+                    "model": { "type": "string", "description": "Model id from list_models" },
+                    "prompt": { "type": "string" }, "negative_prompt": { "type": "string" },
+                    "params": { "type": "object" },
+                    "count": { "type": "integer", "minimum": 1, "maximum": 8 }
+                }, "required": ["kind"] } },
+                "edges": { "type": "array", "maxItems": 100, "items": { "type": "object", "properties": {
+                    "from": { "type": "string" }, "to": { "type": "string" },
+                    "role": { "type": "string", "enum": ["reference", "start_frame", "end_frame", "video", "audio", "mask"] }
+                }, "required": ["from", "to"] } }
+            }, "required": ["board_id"] }
+        }),
+        json!({
+            "name": "run_board_step",
+            "title": "Run a board step",
+            "description": "Run a step node as an ordinary generation; its results land on the board, linked to the step. downstream also runs every step that takes its results, in order. Waits by default and returns the runs and the new files. This can cost money on paid providers.",
+            "inputSchema": { "type": "object", "properties": {
+                "board_id": { "type": "string" },
+                "node_id": { "type": "string", "description": "A step node id from get_board" },
+                "downstream": { "type": "boolean", "default": false },
+                "wait": { "type": "boolean", "default": true },
+                "timeout_seconds": { "type": "integer", "default": 900, "maximum": 3600 }
+            }, "required": ["board_id", "node_id"] },
+            "annotations": { "readOnlyHint": false, "openWorldHint": true }
+        }),
+    ]
 }
 
 fn text(v: &Value) -> Vec<Value> {
@@ -505,6 +575,19 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
             }
             Ok(text(&v))
         }
+        "list_boards" => Ok(text(&json!({ "boards": e.boards(user).await.map_err(err)? }))),
+        "create_board" => {
+            let name = arg_str(args, "name").ok_or("name is required")?;
+            let board = e.create_board(user, name).await.map_err(err)?;
+            Ok(text(&json!({ "id": board.id, "name": board.name, "version": board.version })))
+        }
+        "get_board" => {
+            let id = arg_str(args, "id").ok_or("id is required (call list_boards)")?;
+            let board = e.board(user, id).await.map_err(err)?;
+            Ok(text(&board_json(ctx, &board).await))
+        }
+        "add_to_board" => add_to_board(ctx, args).await,
+        "run_board_step" => run_board_step(ctx, args).await,
         "import_asset" => {
             let metadata: pictesa_engine::ImportMetadata = serde_json::from_value(args.clone()).map_err(|e| format!("invalid import metadata: {e}"))?;
             let a = if let Some(url) = arg_str(args, "url") {
@@ -517,5 +600,107 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
             Ok(text(&asset_json(ctx, &a).await))
         }
         other => Err(format!("unknown tool {other}")),
+    }
+}
+
+async fn board_json(ctx: &McpContext, board: &Board) -> Value {
+    let mut assets = Map::new();
+    for (id, asset) in &board.assets {
+        assets.insert(id.clone(), asset_json(ctx, asset).await);
+    }
+    json!({
+        "id": board.id, "name": board.name, "role": board.role, "version": board.version,
+        "nodes": board.nodes, "edges": board.edges, "runs": board.runs, "assets": assets,
+    })
+}
+
+async fn add_to_board(ctx: &McpContext, args: &Value) -> Result<Vec<Value>, String> {
+    let e = &ctx.engine;
+    let board_id = arg_str(args, "board_id").ok_or("board_id is required (call list_boards)")?;
+    let current = e.board(&ctx.user_id, board_id).await.map_err(err)?;
+    // Nodes without a position go in a row below everything on the board.
+    let mut x = current.nodes.iter().map(|n| n.x).fold(f64::INFINITY, f64::min);
+    if !x.is_finite() {
+        x = 0.0;
+    }
+    let y = current.nodes.iter().map(|n| n.y + 420.0).fold(0.0, f64::max);
+    let mut ops = Vec::new();
+    for item in args.get("nodes").and_then(Value::as_array).into_iter().flatten() {
+        let kind = arg_str(item, "kind").ok_or("each node needs kind: asset, note or step")?;
+        let mut node = Map::new();
+        node.insert("id".into(), json!(arg_str(item, "id").map(String::from).unwrap_or_else(pictesa_engine::new_id)));
+        node.insert("kind".into(), json!(kind));
+        for key in ["x", "y", "w", "text", "model", "prompt", "negative_prompt", "params", "count"] {
+            if let Some(value) = item.get(key).filter(|v| !v.is_null()) {
+                node.insert(key.into(), value.clone());
+            }
+        }
+        if kind == "asset" {
+            let asset = if let Some(id) = arg_str(item, "asset_id") {
+                id.to_string()
+            } else if let Some(url) = arg_str(item, "url") {
+                e.import_url(&ctx.user_id, url).await.map_err(err)?.id
+            } else if let Some(path) = arg_str(item, "path") {
+                import_path(ctx, path, &pictesa_engine::ImportMetadata::default()).await?.id
+            } else {
+                return Err("asset nodes need asset_id, url or path".into());
+            };
+            node.insert("asset_id".into(), json!(asset));
+        }
+        if !node.contains_key("x") || !node.contains_key("y") {
+            node.insert("x".into(), json!(x));
+            node.insert("y".into(), json!(y));
+            x += 340.0;
+        }
+        ops.push(json!({ "op": "add_node", "node": node }));
+    }
+    for item in args.get("edges").and_then(Value::as_array).into_iter().flatten() {
+        let (Some(from), Some(to)) = (arg_str(item, "from"), arg_str(item, "to")) else {
+            return Err("each edge needs from and to (node ids)".into());
+        };
+        let role = item.get("role").cloned().unwrap_or(Value::Null);
+        ops.push(json!({ "op": "add_edge", "edge": { "id": pictesa_engine::new_id(), "from": from, "to": to, "role": role } }));
+    }
+    if ops.is_empty() {
+        return Err("pass nodes or edges".into());
+    }
+    let ops: Vec<Op> = serde_json::from_value(Value::Array(ops)).map_err(|e| format!("a node or edge is not valid: {e}"))?;
+    match e.apply_board_ops(&ctx.user_id, board_id, ops).await.map_err(err)? {
+        Ok(changes) => Ok(text(&json!({ "version": changes.version, "nodes": changes.nodes, "edges": changes.edges }))),
+        Err(stale) => Err(format!("{} Read the board again with get_board.", stale.message)),
+    }
+}
+
+async fn run_board_step(ctx: &McpContext, args: &Value) -> Result<Vec<Value>, String> {
+    let e = &ctx.engine;
+    let board_id = arg_str(args, "board_id").ok_or("board_id is required (call list_boards)")?;
+    let node_id = arg_str(args, "node_id").ok_or("node_id is required (a step node id from get_board)")?;
+    let downstream = args.get("downstream").and_then(Value::as_bool).unwrap_or(false);
+    let started = e.run_board_step(&ctx.user_id, board_id, node_id, downstream).await.map_err(err)?;
+    if args.get("wait").and_then(Value::as_bool) == Some(false) {
+        return Ok(text(&json!({ "steps": started.steps, "run": started.run, "note": "Call get_board to follow the runs." })));
+    }
+    let timeout = Duration::from_secs(args.get("timeout_seconds").and_then(Value::as_u64).unwrap_or(900).clamp(5, 3600));
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        // Moves the runs forward even when no Pictesa server runs next to this process.
+        e.advance_board(board_id).await.map_err(err)?;
+        let board = e.board(&ctx.user_id, board_id).await.map_err(err)?;
+        let done = started.steps.iter().all(|s| board.runs.get(s).is_none_or(|r| !r.status.is_active()));
+        if done || tokio::time::Instant::now() >= deadline {
+            let mut runs = Map::new();
+            let mut outputs = Vec::new();
+            for step in &started.steps {
+                let Some(run) = board.runs.get(step) else { continue };
+                runs.insert(step.clone(), json!(run));
+                if run.status == RunStatus::Succeeded {
+                    for asset in run.outputs.iter().filter_map(|a| board.assets.get(a)) {
+                        outputs.push(asset_json(ctx, asset).await);
+                    }
+                }
+            }
+            return Ok(text(&json!({ "done": done, "runs": runs, "outputs": outputs })));
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }

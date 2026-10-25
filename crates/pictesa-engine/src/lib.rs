@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod billing;
+pub mod boards;
 pub mod catalog;
 pub mod characters;
 pub mod creds;
@@ -149,6 +150,8 @@ pub(crate) struct Inner {
     pub local_checks: tokio::sync::Mutex<HashMap<String, i64>>,
     /// LMArena leaderboards, matched to models by name.
     pub arenas: std::sync::RwLock<Arc<leaderboard::Boards>>,
+    /// Who is looking at which board, and the board versions this process announced.
+    pub(crate) boards: boards::Live,
 }
 
 /// Cheap to clone; all clones share the same state.
@@ -204,6 +207,7 @@ impl Engine {
             owned_batches: Mutex::new(std::collections::HashSet::new()),
             local_checks: tokio::sync::Mutex::new(HashMap::new()),
             arenas: Default::default(),
+            boards: Default::default(),
         };
         let engine = Self { inner: Arc::new(inner) };
         engine.inner.catalog.load_cache(&engine.inner.db).await;
@@ -222,6 +226,7 @@ impl Engine {
         tokio::spawn(async move {
             engine.refresh_stale_catalogs(LOCAL_USER).await;
         });
+        tokio::spawn(self.clone().watch_boards());
     }
 
     /// Starts a dispatcher that only runs jobs created through this engine instance and never

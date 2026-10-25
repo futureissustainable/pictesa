@@ -191,7 +191,7 @@ Provider contracts: [OpenAI Batch API](https://developers.openai.com/api/docs/gu
 ## MCP
 
 `POST /mcp` speaks the Model Context Protocol (Streamable HTTP, JSON responses). `pictesa mcp` speaks it over stdio.
-Tools: `list_collections`, `add_to_collection`, `list_models`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
+Tools: `list_collections`, `add_to_collection`, `list_models`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `list_boards`, `create_board`, `get_board`, `add_to_board`, `run_board_step`.
 
 ## Errors
 
@@ -309,3 +309,56 @@ The spend view contains `today_usd`, `seven_days_usd`, `thirty_days_usd`, `days:
 Spend is isolated per hosted user and uses the single global local user otherwise. Queued runs reserve their estimated cost. Wallet-funded runs record the actual wallet charge including markup. Direct-key runs keep the estimate because provider responses currently do not report final charges. Local backends count as zero. Confirmed unbilled failures and cancellations release spend, including wallet refunds; uncertain upstream submissions keep their reservation. Deleting a job does not erase spend. Unpriced runs are counted in `unknown_runs` and excluded from totals.
 
 Caps are optional, from $0 to $1,000,000; null removes a cap and zero blocks paid runs. Both caps are replaced by PUT. A paid batch that exceeds either remaining cap is rejected atomically before queuing or provider submission, with `field: "budget"` and the cap name, amount and remainder. The exact boundary is allowed. A paid model without a cost estimate is refused while a cap is active. Amounts are stored in integer micro-dollars.
+
+### Boards
+
+A board is a canvas of library files, notes and steps that people and agents edit together: moodboards, storyboards and chained generations. It is one document (nodes, edges and the latest run of each step) with a version number.
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| GET | `/api/boards` | | `{ boards: [BoardSummary] }`: own and shared boards, newest change first |
+| POST | `/api/boards` | `{ name }` | `201 Board` |
+| GET | `/api/boards/{id}` | | `Board` |
+| PATCH | `/api/boards/{id}` | `{ name }` | `Changes` (owner and editors) |
+| DELETE | `/api/boards/{id}` | | 204 (owner) |
+| POST | `/api/boards/{id}/ops` | `{ ops: [Op] }` | `Changes`, or `409 { error, kind: "conflict", current: Changes }` |
+| POST | `/api/boards/{id}/steps/{node}/run` | `{ downstream?: bool }` (optional) | `201 { steps: [node id], run: StepRun }` |
+| POST | `/api/boards/{id}/steps/{node}/cancel` | | `StepRun` |
+| POST | `/api/boards/{id}/members` | `{ email, role: "editor"\|"viewer" }` | `{ members: [Member] }` (hosted mode, owner; also changes a role) |
+| DELETE | `/api/boards/{id}/members/{user}` | | 204 (the owner removes anyone; a member can leave) |
+| POST | `/api/boards/{id}/presence` | `{ client, leave?: bool }` | `{ viewers: [Person] }` |
+| POST | `/api/boards/{id}/copy` | `{ asset_ids }` | `{ assets: [Asset] }`: the caller's own copies of files on the board |
+
+`Board`: `{ id, name, role: "owner"|"editor"|"viewer", owner: Person, version, created_at, updated_at, nodes: [Node], edges: [Edge], runs: { <node id>: StepRun }, assets: { <asset id>: Asset }, members: [Member] }`. `Person`: `{ id, name, email }`. `Member`: a Person with `{ role, added_at }`. `BoardSummary`: `{ id, name, role, owner, version, created_at, updated_at, node_count, member_count, covers: [Asset] }`.
+
+```json
+{ "id": "paint", "kind": "step", "x": 340, "y": 0, "w": 300, "rev": 7,
+  "model": "mock:image", "prompt": "the cabin at golden hour", "params": { "aspect_ratio": "4:5" }, "count": 2 }
+```
+A `Node` has `id`, `kind` (`asset`, `note` or `step`), `x`, `y`, `w` (0 on a new node means the kind's default) and `rev`. Asset nodes add `asset_id`, notes add `text`, steps add `model`, `prompt`, `negative_prompt`, `params` and `count` (1 to 8 results per run). An `Edge` is `{ id, from, to, role, rev }`. An edge into a step is an input: from an asset node it feeds that file, from another step it feeds the results of that step's last run that are still on the board. `role` picks the model's slot (`reference`, `start_frame`, `end_frame`, `video`, `audio`, `mask`); null takes the first free slot that takes the file, never the mask. More connected files than a slot takes are refused, except extra results of a step, which are left out. Steps cannot feed each other in a loop. Ids are 1 to 64 letters, digits, dashes or underscores.
+
+`StepRun`: `{ status: "waiting"|"starting"|"running"|"succeeded"|"failed"|"canceled", by: <user id>, jobs: [job id], outputs: [asset id], after: [node id], error, updated_at, rev }`.
+
+| Op | Fields |
+|---|---|
+| `add_node` | `node` |
+| `move_node` | `id`, `base`, `x`, `y` |
+| `update_node` | `id`, `base` and any of `w`, `text` (notes), `model`, `prompt`, `negative_prompt`, `params`, `count` (steps) |
+| `delete_node` | `id`, `base` (its edges go with it) |
+| `add_edge` | `edge: { id, from, to, role? }` |
+| `update_edge` | `id`, `base`, `role` |
+| `delete_edge` | `id`, `base` |
+| `rename` | `name` |
+
+**Versions.** Every applied request adds 1 to the board's `version`, and every node and edge it touches gets that version as its `rev`. An op on an existing item names `base`, the item's `rev` the caller saw. A request applies whole or not at all. When an item it names changed or was removed since, the answer is 409 and `current` holds the current state of every item the request named (removed ones in `removed_nodes` and `removed_edges`): show it and drop the change. Edits to different items never conflict. Limits: 200 ops per request, 500 nodes and 1,000 edges per board, notes up to 10,000 characters, prompts up to 20,000.
+
+`Changes` (the answer to a change, and the `board` event): `{ board_id, version, name?, nodes, edges, runs, removed_nodes, removed_edges, assets, by? }` with the current state of each touched item and the files of new asset nodes. Clients merge items by `rev`, so the order of arrival does not matter.
+
+**Runs.** Running a step queues an ordinary generation as the caller, with the same validation, budgets, wallet and queue as `POST /api/generations`. The answer comes once the first generation is queued, so a missing input or a budget refusal comes back at once (400; the step is marked failed). Results land on the board as asset nodes right of the step, linked from it. With `downstream`, every step reached through edges between steps waits (`waiting`, with `after` naming the steps it needs) and starts when they succeed; a failed or canceled step settles the ones after it. A step that is still running cannot start again (409). The server's board watcher moves runs on, so runs started by another process (an agent over stdio MCP) still land.
+
+**Events.**
+- `event: board` with `Changes`, to the owner and every member, for every change, including results landing and runs moving on. `{ board_id, version, reload: true }` means another process changed the board: load it again. The server looks for such changes every 2 seconds.
+- `event: boards` with `{ board_id, deleted?, removed? }`: a board was created, renamed, shared or deleted, or someone left.
+- `event: board_presence` with `{ board_id, viewers: [Person] }`: who has the board open. Clients check in with `POST presence` every 20 seconds; a check-in expires after 45 seconds.
+
+**Sharing and files.** Hosted mode: the owner shares by email. Editors change the board and run its steps, paid from their own account and budget; viewers only look; anyone else gets 404 for the board, its routes and its files. Members can open the files shown on the board (`/files/{id}`, `/thumbs/{id}`) while they are on it and not in their owner's trash. When a step uses another member's file, the runner first gets their own copy in their library (stored once, `origin: "board"`); `POST /copy` does the same, for example to use board images as references in Create. Local mode has one user, and agents use the same routes.
