@@ -15,6 +15,8 @@ pub mod leaderboard;
 pub mod library;
 pub mod netguard;
 pub mod presets;
+pub mod prompts;
+pub mod batches;
 pub mod queue;
 pub mod recipes;
 pub mod spend;

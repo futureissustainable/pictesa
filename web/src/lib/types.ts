@@ -195,6 +195,7 @@ export interface Asset {
   /** Edit helpers: the image this mask or expanded canvas was made from. */
   made_from?: string | null;
   job_id: string | null;
+  batch_id?: string | null;
   model: string | null;
   prompt: string | null;
   negative_prompt?: string | null;
@@ -407,3 +408,15 @@ export interface AssetQuery {
   source?: AssetSource;
   trash?: boolean;
 }
+
+export interface PromptHistory { prompt: string; model: string; model_name: string; last_used_at: number }
+export interface PromptContent { name: string; prompt: string; negative_prompt?: string | null; model?: string | null; params?: ParamValues | null }
+export interface SavedPrompt extends PromptContent { id: string; placeholders: string[]; created_at: number; updated_at: number }
+export interface BatchRequest extends GenerationRequest {
+  prompts?: string[];
+  prompt_list?: string;
+  prompt_format?: "lines" | "csv";
+  seeds?: { start: number; count: number };
+  grid?: { key: string; values: ParamValue[] }[];
+}
+export interface BatchEstimate { run_count: number; total_estimated_cost_usd: number | null; max_runs: number }

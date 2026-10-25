@@ -1,3 +1,4 @@
+import type { BatchEstimate, BatchRequest, PromptContent, PromptHistory, SavedPrompt } from "./types";
 import type {
   ApiToken,
   Asset,
@@ -134,6 +135,16 @@ export const api = {
   importWorkflow: (name: string, workflow: unknown) => request<WorkflowImport>("POST", "/api/workflows/import", { name, workflow }),
   presets: (output: MediaKind) => request<{ presets: Preset[] }>("GET", withQuery("/api/presets", { output })),
   enhancePrompt: (prompt: string, output: MediaKind) => request<{ prompt: string }>("POST", "/api/prompt/enhance", { prompt, output }),
+
+  promptHistory: (q = "", limit = 50) => request<{ history: PromptHistory[] }>("GET", withQuery("/api/prompts/history", { q, limit })),
+  savedPrompts: (q = "") => request<{ prompts: SavedPrompt[] }>("GET", withQuery("/api/prompts", { q, limit: 100 })),
+  savePrompt: (body: PromptContent) => request<SavedPrompt>("POST", "/api/prompts", body),
+  renamePrompt: (promptId: string, name: string) => request<SavedPrompt>("PATCH", `/api/prompts/${id(promptId)}`, { name }),
+  deletePrompt: (promptId: string) => request<void>("DELETE", `/api/prompts/${id(promptId)}`),
+  renderPrompt: (promptId: string, values: Record<string, string>) => request<PromptContent>("POST", `/api/prompts/${id(promptId)}/render`, { values }),
+  estimateBatch: (body: BatchRequest) => request<BatchEstimate>("POST", "/api/generations/batch", { ...body, dry_run: true }),
+  generateBatch: (body: BatchRequest) => request<{ batch_id: string; jobs: Job[] }>("POST", "/api/generations/batch", body),
+  variations: (jobId: string) => request<{ batch_id: string; jobs: Job[] }>("POST", `/api/generations/${id(jobId)}/variations`),
 
   generate: (body: GenerationRequest) => request<{ batch_id: string; jobs: Job[] }>("POST", "/api/generations", body),
   jobs: (query: { status?: string; output?: MediaKind; limit?: number; before?: string } = {}) =>

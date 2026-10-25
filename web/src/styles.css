@@ -891,3 +891,44 @@ video.viewer-media { max-width: 100%; max-height: 100%; background: #1d1a17; }
   .spend-bars { gap: 3px; }
   .collection-heading { flex-wrap: wrap; }
 }
+
+/* Personal prompts and batch controls reuse composer, field and dialog tokens. */
+.prompt-body { position: relative; }
+.prompt-tools { flex-wrap: wrap; justify-content: flex-end; }
+.prompt-list { display: grid; gap: 12px; }
+.prompt-list .choice { width: 100%; text-align: left; min-width: 0; }
+.prompt-list .choice-body { display: grid; gap: 4px; min-width: 0; }
+.prompt-list small, .batch-summary small { color: var(--muted); font-size: var(--text-caption); }
+.prompt-excerpt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.prompt-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.prompt-row > .choice, .prompt-row > .field { flex: 1; }
+.prompt-row .field { min-width: 0; }
+.saved-prompt { border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.saved-prompt:last-child { border-bottom: 0; }
+.saved-prompt .more-fields { padding-top: 12px; }
+.prompt-suggestions { position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; padding: 6px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 20px #0001; z-index: 3; }
+.prompt-suggestions .choice { width: 100%; text-align: left; }
+.prompt-suggestions [aria-selected="true"] { background: var(--picked); }
+.batch-dialog { width: min(680px, calc(100% - 32px)); }
+.batch-body { display: grid; gap: 24px; }
+.batch-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); }
+.batch-tabs button { flex: 1; min-height: 44px; padding: 8px 12px; border-bottom: 2px solid transparent; }
+.batch-tabs [aria-selected="true"] { border-color: var(--clay); color: var(--picked-ink); }
+.batch-body [hidden], .prompt-suggestions[hidden] { display: none; }
+.batch-seeds { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.batch-seeds input { width: 100%; min-width: 0; }
+.batch-axis { display: grid; gap: 12px; padding-block: 12px; border-bottom: 1px solid var(--line); }
+.batch-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.batch-summary p { margin-top: 4px; }
+.batch-summary small { display: block; margin-top: 8px; }
+.feed-batch { margin-bottom: 24px; }
+.feed-batch h2 { font-size: var(--text-body); font-weight: 500; margin-bottom: 12px; }
+@media (max-width: 600px) {
+  .prompt-tools { max-width: none; flex-wrap: nowrap; }
+  .prompt-tools .control-trigger { min-height: 40px; }
+  .batch-summary { align-items: stretch; flex-direction: column; }
+  .batch-summary .primary-button { justify-content: center; }
+  .prompt-row { flex-wrap: wrap; }
+  .prompt-row > .choice { flex-basis: 55%; }
+  .batch-tabs button { padding-inline: 6px; }
+}

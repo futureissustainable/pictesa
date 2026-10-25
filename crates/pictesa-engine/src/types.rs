@@ -89,6 +89,7 @@ pub struct Asset {
     pub thumb_url: Option<String>,
     pub source: String,
     pub job_id: Option<String>,
+    pub batch_id: Option<String>,
     pub model: Option<String>,
     pub prompt: Option<String>,
     pub negative_prompt: Option<String>,

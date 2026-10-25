@@ -69,3 +69,24 @@ For nonurgent OpenAI or Gemini image generation, pass `params: { "speed": "batch
 Create or rename collections in the studio's Collections section or through the HTTP API. Call `list_collections`, generate or import assets, then call `add_to_collection` with their library IDs. Hosted agents can only list and change their own collections and assets.
 
 Settings > Spend shows recent costs and optional daily and monthly budgets. All generation paths, including MCP, CLI, comparisons and recipe steps, check the caps before queuing. A refusal names the cap and remaining USD. Local runs count as zero; known wallet charges include markup; direct-key runs use estimates. See [API.md](API.md) for spend, tags, filters and ZIP routes.
+
+## Prompt memory and batch runs
+
+- `list_prompt_history { q?, limit? }` returns distinct personal job prompts with the latest model and use time, newest first (up to 100).
+- `list_saved_prompts { q?, limit? }` returns saved prompts, optional model/settings and template placeholder names.
+- `save_prompt { name, prompt, negative_prompt?, model?, params? }` saves a personal prompt. `{identifier}` marks a template field; `{{` and `}}` escape braces. To render a template, call `POST /api/prompts/{id}/render { values: {...} }`, then use the returned content for generation.
+- `generate_batch` accepts normal generation fields plus `prompts: [string]` or `prompt_list` with `prompt_format: "lines"|"csv"`, `seeds: { start, count }`, `grid: [{ key, values: [...] }]` and `dry_run`. Call with `dry_run: true` to check count, estimated total USD and available funds before queuing. Set false to commit. Returns batch/job IDs; use `wait_for_job` for each ID.
+
+Batches expand prompts × seeds × grid, with up to 3 grid axes and 64 runs total. Each run requests one output. Order: prompts, ascending seeds, then grid (last axis fastest). Every run uses ordinary model validation. A batch that exceeds a budget or wallet queues nothing. Estimates can be null for unpriced models and can change before commit. CSV uses the first column without a header; lines keep punctuation intact. Prompt memory is private to the authenticated caller.
+
+CLI equivalents:
+
+```bash
+pictesa prompts history -q cabin
+pictesa prompts list -q portrait
+pictesa prompts save "Cabin template" "a {material} cabin at {place}" -m mock:image -p aspect_ratio=16:9
+pictesa generate -m mock:image --prompts-file prompts.txt --seeds 42:4 --grid aspect_ratio=1:1,16:9 --dry-run --json
+pictesa generate -m mock:image --prompts-file prompts.csv --no-wait --json
+```
+
+A `.csv` file uses CSV first-column parsing; other files use one prompt per line. Repeated `--grid key=a,b` adds axes; `--grid 'key=["a,b","c"]'` keeps commas inside values. `--seeds START:COUNT` starts a consecutive seed sweep. `--dry-run` queues nothing. Commands use the running server when reachable, else the local engine; prompt commands always print JSON.

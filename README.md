@@ -99,3 +99,19 @@ Pictesa has no telemetry. Keys are encrypted at rest with a per-install key and 
 ## License
 
 [AGPL-3.0](LICENSE). You can use, change and self-host Pictesa freely. If you offer a modified version to others over a network, you share your changes under the same license.
+
+### Prompt memory, templates and batch runs
+
+Use **Prompt history** beside the composer to search past prompts, or type at least three characters for up to three suggestions. Arrow keys select a suggestion, Enter inserts it and Escape dismisses it. **More settings > Save prompt** stores a name, prompt, negative prompt and optional model/settings. **Prompts** searches, inserts, renames and deletes saved prompts. Templates such as `a {material} cabin at {place}` ask for each value inline before insertion.
+
+**More settings > Batch** combines prompt lines (or CSV first column), a seed sweep and up to three parameter grids. The studio validates every combination and shows the run count and estimated total before **Run batch**. A batch has at most 64 runs, all committed together under one batch ID. Results group in the feed. **Variations** on a finished card or in the viewer makes four new results with the same prompt and settings.
+
+```bash
+pictesa prompts history -q cabin
+pictesa prompts list
+pictesa prompts save "Cabin" "a {material} cabin at dawn" -m mock:image -p aspect_ratio=16:9
+pictesa generate -m mock:image --prompts-file prompts.txt --seeds 42:4 --grid aspect_ratio=1:1,16:9 --dry-run --json
+pictesa generate -m mock:image --prompts-file prompts.csv --no-wait --json
+```
+
+`.csv` files use the first column, without a header; other files use prompt lines. `--seeds START:COUNT` sweeps consecutive seeds. Repeat `--grid key=a,b` for more axes, or use a JSON array for values containing commas. Remove `--dry-run` to queue. All normal model validation, budgets and wallet checks apply. MCP tools: `list_prompt_history`, `list_saved_prompts`, `save_prompt`, `generate_batch`. See [API.md](docs/API.md) and [AGENTS.md](docs/AGENTS.md) for formats and template rules.

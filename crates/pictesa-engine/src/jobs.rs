@@ -235,6 +235,58 @@ impl Engine {
         self.commit(user, plans, None).await
     }
 
+    /// Plans every expanded run before committing anything. Dry runs never reserve money or queue.
+    pub async fn estimate_batch(&self, user: &str, req: crate::batches::BatchRequest) -> Result<crate::batches::BatchEstimate> {
+        let plans = self.batch_plans(user, &req).await?;
+        let mut tx = self.inner.db.begin_with("BEGIN IMMEDIATE").await?;
+        self.authorize_plans(user, &plans, &mut tx, false, now_ms()).await?;
+        tx.rollback().await?;
+        Ok(batch_estimate(&plans))
+    }
+
+    async fn batch_plans(&self, user: &str, req: &crate::batches::BatchRequest) -> Result<Vec<Planned>> {
+        let spec = self.model(user, &req.generation.model).await?;
+        let mut plans = Vec::new();
+        for one in crate::batches::expand(req, &spec)? { plans.push(self.plan(user, one).await?); }
+        Ok(plans)
+    }
+
+    pub async fn create_batch(&self, user: &str, req: crate::batches::BatchRequest) -> Result<Created> {
+        if req.dry_run { return Err(EngineError::invalid("Use the batch estimate method for a dry run.", Some("dry_run"))); }
+        let plans = self.batch_plans(user, &req).await?;
+        self.commit(user, plans, None).await
+    }
+
+    /// Four fresh seeds with the finished run's model, settings, inputs and preset.
+    pub async fn variations(&self, user: &str, id: &str) -> Result<Created> {
+        let job = self.job(user, id).await?;
+        if job.status != crate::JobStatus::Succeeded { return Err(EngineError::invalid("Choose a finished result.", Some("job"))); }
+        let spec = self.model(user, &job.model).await?;
+        let mut generation = CreateGeneration { model: job.model, prompt: job.prompt, negative_prompt: job.negative_prompt, params: job.params, inputs: job.inputs, preset: job.preset, ..Default::default() };
+        if let Some(seed) = crate::batches::seed_param(&spec) {
+            let previous = generation.params.get(&seed.key).and_then(Value::as_u64);
+            let (min, max) = match seed.kind {
+                pictesa_core::ParamKind::Int { min, max, .. } => (min.max(0) as u64, max.max(0) as u64),
+                _ => (0, u32::MAX as u64),
+            };
+            let max = max.min(crate::batches::MAX_SAFE_SEED);
+            let available = max.saturating_sub(min) + 1;
+            if max < min || available < 4 + u64::from(previous.is_some_and(|n| n >= min && n <= max)) {
+                return Err(EngineError::invalid("This model does not allow four new seed values.", Some("seed")));
+            }
+            let mut values = Vec::new();
+            while values.len() < 4 {
+                let value = min + rand::random::<u64>() % available;
+                if Some(value) != previous && !values.contains(&json!(value)) { values.push(json!(value)); }
+            }
+            let request = crate::batches::BatchRequest { generation, grid: vec![crate::batches::GridAxis { key: seed.key.clone(), values }], ..Default::default() };
+            self.create_batch(user, request).await
+        } else {
+            generation.count = Some(4);
+            self.create_generation(user, generation).await
+        }
+    }
+
     /// Queues an already-validated request inside an existing batch (recipes use this through `create_generation`).
     async fn plan(&self, user: &str, mut req: CreateGeneration) -> Result<Planned> {
         let spec = self.model(user, &req.model).await?;
@@ -319,27 +371,28 @@ impl Engine {
         })
     }
 
-    async fn commit(&self, user: &str, plans: Vec<Planned>, batch: Option<String>) -> Result<Created> {
+    async fn authorize_plans(&self, user: &str, plans: &[Planned], tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, reserve: bool, now: i64) -> Result<()> {
         let total: i64 = plans.iter().flat_map(|p| p.runs.iter().map(|r| r.2)).sum();
-        let batch_id = batch.unwrap_or_else(crate::new_id);
-        let mut tx = self.inner.db.begin_with("BEGIN IMMEDIATE").await?;
-        let now = now_ms();
         let budget_total: i64 = plans.iter().flat_map(|p| p.runs.iter().map(|(_, cost, charge)| {
             if *charge > 0 { *charge } else { cost.map(crate::billing::to_micros).unwrap_or(0) }
         })).sum();
         let unknown = plans.iter().any(|p| p.runs.iter().any(|(_, cost, _)| cost.is_none()));
-        if budget_total > 0 || unknown { self.check_budget(&mut tx, user, budget_total, unknown, now).await?; }
+        if budget_total > 0 || unknown { self.check_budget(tx, user, budget_total, unknown, now).await?; }
         if total > 0 {
-            let wallet: Option<(i64, bool)> = sqlx::query_as("SELECT balance_micros, locked FROM wallets WHERE user_id = ?").bind(user).fetch_optional(&mut *tx).await?;
+            let wallet: Option<(i64, bool)> = sqlx::query_as("SELECT balance_micros, locked FROM wallets WHERE user_id = ?").bind(user).fetch_optional(&mut **tx).await?;
             let (balance, locked) = wallet.unwrap_or((0, false));
             if locked {
                 return Err(EngineError::Forbidden("Billing is paused on this account. Contact the operator.".into()));
+            }
+            if !reserve {
+                if balance < total { return Err(EngineError::invalid(format!("This batch costs about ${:.2} and your balance is ${:.2}.", total as f64 / 1e6, balance as f64 / 1e6), Some("billing"))); }
+                return Ok(());
             }
             let paid = sqlx::query("UPDATE wallets SET balance_micros = balance_micros - ? WHERE user_id = ? AND locked = 0 AND balance_micros >= ?")
                 .bind(total)
                 .bind(user)
                 .bind(total)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
             if paid.rows_affected() != 1 {
                 return Err(EngineError::invalid(
@@ -348,6 +401,14 @@ impl Engine {
                 ));
             }
         }
+        Ok(())
+    }
+
+    async fn commit(&self, user: &str, plans: Vec<Planned>, batch: Option<String>) -> Result<Created> {
+        let batch_id = batch.unwrap_or_else(crate::new_id);
+        let mut tx = self.inner.db.begin_with("BEGIN IMMEDIATE").await?;
+        let now = now_ms();
+        self.authorize_plans(user, &plans, &mut tx, true, now).await?;
         let mut ids = Vec::new();
         for plan in &plans {
             for (n, cost, charge) in &plan.runs {
@@ -686,7 +747,7 @@ impl Engine {
         let trash = f.trash.unwrap_or(false);
         let fts = f.q.as_deref().and_then(store::fts_query);
         let rows = sqlx::query_as::<_, AssetRow>(
-            "SELECT a.* FROM assets a LEFT JOIN spend_runs s ON s.job_id = a.job_id AND s.user_id = a.user_id
+            "SELECT a.*, (SELECT batch_id FROM jobs WHERE jobs.id = a.job_id AND jobs.user_id = a.user_id) AS batch_id FROM assets a LEFT JOIN spend_runs s ON s.job_id = a.job_id AND s.user_id = a.user_id
              WHERE a.user_id = ?
                AND ((? AND a.deleted_at IS NOT NULL) OR (NOT ? AND a.deleted_at IS NULL))
                AND (? IS NULL OR EXISTS (SELECT 1 FROM collection_assets ca JOIN collections c ON c.id = ca.collection_id WHERE ca.asset_id = a.id AND c.id = ? AND c.user_id = a.user_id))
@@ -961,4 +1022,11 @@ impl Engine {
         let _ = self.refresh_models_for(user, "comfyui").await;
         Ok(ImportedWorkflow { model: format!("comfyui:{id}"), manifest, notes })
     }
+}
+
+fn batch_estimate(plans: &[Planned]) -> crate::batches::BatchEstimate {
+    let total = plans.iter().flat_map(|p| &p.runs).try_fold(0.0, |total, (_, cost, charge)| {
+        if *charge > 0 { Some(total + *charge as f64 / 1e6) } else { cost.map(|cost| total + cost) }
+    });
+    crate::batches::BatchEstimate { run_count: plans.iter().map(|p| p.runs.len()).sum(), total_estimated_cost_usd: total, max_runs: crate::batches::MAX_BATCH_RUNS }
 }

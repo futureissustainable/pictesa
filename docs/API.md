@@ -309,3 +309,42 @@ The spend view contains `today_usd`, `seven_days_usd`, `thirty_days_usd`, `days:
 Spend is isolated per hosted user and uses the single global local user otherwise. Queued runs reserve their estimated cost. Wallet-funded runs record the actual wallet charge including markup. Direct-key runs keep the estimate because provider responses currently do not report final charges. Local backends count as zero. Confirmed unbilled failures and cancellations release spend, including wallet refunds; uncertain upstream submissions keep their reservation. Deleting a job does not erase spend. Unpriced runs are counted in `unknown_runs` and excluded from totals.
 
 Caps are optional, from $0 to $1,000,000; null removes a cap and zero blocks paid runs. Both caps are replaced by PUT. A paid batch that exceeds either remaining cap is rejected atomically before queuing or provider submission, with `field: "budget"` and the cap name, amount and remainder. The exact boundary is allowed. A paid model without a cost estimate is refused while a cap is active. Amounts are stored in integer micro-dollars.
+
+### Personal prompts and templates
+
+All prompt routes use the caller's user ID. History contains distinct nonempty job prompts, newest use first; the model and name come from that latest use. Search is a case-insensitive literal substring, including punctuation. `limit` defaults to 50 and is capped at 100.
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| GET | `/api/prompts/history?q=cabin&limit=50` | | `{ history: [{ prompt, model, model_name, last_used_at }] }` |
+| GET | `/api/prompts?q=cabin&limit=100` | | `{ prompts: [SavedPrompt] }` |
+| POST | `/api/prompts` | `{ name, prompt, negative_prompt?, model?, params? }` | 201 SavedPrompt |
+| PATCH | `/api/prompts/{id}` | `{ name }` | SavedPrompt |
+| DELETE | `/api/prompts/{id}` | | 204 |
+| POST | `/api/prompts/{id}/render` | `{ values: { subject: "cabin", place: "forest" } }` | rendered `{ name, prompt, negative_prompt, model, params }` |
+
+`SavedPrompt` adds `id`, `placeholders: [string]`, `created_at` and `updated_at` to the saved content. Names have 1 to 100 characters; prompt and negative prompt each allow 20,000. Params are optional, with up to 64 scalar values and 64 KB. Saving settings does not queue a generation or require a currently configured model. Other users cannot read, render, rename or delete the prompt.
+
+Templates use `{identifier}` where the identifier starts with an ASCII letter or underscore and continues with letters, numbers or underscores. The same identifier uses one value everywhere, including the negative prompt. Paired `{{` and `}}` produce literal braces. Other braces, including JSON, stay literal. Missing or blank values fail with `field: values.<identifier>`. Rendering is single-pass: braces inside a supplied value are never evaluated. Rendered text is capped at 20,000 characters. The studio asks for these values inline before inserting the prompt and optional model/settings into the composer.
+
+### Batch runs and variations
+
+`POST /api/generations/batch` uses the normal generation fields, plus:
+
+```json
+{
+  "model": "mock:image",
+  "prompts": ["a cabin at dawn", "a cabin at dusk"],
+  "seeds": { "start": 0, "count": 2 },
+  "grid": [{ "key": "aspect_ratio", "values": ["1:1", "16:9"] }],
+  "dry_run": true
+}
+```
+
+A dry run returns 200 `{ run_count: 8, total_estimated_cost_usd: 0, max_runs: 64 }` after validating every run and checking the current budget/wallet, without queuing or reserving money. Unknown estimates are `null`, never zero. Set `dry_run: false` (the default) to queue: 201 `{ batch_id, jobs }`. It revalidates the request and current funds, then commits every job, spend reservation and wallet charge in one transaction. Failed validation or insufficient funds queues nothing. Hosted estimates include wallet markup. A dry run is an estimate, not a reservation.
+
+Instead of `prompts`, send `prompt_list` with `prompt_format: "lines"` (default) or `"csv"` (first column, no header). CSV supports quoted commas, newlines and doubled quotes, UTF-8 BOM and CRLF. Empty rows are skipped. Lines preserve commas. Do not send both list forms. Without a list, `prompt` is used once. Each run requests one output; `count` must be omitted or 1. Compare is not combined with batch runs.
+
+Runs expand in prompt order, then ascending seeds, then grid axes in request order (last axis changes fastest). Limit: `MAX_BATCH_RUNS = 64` after multiplication, and up to 3 distinct model parameters in the grid, with nonempty value lists. A seed sweep requires a declared seed parameter, takes 1 to 64 seeds and stays within 0 to 9007199254740991. A grid cannot also sweep that seed key. Each value passes the normal model validation, with the same defaults, inputs, presets, characters, provider readiness, paid-call switch, budgets and wallet rules. `Asset.batch_id` lets clients group generated results in the feed.
+
+`POST /api/generations/{id}/variations` uses a succeeded job's model, prompt, negative prompt, inputs, preset and settings. Models with a seed parameter get 4 distinct new seeds in one batch. Models without one use the normal `count: 4` path. Answer: 201 `{ batch_id, jobs }`. All normal cost and budget checks apply.

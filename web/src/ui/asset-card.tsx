@@ -3,6 +3,7 @@ import { ASSET_DRAG_TYPE } from "../lib/attach";
 import { clock, dimensions, kindIcon } from "../lib/format";
 import { prefersReducedMotion } from "../lib/prefs";
 import type { Asset } from "../lib/types";
+import { Variations } from "./variations";
 import { Icon } from "./icon";
 
 /** Thumbnail with fallbacks: the server answers 404 until a thumbnail exists. */
@@ -90,6 +91,7 @@ export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, s
             <p>{title}</p>
             {detail && <small>{detail}</small>}
           </div>
+          {asset.job_id && <Variations jobId={asset.job_id} compact />}
           {onFavorite && (
             <button
               type="button"
