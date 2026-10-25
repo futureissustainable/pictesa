@@ -2,9 +2,14 @@
 //! Each test uses its own temporary data folder. Environment variables are process-wide, so the
 //! mock is enabled once and the tests share it.
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
-use pictesa_engine::{Config, CreateGeneration, Engine, JobStatus, Mode, LOCAL_USER};
+use pictesa_core::{InputRole, MediaKind};
+use pictesa_engine::{
+    characters::CharacterInput,
+    recipes::{RecipeRun, RunRecipe},
+    Config, CreateGeneration, Engine, EngineError, JobStatus, Mode, LOCAL_USER,
+};
 use serde_json::{json, Map};
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -18,6 +23,7 @@ async fn engine(name: &str, mode: Mode) -> Engine {
     std::env::set_var("PICTESA_MOCK", "1");
     std::env::set_var("PICTESA_MOCK_KEY", "platform-test-key");
     std::env::set_var("PICTESA_BILLING", "1");
+    std::env::set_var("PICTESA_DENY_PAID", "1");
     let mut cfg = Config::local(temp_dir(name));
     cfg.mode = mode;
     let e = Engine::open(cfg).await.expect("engine opens");
@@ -129,32 +135,96 @@ async fn canceling_during_a_busy_retry_refunds() {
     assert!((wallet.balance_usd - 1.0).abs() < 1e-9, "nothing ran, so nothing is charged: balance {}", wallet.balance_usd);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn recipes_chain_steps_through_the_queue() {
-    let e = engine("recipe", Mode::Local).await;
-    let run = e
-        .run_recipe(
-            LOCAL_USER,
-            "photo/new-angle",
-            pictesa_engine::recipes::RunRecipe {
-                values: Map::from_iter([("angle".to_string(), json!("a low angle"))]),
-                inputs: [("photo".to_string(), vec![e.upload(LOCAL_USER, &png(), Some("in.png"), None).await.unwrap().id])].into(),
-                models: [("angle".to_string(), "mock:image".to_string())].into(),
-            },
-        )
-        .await
-        .unwrap();
+async fn finish(e: &Engine, run: RecipeRun) -> RecipeRun {
     let mut current = run;
-    for _ in 0..60 {
+    for _ in 0..240 {
         if current.status != "running" {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         current = e.recipe_run(LOCAL_USER, &current.id).await.unwrap();
     }
-    assert_eq!(current.status, "succeeded", "{:?}", current.error);
-    let job = e.job(LOCAL_USER, &current.jobs[0]).await.unwrap();
-    assert_eq!(job.inputs.len(), 1, "the photo is passed to the step");
+    current
+}
+
+fn run_request(values: serde_json::Value, inputs: &[(&str, &str)]) -> RunRecipe {
+    let mut req = RunRecipe { values: values.as_object().cloned().unwrap_or_default(), ..Default::default() };
+    for (key, asset) in inputs {
+        req.inputs.entry(key.to_string()).or_default().push(asset.to_string());
+    }
+    req
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shots_and_face_swap_run_end_to_end_on_the_mock() {
+    let e = engine("apps", Mode::Local).await;
+    let photo = e.upload(LOCAL_USER, &sized_png(64, 32), Some("scene.png"), None).await.unwrap().id;
+    // Shots: nine different shots in one batch, returned together as the run's results.
+    let run = finish(&e, e.run_recipe(LOCAL_USER, "photo/shots", run_request(json!({}), &[("photo", &photo)])).await.unwrap()).await;
+    assert_eq!(run.status, "succeeded", "{:?}", run.error);
+    assert_eq!((run.step_jobs.len(), run.results.len()), (1, 9));
+    let (mut prompts, mut batches) = (HashSet::new(), HashSet::new());
+    for id in &run.results {
+        let job = e.job(LOCAL_USER, id).await.unwrap();
+        assert_eq!((job.status, job.model.as_str()), (JobStatus::Succeeded, "mock:image"), "{:?}", job.error);
+        assert_eq!(job.inputs[0].asset_id, photo);
+        assert_eq!((job.outputs[0].width, job.outputs[0].height), (Some(768), Some(384)), "shots keep the photo's shape");
+        prompts.insert(job.prompt);
+        batches.insert(job.batch_id);
+    }
+    assert_eq!(prompts.len(), 9, "nine different shots");
+    assert_eq!(batches.len(), 1, "the set is queued as one batch");
+
+    // Face swap needs both photos and passes the target first, as its prompt says.
+    let face = e.upload(LOCAL_USER, &sized_png(16, 16), Some("face.png"), None).await.unwrap().id;
+    let missing = e.run_recipe(LOCAL_USER, "photo/face-swap", run_request(json!({}), &[("face", &face)])).await;
+    assert!(matches!(missing, Err(EngineError::Validation { field: Some(ref f), .. }) if f == "inputs.target"), "{missing:?}");
+    let run = finish(&e, e.run_recipe(LOCAL_USER, "photo/face-swap", run_request(json!({}), &[("face", &face), ("target", &photo)])).await.unwrap()).await;
+    assert_eq!(run.status, "succeeded", "{:?}", run.error);
+    let job = e.job(LOCAL_USER, &run.results[0]).await.unwrap();
+    assert_eq!(job.inputs.iter().map(|i| i.asset_id.as_str()).collect::<Vec<_>>(), [photo.as_str(), face.as_str()]);
+    assert_eq!((job.outputs[0].width, job.outputs[0].height), (Some(768), Some(384)), "the result keeps the target's shape");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn brand_kits_and_paired_steps_flow_through_recipes() {
+    let e = engine("apps-brand", Mode::Local).await;
+    let logo = e.upload(LOCAL_USER, &sized_png(20, 20), Some("logo.png"), None).await.unwrap().id;
+    let product = e.upload(LOCAL_USER, &sized_png(30, 40), Some("product.png"), None).await.unwrap().id;
+    let kit = CharacterInput { name: Some("Oak and Co".into()), asset_ids: Some(vec![logo.clone()]), kind: Some("brand".into()), colors: Some(vec!["#0B6E4F".into(), "#f2c14e".into()]), words: Some("calm, natural".into()), ..Default::default() };
+    let kit = e.create_character(LOCAL_USER, kit).await.unwrap();
+    assert_eq!(kit.colors, ["#0b6e4f", "#f2c14e"]);
+    let bad = CharacterInput { name: Some("Bad".into()), asset_ids: Some(vec![logo.clone()]), colors: Some(vec!["green".into()]), ..Default::default() };
+    assert!(e.create_character(LOCAL_USER, bad).await.is_err(), "colors are hex codes");
+
+    // Product placement: a described scene or a scene photo is needed; the brand kit joins the step.
+    let refused = e.run_recipe(LOCAL_USER, "product/placement", run_request(json!({}), &[("product", &product)])).await;
+    assert!(matches!(refused, Err(EngineError::Validation { field: Some(ref f), .. }) if f == "values.where"), "{refused:?}");
+    let mut req = run_request(json!({ "where": "on a marble counter" }), &[("product", &product)]);
+    req.character = Some(kit.id.clone());
+    let run = finish(&e, e.run_recipe(LOCAL_USER, "product/placement", req).await.unwrap()).await;
+    assert_eq!(run.status, "succeeded", "{:?}", run.error);
+    let job = e.job(LOCAL_USER, &run.results[0]).await.unwrap();
+    assert!(job.prompt.starts_with("Place the exact product from the first image into a new photo: on a marble counter."), "{}", job.prompt);
+    assert!(job.prompt.ends_with("Brand look: calm, natural. Brand colors: #0b6e4f and #f2c14e. Keep the look of the brand reference images."), "{}", job.prompt);
+    assert_eq!(job.inputs.iter().map(|i| i.asset_id.as_str()).collect::<Vec<_>>(), [product.as_str(), logo.as_str()], "brand images follow the person's files");
+
+    // Explainer: every scene line becomes a still, and each clip starts from its own still.
+    let mut req = run_request(json!({ "scenes": "1. A kettle on a stove\n2. Steam rising\n3. Tea poured into a cup", "duration": "5" }), &[]);
+    req.character = Some(kit.id.clone());
+    let run = finish(&e, e.run_recipe(LOCAL_USER, "video/explainer", req).await.unwrap()).await;
+    assert_eq!(run.status, "succeeded", "{:?}", run.error);
+    assert_eq!(run.step_jobs.iter().map(Vec::len).collect::<Vec<_>>(), [3, 3]);
+    assert_eq!(run.results, run.step_jobs[1]);
+    for (still, clip) in run.step_jobs[0].iter().zip(&run.step_jobs[1]) {
+        let (still, clip) = (e.job(LOCAL_USER, still).await.unwrap(), e.job(LOCAL_USER, clip).await.unwrap());
+        assert_eq!((clip.output, clip.status), (MediaKind::Video, JobStatus::Succeeded), "{:?}", clip.error);
+        let start = clip.inputs.iter().find(|i| i.role == InputRole::StartFrame).map(|i| i.asset_id.clone());
+        assert_eq!(start, Some(still.outputs[0].id.clone()), "clips pair with their own still");
+        let scene = still.prompt.split(',').next().unwrap();
+        assert!(clip.prompt.starts_with(scene), "{} / {}", still.prompt, clip.prompt);
+        assert!(clip.prompt.contains("Brand look: calm, natural."), "a brand kit reaches models without image references");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

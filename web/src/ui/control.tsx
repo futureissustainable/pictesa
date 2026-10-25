@@ -136,7 +136,7 @@ export function Control({
   );
 }
 
-/** One choice inside a control panel. Closes the panel when picked. */
+/** One choice inside a control panel. Closes the panel when picked, unless `keepOpen` (several can be on). */
 export function Choice({
   selected = false,
   onPick,
@@ -145,6 +145,7 @@ export function Choice({
   disabled,
   className = "",
   title,
+  keepOpen = false,
 }: {
   selected?: boolean;
   onPick: () => void;
@@ -153,9 +154,10 @@ export function Choice({
   disabled?: boolean;
   className?: string;
   title?: string;
+  keepOpen?: boolean;
 }) {
   return (
-    <button type="button" data-choice className={`choice ${className}`} aria-pressed={selected} disabled={disabled} onClick={onPick} title={title}>
+    <button type="button" data-choice={keepOpen ? undefined : ""} className={`choice ${className}`} aria-pressed={selected} disabled={disabled} onClick={onPick} title={title}>
       {icon && <Icon name={icon} />}
       <span className="choice-body">{children}</span>
       {selected && <Icon name="check" className="choice-check" />}

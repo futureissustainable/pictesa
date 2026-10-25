@@ -191,7 +191,8 @@ Provider contracts: [OpenAI Batch API](https://developers.openai.com/api/docs/gu
 ## MCP
 
 `POST /mcp` speaks the Model Context Protocol (Streamable HTTP, JSON responses). `pictesa mcp` speaks it over stdio.
-Tools: `list_collections`, `add_to_collection`, `list_models`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`.
+Tools: `list_collections`, `add_to_collection`, `list_models`, `get_model`, `list_presets`, `list_characters`, `list_recipes`, `run_recipe`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `import_workflow`.
+Prompts: `prompts/list` returns the skill packs (`ugc_ad`, `hook_variants`, `explainer`, `faceless_short`, `brand_kit`) with their arguments; `prompts/get { name, arguments }` returns one user message with the steps. An unknown pack or a missing, unknown or invalid argument answers JSON-RPC error -32602. See [AGENTS.md](AGENTS.md).
 
 ## Errors
 
@@ -209,14 +210,16 @@ Non-2xx answers carry `{ "error": "human readable message", "kind"?: "auth"|"val
 | Method | Path | Body | Answer |
 |---|---|---|---|
 | GET | `/api/recipes` | | `{ recipes: [RecipeView] }` |
-| POST | `/api/recipes/run/{id}` | `{ values: {field: value}, inputs: {input_key: [asset_id]}, models?: {step_id: model_id} }` | `201 RecipeRun` |
+| POST | `/api/recipes/run/{id}` | `{ values: {field: value}, inputs: {input_key: [asset_id]}, models?: {step_id: model_id}, character?: id or name }` | `201 RecipeRun` |
 | GET | `/api/recipes/runs?limit=30` | | `{ runs: [RecipeRun] }` |
 | GET | `/api/recipes/runs/{id}` | | `RecipeRun` |
 | POST | `/api/recipes/runs/{id}/cancel` | | `RecipeRun` |
 
-`RecipeView`: `{ id, name, description, output, fields: [{ key, label, type: "text"|"enum"|"preset", options, category, default, required, multiline, help }], inputs: [{ key, label, kind, max, required }], steps: [{ id, label, output, models: [ids], prompt, params, preset, inputs }], step_models: [model id or null per step], runnable }`.
-A `preset` field offers presets of its `category` (GET /api/presets). Recipe ids contain a slash (`cinema/shot`).
-`RecipeRun`: `{ id, recipe_id, recipe_name, status: "running"|"succeeded"|"failed"|"canceled", step, steps, jobs: [job ids], error, created_at, updated_at }`. Its jobs are ordinary generations (they appear in `/api/generations` and fire `job` events); runs also fire `event: recipe`.
+`RecipeView`: `{ id, name, description, output, picture?, character, open?, fields: [{ key, label, type: "text"|"enum"|"multi"|"preset", options, category, default, required, required_without?, multiline, help }], inputs: [{ key, label, kind, max, required }], steps: [{ id, label, output, models: [ids], prompt, params, preset, inputs, each?, needs? }], step_models: [model id or null per step], runnable }`.
+The studio shows recipes as Apps. `picture` names a built-in card illustration or a library image; `character: true` offers a character or brand kit for every step; `open` is a studio page that runs the recipe with a richer tool (Relight opens `/edit?tool=relight`).
+A `preset` field offers presets of its `category` (GET /api/presets). A `multi` field takes a list of its `options`. A field with `required_without` is required unless that input or field has a value. Recipe ids contain a slash (`cinema/shot`).
+`step_models` holds the first listed model that is set up and fits the step: it makes the step's kind of media, takes a prompt when the step writes one, and has room for the step's files. A step without one has `needs`: what to set up. A step with `each` runs once per item, in one batch, and returns a set.
+`RecipeRun`: `{ id, recipe_id, recipe_name, status: "running"|"succeeded"|"failed"|"canceled", step, steps, jobs: [job ids], step_jobs: [[job ids] per step], results: [job ids of the final step], error, created_at, updated_at }`. Its jobs are ordinary generations (they appear in `/api/generations` and fire `job` events); runs also fire `event: recipe`. A set succeeds when at least one of its items does; the failed items stay visible as failed jobs.
 
 ### Billing (hosted mode)
 | Method | Path | Body | Answer |
@@ -235,7 +238,7 @@ Show the balance and top-up only when `enabled` is true. A generation the wallet
 
 ### Notes for clients (v1.2)
 - `ModelSpec.prompt` means the model *accepts* a prompt. A prompt is required only for text-to-image, text-to-video and text-to-audio runs without input files.
-- `Job.prompt` is the person's own text. When `preset` is set, its words are added only when the request is sent, so reusing a job's settings never doubles them.
+- `Job.prompt` is the person's own text, plus a brand kit's line when one was attached. When `preset` is set, its words are added only when the request is sent, so reusing a job's settings never doubles them.
 - `Asset.name` holds the original file name of uploads and imports.
 - Recipe `enum` field `options` are plain strings. Validation errors use `field` values `values.<key>`, `inputs.<key>`, `models.<step>` or `models`.
 - Stripe returns to `/settings/billing?checkout=success` or `?checkout=canceled`.
@@ -249,12 +252,13 @@ Named sets of reference images (a person, a product, a style) that any run can a
 | Method | Path | Body | Answer |
 |---|---|---|---|
 | GET | `/api/characters` | | `{ characters: [Character] }` |
-| POST | `/api/characters` | `{ name, description?, asset_ids: [1..14 image ids] }` | `201 Character` |
+| POST | `/api/characters` | `{ name, description?, asset_ids: [1..14 image ids], kind?: "character"|"brand", colors?: ["#rrggbb"], words? }` | `201 Character` |
 | GET | `/api/characters/{id}` | | `Character` |
-| PATCH | `/api/characters/{id}` | any of `{ name, description, asset_ids }` | `Character` |
+| PATCH | `/api/characters/{id}` | any of `{ name, description, asset_ids, kind, colors, words }` | `Character` |
 | DELETE | `/api/characters/{id}` | | 204 |
 
-`Character`: `{ id, name, description, assets: [Asset], created_at, updated_at }`. `POST /api/generations` takes `"character": "<id>"`: its images are added as `reference` inputs, up to what the model accepts (a model without image references refuses it). Changes fire `event: character`.
+`Character`: `{ id, name, description, kind, colors, words, assets: [Asset], created_at, updated_at }`. `POST /api/generations` takes `"character": "<id>"`: its images are added as `reference` inputs, up to what the model accepts (a model without image references refuses a character, but not a brand kit). Changes fire `event: character`.
+A brand kit (`kind: "brand"`) has up to 8 colors (`#rgb` or `#rrggbb`, stored as lowercase `#rrggbb`) and up to 300 characters of words. On image and video runs it adds `Brand look: <words>. Brand colors: <colors>.` to the prompt, plus `Keep the look of the brand reference images.` when its images were attached. The line is stored with the job's prompt and is not added twice.
 - Events carry an `id`. After a reconnect (the browser sends `Last-Event-ID`), the stream starts with `event: resync`: refetch jobs, runs and lists, since missed events are not replayed.
 
 ### Import a ComfyUI workflow

@@ -225,7 +225,10 @@ function CharacterSlot({ model, mode, invalid }: { model: ModelSpec; mode: Media
                   {character.assets[0] ? <Thumb asset={character.assets[0]} /> : <Icon name="face" />}
                   <span>
                     {character.name}
-                    <small>{plural(character.assets.length, "image", "images")}</small>
+                    <small>
+                      {character.kind === "brand" ? "Brand kit, " : ""}
+                      {plural(character.assets.length, "image", "images")}
+                    </small>
                   </span>
                 </span>
               </Choice>

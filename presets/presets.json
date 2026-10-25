@@ -682,5 +682,104 @@
   "prompt_suffix": "technical blueprint drawing, white lines on blue, precise annotations",
   "params": {},
   "description": "Technical drawing on blue."
+ },
+ {
+  "id": "grade/teal-orange",
+  "name": "Teal and orange",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded teal and orange: cool teal shadows, warm orange skin tones, punchy contrast",
+  "params": {},
+  "description": "Cool shadows against warm skin."
+ },
+ {
+  "id": "grade/bleach-bypass",
+  "name": "Bleach bypass",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded with a bleach bypass look: low saturation, silvery highlights, hard contrast, gritty texture",
+  "params": {},
+  "description": "Muted, silvery and hard."
+ },
+ {
+  "id": "grade/portra-400",
+  "name": "Kodak Portra 400",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded like Kodak Portra 400 film: warm natural skin tones, soft pastel highlights, gentle contrast, fine grain",
+  "params": {},
+  "description": "Warm, soft portrait film."
+ },
+ {
+  "id": "grade/ektachrome",
+  "name": "Kodak Ektachrome",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded like Kodak Ektachrome slide film: clean saturated colors, deep blues, crisp contrast",
+  "params": {},
+  "description": "Clean, saturated slide film."
+ },
+ {
+  "id": "grade/fuji-400h",
+  "name": "Fujifilm 400H",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded like Fujifilm Pro 400H film: airy pastel greens and cyans, bright soft highlights, fine grain",
+  "params": {},
+  "description": "Airy greens and soft light."
+ },
+ {
+  "id": "grade/cinestill-800t",
+  "name": "CineStill 800T",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded like CineStill 800T film: cool tungsten tones, red halation around lights, visible grain",
+  "params": {},
+  "description": "Cool night film with a red glow."
+ },
+ {
+  "id": "grade/tri-x",
+  "name": "Kodak Tri-X",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded as Kodak Tri-X black and white film: rich blacks, bright whites, strong grain",
+  "params": {},
+  "description": "Gritty black and white."
+ },
+ {
+  "id": "grade/day-for-night",
+  "name": "Day for night",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded day for night: deep blue moonlit tones, darker sky, low exposure",
+  "params": {},
+  "description": "Daylight turned into moonlight."
+ },
+ {
+  "id": "grade/matte-fade",
+  "name": "Faded matte",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded with a faded matte look: lifted blacks, soft muted colors, low contrast",
+  "params": {},
+  "description": "Soft, lifted and muted."
+ },
+ {
+  "id": "grade/golden",
+  "name": "Warm golden",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded warm and golden: amber highlights, soft orange midtones, gentle contrast",
+  "params": {},
+  "description": "Amber light and warm skin."
+ },
+ {
+  "id": "grade/cross-process",
+  "name": "Cross processed",
+  "category": "grade",
+  "output": "image",
+  "prompt_suffix": "graded like cross-processed film: shifted greens and yellows, high saturation, strong contrast",
+  "params": {},
+  "description": "Bold, shifted colors."
  }
 ]

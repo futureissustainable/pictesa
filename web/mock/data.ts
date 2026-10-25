@@ -319,11 +319,11 @@ export const recipes = [
     steps: [{ ...shotStep, label: "Animate", prompt: "{{action}}", inputs: [{ from: "input:photo", role: "start_frame" }] }],
   },
   {
-    id: "photo/new-angle", name: "New angle", output: "image",
-    description: "Re-shoot a photo from another camera position.",
-    fields: [{ key: "angle", label: "Angle", type: "enum", options: ["from above", "low angle", "side view", "close-up", "wide shot"], default: "low angle", required: false, multiline: false }],
+    id: "photo/angles", name: "Angles", output: "image", picture: "angles",
+    description: "See your subject from new camera angles.",
+    fields: [{ key: "angles", label: "Angles", type: "multi", options: ["three-quarter view from the left", "side view from the right", "view from behind", "low angle looking up"], default: ["three-quarter view from the left", "view from behind"], required: true, multiline: false, help: "Each angle makes one image." }],
     inputs: [{ key: "photo", label: "Photo", kind: "image", max: 1, required: true }],
-    steps: [{ id: "angle", label: "Re-shoot", output: "image", models: stillModels.slice(0, 3), prompt: "the same scene, {{angle}}", params: {}, inputs: [{ from: "input:photo", role: "reference" }] }],
+    steps: [{ id: "angles", label: "Turn the camera", output: "image", models: stillModels.slice(0, 3), prompt: "the same subject, {{each}}", params: {}, each: ["{{angles}}"], inputs: [{ from: "input:photo", role: "reference" }] }],
   },
   {
     id: "film/storyboard", name: "Storyboard to film", output: "video",

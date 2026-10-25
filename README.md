@@ -12,12 +12,12 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 - **Any ComfyUI workflow becomes an app.** Drop in a workflow exported with *Export (API)*: Pictesa reads the graph, finds the prompt, seed, steps, guidance, size, video length and image inputs, and turns it into a model with proper controls in the studio, a CLI command and an MCP tool for agents. No glue code. Built-in templates cover LTX 2.5, FLUX 3 Klein, Wan 2.2, Qwen Image and upscalers, and stable-diffusion.cpp, Forge and Automatic1111 work too. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
 - **Live previews.** Local runs show their image as it renders: ComfyUI's sampler previews stream into the job card and the feed, so a run that goes wrong can be stopped early.
 - **Real prices.** You pay providers directly, at their price. Models show the provider's published price (per image, second or megapixel; fal's whole catalog is priced this way), token-billed models say so, and every run records its cost estimate. No credits, no markup.
-- **Recipes.** Open multi-step pipelines: *Cinema shot* (compose a still with your lens and light, then animate it with a camera move), *Character shot*, *Product hero*, *Animate a photo*, *New angle* and *Upscale*. Each step uses the first model you have set up, cloud or local, and recipes are plain JSON you can fork.
+- **Apps.** One-click tools with a picture and one line each: *Shots* (nine different shots of a scene from one photo), *Angles*, *Zooms*, *Relight*, *Face swap*, *Product placement*, *Color grade* and *Upscale*, plus pipelines such as *UGC ad*, *Hook variants*, *Explainer*, *Cinema shot*, *Character shot*, *Product hero* and *Animate a photo*. Each app is a recipe: plain JSON you can fork, where each step uses the first set-up model that fits, cloud or local, and says what to set up when none does. A step can run once per item and return a set.
 - **Edit any image.** Paint over a part and describe what goes there, expand the frame to a new shape, relight it or remove the background, with the models you have set up. Results land in the library next to the image they came from, ready to edit again.
-- **Characters.** Save a person, product or style as a named set of reference images and attach it to any run on any model that takes references.
+- **Characters and brand kits.** Save a person, product or style as a named set of reference images and attach it to any run on any model that takes references. A brand kit adds brand colors and words to every step it is used in.
 - **Compare.** Run one prompt on up to eight models side by side, with parameters adapted to each.
-- **Presets.** 76 camera moves and looks (dolly in, orbit, crane, FPV drone, bullet time, film stocks, light) as editable JSON.
-- **Built for agents.** An MCP server (stdio and HTTP), a CLI with `--json`, and a REST API with live events. Agents and people share one library, so an image you make can go straight to an agent and back. See [docs/AGENTS.md](docs/AGENTS.md).
+- **Presets.** 87 camera moves, looks and color grades (dolly in, orbit, crane, FPV drone, bullet time, film stocks, teal and orange, bleach bypass) as editable JSON.
+- **Built for agents.** An MCP server (stdio and HTTP), a CLI with `--json`, and a REST API with live events. Skill packs give agents ready-made workflows: a UGC ad, hook variants, an explainer, a faceless short and a brand kit. Agents and people share one library, so an image you make can go straight to an agent and back. See [docs/AGENTS.md](docs/AGENTS.md).
 - **One fast binary.** Rust (Tokio, Axum, SQLite) with the web UI embedded. No Python, Docker or Node at runtime. Files are stored once by content hash, with thumbnails, range-streamed video and full-text prompt search. It starts in 17 ms, and the studio page loads in 41 requests and 308 KB where Higgsfield's video page needs 745 and 7.8 MB ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)).
 - **Yours or hosted.** Run it for yourself, or host it for others the way n8n works: accounts, API tokens, and optional prepaid wallets with Stripe top-ups so people can run on your provider keys.
 
@@ -48,10 +48,15 @@ pictesa model fal:kling/v4/image-to-video
 pictesa generate "a timber cabin on a misty lake at dawn" -m fal:google/nano-banana-2.1 -p aspect_ratio=16:9 -n 4 -o ./out
 pictesa generate "slow push in" -m fal:kling/v4/image-to-video -i start_frame=./out/cabin.png -p duration=5
 pictesa recipe run cinema/shot -v scene="a lighthouse in a storm" -v camera=camera/crane-up
+pictesa recipe run photo/shots -i photo=./cabin.png -o ./shots       # nine shots of one scene
+pictesa recipe run video/explainer -v scenes="$(cat scenes.txt)" --character "Oak and Co"
+pictesa pack ugc_ad -a product="a ceramic pour-over set" -a product_image=./set.png   # a skill pack's steps
 pictesa import result.png --prompt-file prompt.txt --origin gemini-api --model google:gemini-3-pro-image --label "Nano Banana Pro" -p resolution=2K --json
 pictesa workflow import my-flow.json --name "My flow"   # any ComfyUI workflow becomes a model
 pictesa keys set fal api_key        # reads the key from stdin; stored encrypted
 ```
+
+`pictesa recipe list` shows every app and whether it can run; `recipe run` takes `-v key=value` (a JSON list for a field with several choices), `-i input_key=path` and `--character <id or name>` for a character or brand kit on every step. `pictesa pack` lists the skill packs, and `pictesa pack <name> -a key=value` prints one as steps an agent can follow.
 
 When the studio is running, CLI jobs and imports run there and appear live in the UI. Otherwise imports use the local library. `pictesa import <file>...` accepts `--prompt TEXT` or `--prompt-file FILE`, `--negative`, `--model`, `--label`, `--origin`, repeatable `-p key=value`, `--source-url`, and `--json`. Reimporting the same file fills missing metadata without replacing existing values.
 
@@ -63,7 +68,7 @@ OpenAI and Gemini image models offer **Speed: Batch** (`-p speed=batch`): half p
 claude mcp add pictesa -- pictesa mcp          # Claude Code
 ```
 
-Tools: `list_models`, `get_model`, `list_presets`, `list_recipes`, `list_characters`, `generate`, `run_recipe`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `import_workflow`. `generate` waits for the result and returns file paths. Setup for Codex, Cursor and HTTP clients is in [docs/AGENTS.md](docs/AGENTS.md); the HTTP API is in [docs/API.md](docs/API.md).
+Tools: `list_models`, `get_model`, `list_presets`, `list_recipes`, `list_characters`, `generate`, `run_recipe`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `import_workflow`. `generate` waits for the result and returns file paths. Prompts (skill packs): `ugc_ad`, `hook_variants`, `explainer`, `faceless_short`, `brand_kit`. Setup for Codex, Cursor and HTTP clients is in [docs/AGENTS.md](docs/AGENTS.md); the HTTP API is in [docs/API.md](docs/API.md).
 
 ## Hosting Pictesa for others
 

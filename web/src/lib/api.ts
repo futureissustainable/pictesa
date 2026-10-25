@@ -5,6 +5,7 @@ import type {
   Collection,
   Spend,
   Character,
+  CharacterKind,
   AssetDetail,
   AssetQuery,
   GenerationRequest,
@@ -42,6 +43,16 @@ export class ApiError extends Error {
     this.field = field;
     this.errors = errors;
   }
+}
+
+/** Fields a character or brand kit can set. */
+export interface CharacterBody {
+  name?: string;
+  description?: string;
+  asset_ids?: string[];
+  kind?: CharacterKind;
+  colors?: string[];
+  words?: string;
 }
 
 export const OFFLINE_MESSAGE = "Pictesa is not answering. Check that the server is running.";
@@ -155,15 +166,15 @@ export const api = {
   expandCanvas: (assetId: string, padding: Padding) => request<{ image: Asset; mask: Asset }>("POST", `/api/assets/${id(assetId)}/expand`, padding),
 
   recipes: () => request<{ recipes: Recipe[] }>("GET", "/api/recipes"),
-  runRecipe: (recipeId: string, body: { values: Record<string, string>; inputs: Record<string, string[]>; models?: Record<string, string> }) =>
+  runRecipe: (recipeId: string, body: { values: Record<string, string | string[]>; inputs: Record<string, string[]>; models?: Record<string, string>; character?: string }) =>
     request<RecipeRun>("POST", `/api/recipes/run/${encodeURI(recipeId)}`, body),
   recipeRuns: (limit = 30) => request<{ runs: RecipeRun[] }>("GET", withQuery("/api/recipes/runs", { limit })),
   recipeRun: (runId: string) => request<RecipeRun>("GET", `/api/recipes/runs/${id(runId)}`),
   cancelRun: (runId: string) => request<RecipeRun>("POST", `/api/recipes/runs/${id(runId)}/cancel`),
 
   characters: () => request<{ characters: Character[] }>("GET", "/api/characters"),
-  createCharacter: (body: { name: string; description?: string; asset_ids: string[] }) => request<Character>("POST", "/api/characters", body),
-  updateCharacter: (characterId: string, patch: { name?: string; description?: string; asset_ids?: string[] }) =>
+  createCharacter: (body: CharacterBody & { name: string; asset_ids: string[] }) => request<Character>("POST", "/api/characters", body),
+  updateCharacter: (characterId: string, patch: CharacterBody) =>
     request<Character>("PATCH", `/api/characters/${id(characterId)}`, patch),
   deleteCharacter: (characterId: string) => request<void>("DELETE", `/api/characters/${id(characterId)}`),
 

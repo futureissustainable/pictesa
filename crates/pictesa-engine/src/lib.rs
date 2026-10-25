@@ -14,6 +14,7 @@ pub mod jobs;
 pub mod leaderboard;
 pub mod library;
 pub mod netguard;
+pub mod packs;
 pub mod presets;
 pub mod queue;
 pub mod recipes;
@@ -124,6 +125,7 @@ pub(crate) struct Inner {
     pub crypto: crypto::Crypto,
     pub presets: Vec<Preset>,
     pub recipes: Vec<recipes::Recipe>,
+    pub packs: Vec<packs::Pack>,
     pub billing: billing::BillingConfig,
     /// Client for provider API calls.
     pub http: reqwest::Client,
@@ -167,6 +169,7 @@ impl Engine {
         let catalog = catalog::Catalog::new(pictesa_providers::registry());
         let presets = presets::load(&cfg.preset_dirs);
         let recipes = recipes::load(&[cfg.data_dir.join("recipes")]);
+        let packs = packs::load(&[cfg.data_dir.join("packs")]);
         let ua = format!("pictesa/{}", env!("CARGO_PKG_VERSION"));
         let http = reqwest::Client::builder()
             .user_agent(&ua)
@@ -189,6 +192,7 @@ impl Engine {
             crypto,
             presets,
             recipes,
+            packs,
             billing: billing::BillingConfig::from_env(),
             http,
             download,
@@ -262,6 +266,38 @@ impl Engine {
     pub(crate) fn emit(&self, user_id: &str, kind: &'static str, data: serde_json::Value) {
         let _ = self.inner.events.send(Event { user_id: user_id.to_string(), kind, data });
     }
+}
+
+/// Built-in JSON entries plus the `*.json` files in `dirs`, each holding an array. A file entry
+/// replaces an earlier entry with the same key. Entries `keep` refuses (it logs why) are skipped.
+pub(crate) fn load_json<T: serde::de::DeserializeOwned>(builtin: &str, dirs: &[PathBuf], what: &str, key: impl Fn(&T) -> String, keep: impl Fn(&T, &str) -> bool) -> Vec<T> {
+    let mut out: Vec<T> = serde_json::from_str::<Vec<T>>(builtin)
+        .unwrap_or_else(|e| {
+            tracing::error!("built-in {what} are invalid: {e}");
+            Vec::new()
+        })
+        .into_iter()
+        .filter(|t| keep(t, "the built-ins"))
+        .collect();
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str::<Vec<T>>(&t).map_err(|e| e.to_string())) {
+                Ok(list) => {
+                    for t in list.into_iter().filter(|t| keep(t, &path.display().to_string())) {
+                        out.retain(|q| key(q) != key(&t));
+                        out.push(t);
+                    }
+                }
+                Err(err) => tracing::warn!("skipping {what} file {}: {err}", path.display()),
+            }
+        }
+    }
+    out
 }
 
 async fn open_db(path: &Path) -> anyhow::Result<SqlitePool> {

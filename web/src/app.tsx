@@ -14,7 +14,7 @@ import { Notices } from "./ui/notices";
 
 const CreatePage = lazy(() => import("./pages/create/create-page"));
 const LibraryPage = lazy(() => import("./pages/library/library-page"));
-const RecipesPage = lazy(() => import("./pages/recipes/recipes-page"));
+const AppsPage = lazy(() => import("./pages/apps/apps-page"));
 const CharactersPage = lazy(() => import("./pages/characters/characters-page"));
 const SettingsPage = lazy(() => import("./pages/settings/settings-page"));
 const AuthPage = lazy(() => import("./pages/auth/auth-page"));
@@ -46,7 +46,7 @@ const settingsItem: NavItem = { id: "settings", label: "Settings", icon: "tune",
 const mobileItems = [primary[0]!, primary[1]!, collections[1]!, settingsItem];
 
 function sectionOf(url: URL): Section {
-  if (url.pathname === "/" || url.pathname === "/recipes" || url.pathname === "/edit") return "create";
+  if (url.pathname === "/" || url.pathname === "/apps" || url.pathname === "/recipes" || url.pathname === "/edit") return "create";
   if (url.pathname.startsWith("/settings")) return "settings";
   if (url.pathname === "/characters") return "characters";
   if (url.pathname === "/library") {
@@ -139,9 +139,9 @@ function Shell({ me }: { me: Me }) {
     if (url.pathname === "/login" || url.pathname === "/signup") navigate("/", { replace: true });
   }, [url.pathname]);
 
-  const recipes = url.pathname === "/recipes";
+  const apps = url.pathname === "/apps" || url.pathname === "/recipes";
   const editing = url.pathname === "/edit";
-  const pageTitle = recipes ? "Recipes" : editing ? "Edit" : titles[section];
+  const pageTitle = apps ? "Apps" : editing ? "Edit" : titles[section];
   useEffect(() => {
     document.title = `${pageTitle} | Pictesa`;
   }, [pageTitle]);
@@ -190,8 +190,8 @@ function Shell({ me }: { me: Me }) {
               </div>
             }
           >
-            {recipes ? (
-              <RecipesPage />
+            {apps ? (
+              <AppsPage />
             ) : editing ? (
               <EditPage />
             ) : section === "create" ? (
