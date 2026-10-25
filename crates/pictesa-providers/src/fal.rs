@@ -180,6 +180,8 @@ fn price_of(p: &Value) -> Option<Pricing> {
             note: "Priced by usage on fal".into(),
         }
     } else {
+        // fal names units in the plural ("compute seconds", "credits"); "1000 characters" stays.
+        let unit = if unit.starts_with(|c: char| c.is_ascii_digit()) { &unit } else { unit.strip_suffix('s').unwrap_or(&unit) };
         Pricing::Variable {
             note: format!("${usd} per {unit}"),
         }
@@ -623,5 +625,6 @@ mod tests {
         assert!(matches!(price(0.01625, "seconds"), Pricing::PerSecond { .. }));
         assert!(matches!(price(1.0, "units"), Pricing::Variable { note } if note == "Priced by usage on fal"));
         assert!(matches!(price(0.0214, "1000 tokens"), Pricing::Variable { note } if note == "$0.0214 per 1000 tokens"));
+        assert!(matches!(price(0.00125, "compute seconds"), Pricing::Variable { note } if note == "$0.00125 per compute second"));
     }
 }
