@@ -192,7 +192,7 @@ async fn edit_canvas_flows_run_on_the_mock_and_record_the_source() {
     image::DynamicImage::ImageRgba8(stroke).write_to(&mut std::io::Cursor::new(&mut painted), image::ImageFormat::Png).unwrap();
     let mask = e.save_mask(LOCAL_USER, &source.id, painted).await.unwrap();
     assert_eq!((mask.width, mask.height, mask.source.as_str()), (Some(64), Some(32), "edit"));
-    assert_eq!(mask.origin_id.as_deref(), Some(source.id.as_str()));
+    assert_eq!(mask.made_from.as_deref(), Some(source.id.as_str()));
     let inpaint = run("mock:image", "a red door", vec![input(&source.id, InputRole::Reference), input(&mask.id, InputRole::Mask)]);
     let created = e.create_generation(LOCAL_USER, inpaint).await.expect("a mask is accepted");
     let job = e.wait_job(LOCAL_USER, &created.jobs[0].id, Duration::from_secs(90)).await.unwrap();
@@ -248,4 +248,99 @@ fn png() -> Vec<u8> {
     let img = image::RgbImage::from_pixel(8, 8, image::Rgb([242, 105, 61]));
     image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
     out
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn batch_speed_halves_estimates_and_hosted_wallet_charges() {
+    let e = engine("batch-speed", Mode::Hosted).await;
+    let user = e.signup("batch@example.com", "correct horse battery", None).await.unwrap();
+    e.grant("batch@example.com", 1.0, "test").await.unwrap();
+    let standard = e.create_generation(&user.id, req("mock:image", "standard")).await.unwrap();
+    let mut request = req("mock:image", "batch");
+    request.params.insert("speed".into(), json!("batch"));
+    let batch = e.create_generation(&user.id, request).await.unwrap();
+    assert_eq!(standard.jobs[0].cost_usd, Some(0.0125));
+    assert_eq!(batch.jobs[0].cost_usd, Some(0.00625));
+    let job = e.wait_job(&user.id, &batch.jobs[0].id, Duration::from_secs(30)).await.unwrap();
+    assert_eq!(job.status, JobStatus::Succeeded, "{:?}", job.error);
+    assert_eq!(job.outputs.len(), 1);
+    // BillingView rounds to four decimals; verify the actual stored micro-dollar amounts.
+    let balance: i64 = sqlx::query_scalar("SELECT balance_micros FROM wallets WHERE user_id = ?")
+        .bind(&user.id).fetch_one(e.db()).await.unwrap();
+    let charge: i64 = sqlx::query_scalar("SELECT amount_micros FROM ledger WHERE job_id = ?")
+        .bind(&job.id).fetch_one(e.db()).await.unwrap();
+    assert_eq!(balance, 981_250, "standard $0.0125 plus batch $0.00625");
+    assert_eq!(charge, -6250);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn imports_deduplicate_fill_metadata_and_search_with_user_isolation() {
+    use pictesa_engine::{AssetFilter, ImportMetadata};
+    let e = engine("import-metadata", Mode::Hosted).await;
+    let user = e.signup("import@example.com", "correct horse battery", None).await.unwrap();
+    let first = e.upload(&user.id, &png(), Some("outside.png"), None).await.unwrap();
+    let meta = ImportMetadata {
+        prompt: Some("a lighthouse in moonlight".into()), negative_prompt: Some("fog".into()),
+        origin: Some("gemini-api".into()), model: Some("mock:image".into()), model_label: Some("Outside model".into()),
+        source_url: Some("https://example.com/source".into()),
+        params: serde_json::from_value(json!({"seed":42,"nested":{"quality":"high"},"nullable":null,"quoted.\"key":true})).unwrap(),
+    };
+    let saved = e.upload_with_metadata(&user.id, &png(), Some("again.png"), None, &meta).await.unwrap();
+    assert_eq!(saved.id, first.id);
+    assert_eq!(saved.prompt, meta.prompt);
+    assert_eq!(saved.negative_prompt, meta.negative_prompt);
+    assert_eq!(saved.origin, meta.origin);
+    assert_eq!(saved.model_label, meta.model_label);
+    assert_eq!(saved.source_url, meta.source_url);
+    assert_eq!(saved.params, meta.params);
+    assert!(saved.job_id.is_none());
+    let conflicting = ImportMetadata { prompt: Some("replacement".into()), params: serde_json::from_value(json!({"seed":9,"new":3})).unwrap(), ..Default::default() };
+    let saved = e.upload_with_metadata(&user.id, &png(), None, None, &conflicting).await.unwrap();
+    assert_eq!(saved.prompt, meta.prompt);
+    assert_eq!(saved.params["seed"], 42);
+    assert_eq!(saved.params["new"], 3);
+    let (found, _) = e.assets(&user.id, &AssetFilter { q: Some("lighthouse".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].model, meta.model);
+    let (all, _) = e.assets(&user.id, &AssetFilter::default()).await.unwrap();
+    assert_eq!(all.len(), 1);
+    let other = e.signup("other-import@example.com", "correct horse battery", None).await.unwrap();
+    assert!(e.fill_asset_metadata(&other.id, &first.id, &meta).await.is_err());
+    let separate = e.upload(&other.id, &png(), None, None).await.unwrap();
+    assert_ne!(separate.id, first.id);
+    assert!(separate.prompt.is_none());
+    let too_large = ImportMetadata { prompt: Some("x".repeat(20_001)), ..Default::default() };
+    assert!(e.upload_with_metadata(&user.id, &png(), None, None, &too_large).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn accepted_batch_resumes_after_restart_beyond_the_standard_runtime() {
+    use pictesa_core::{Ctx, GenerationRequest, Provider, Submission};
+    std::env::set_var("PICTESA_MOCK", "1");
+    let config = Config::local(temp_dir("batch-restart"));
+    let e = Engine::open(config.clone()).await.unwrap();
+    let mut request = req("mock:image", "restart batch");
+    request.params.insert("speed".into(), json!("batch"));
+    let created = e.create_generation(LOCAL_USER, request).await.unwrap();
+    let job = &created.jobs[0];
+    let provider = pictesa_providers::mock::Mock;
+    let context = Ctx { http: reqwest::Client::new(), creds: Default::default() };
+    let spec = e.model(LOCAL_USER, "mock:image").await.unwrap();
+    let submitted = provider.submit(&context, &spec, &GenerationRequest {
+        job_id: job.id.clone(), model: "image".into(), prompt: job.prompt.clone(),
+        negative_prompt: None, params: job.params.clone(), inputs: vec![], num_outputs: 1,
+    }).await.unwrap();
+    let Submission::Pending(handle) = submitted else { panic!("mock must queue"); };
+    sqlx::query("UPDATE jobs SET status = 'running', remote = ?, attempts = 1, started_at = ?, updated_at = 0, owner = 'dead-process' WHERE id = ?")
+        .bind(serde_json::to_string(&handle).unwrap())
+        .bind(pictesa_core::now_ms() - 4 * 3600 * 1000).bind(&job.id).execute(e.db()).await.unwrap();
+    let id = job.id.clone();
+    drop(e);
+    let restarted = Engine::open(config).await.unwrap();
+    restarted.start();
+    let result = restarted.wait_job(LOCAL_USER, &id, Duration::from_secs(30)).await.unwrap();
+    assert_eq!(result.status, JobStatus::Succeeded, "{:?}", result.error);
+    assert_eq!(result.attempts, 1, "accepted batch must be polled, never resubmitted");
+    assert_eq!(result.outputs.len(), 1);
+    assert_eq!(result.cost_usd, Some(0.005));
 }

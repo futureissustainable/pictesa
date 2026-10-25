@@ -10,7 +10,7 @@ import { Link, navigate } from "../../lib/router";
 import { useSession } from "../../lib/session";
 import { cliCommand, curlCommand, requestFromJob } from "../../lib/snippets";
 import { useStore } from "../../lib/store";
-import type { Asset, AssetDetail, Job, ModelSpec } from "../../lib/types";
+import type { Asset, AssetDetail, Job, ModelSpec, ParamValue } from "../../lib/types";
 import { closeViewer, sequence, stepViewer } from "../../lib/viewer";
 import { assetTitle } from "../../lib/names";
 import { CodeBlock, CopyButton } from "../../ui/code";
@@ -159,7 +159,8 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
   const presets = usePresets(job?.output ?? asset.kind).data;
   const [working, setWorking] = useState(false);
   const models: ModelSpec[] = useMemo(() => [...(image.data ?? []), ...(video.data ?? []), ...(audio.data ?? [])], [image.data, video.data, audio.data]);
-  const spec = useFullModel(job ? models.find((model) => model.id === job.model) : undefined).spec;
+  const listedModel = models.find((model) => model.id === (job?.model ?? asset.model));
+  const spec = useFullModel(listedModel).spec;
   const uses = useMemo(() => inputUses(asset.kind), [asset.kind, models]);
   const trashed = Boolean(asset.deleted_at);
   const request = job ? requestFromJob(job) : null;
@@ -176,7 +177,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
 
   const params = job
     ? Object.entries(job.params ?? {}).filter(([key, value]) => value !== null && value !== "" && key !== "width" && key !== "height")
-    : [];
+    : Object.entries(asset.params ?? {}).filter(([, value]) => value !== null && value !== "");
 
   return (
     <div className="viewer-body">
@@ -226,7 +227,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
         </div>
       ) : (
         <div className="detail-actions">
-          {job && (
+          {(job || listedModel) && (
             <button type="button" className="text-button" disabled={working} onClick={() => void run(() => reuseSettings({ ...asset, job }))}>
               <Icon name="replay" />
               Reuse settings
@@ -276,13 +277,16 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
           <CopyButton text={job?.prompt || asset.prompt || ""} label="Copy prompt" />
         </section>
       )}
-      {job?.negative_prompt && (
+      {(job?.negative_prompt || asset.negative_prompt) && (
         <p className="detail-negative">
-          <span>Avoid</span> {job.negative_prompt}
+          <span>Avoid</span> {job?.negative_prompt || asset.negative_prompt}
         </p>
       )}
 
       <dl className="detail-data">
+        {asset.origin && <div><dt>Origin</dt><dd>{asset.origin}</dd></div>}
+        {!job && asset.model && <div><dt>Model ID</dt><dd>{asset.model}</dd></div>}
+        {asset.source_url && <div><dt>Source</dt><dd>{/^https?:\/\//i.test(asset.source_url) ? <a href={asset.source_url} target="_blank" rel="noreferrer">{asset.source_url}</a> : asset.source_url}</dd></div>}
         <div>
           <dt>Created</dt>
           <dd>{formatDateTime(asset.created_at)}</dd>
@@ -322,19 +326,19 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
           return (
             <div key={key}>
               <dt>{paramSpec?.label ?? key.charAt(0).toUpperCase() + key.slice(1).replaceAll("_", " ")}</dt>
-              <dd>{paramSpec ? optionLabel(paramSpec, value) : String(value)}</dd>
+              <dd>{paramSpec && (value === null || ["string", "number", "boolean"].includes(typeof value)) ? optionLabel(paramSpec, value as ParamValue) : typeof value === "object" ? JSON.stringify(value) : String(value)}</dd>
             </div>
           );
         })}
       </dl>
 
-      {asset.origin_id && (
+      {asset.made_from && (
         <section className="detail-inputs" aria-label="Made from">
           <h3>Made from</h3>
           <ul>
             <li>
-              <button type="button" className="detail-input" onClick={() => stepViewer(asset.origin_id!)} aria-label="Open the original image">
-                <img src={`/thumbs/${encodeURIComponent(asset.origin_id)}`} alt="" loading="lazy" onError={(event) => (event.currentTarget.style.visibility = "hidden")} />
+              <button type="button" className="detail-input" onClick={() => stepViewer(asset.made_from!)} aria-label="Open the original image">
+                <img src={`/thumbs/${encodeURIComponent(asset.made_from)}`} alt="" loading="lazy" onError={(event) => (event.currentTarget.style.visibility = "hidden")} />
                 <span>Original</span>
               </button>
             </li>

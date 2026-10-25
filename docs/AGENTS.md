@@ -46,3 +46,17 @@ See [API.md](API.md). Events stream from `GET /api/events` (server-sent events),
 ## Costs
 
 Generations on paid providers cost money. Every model lists its published price (`pricing`), and every job records an estimate (`cost_usd`). Local models (ComfyUI, stable-diffusion.cpp) are free to run.
+
+## Save results from other tools
+
+Save images made in ChatGPT, Gemini API scripts or another studio with their original prompt and settings:
+
+```bash
+pictesa import result.png --prompt-file prompt.txt --origin gemini-api --model google:gemini-3-pro-image --label "Nano Banana Pro" -p resolution=2K --json
+```
+
+Pass multiple files to apply the same metadata to each. Use `--prompt` instead of `--prompt-file` for short text. Optional flags: `--negative TEXT`, `--source-url URL`. The CLI uses the running server when reachable, else the local engine. JSON output is `{ "assets": [Asset] }`.
+
+MCP `import_asset` accepts `path` (local mode) or `url`, plus `prompt`, `negative_prompt`, `origin`, `model`, `model_label`, `params` (object) and `source_url`. It returns the saved asset with its metadata. The library stores duplicate content once per user and only fills missing metadata on reimport. A catalog model ID enables **Reuse settings**; an unknown ID or a display label still records how the file was made. Imported prompts are searchable with `list_assets`.
+
+For nonurgent OpenAI or Gemini image generation, pass `params: { "speed": "batch" }` or CLI `-p speed=batch`. Batch costs half the standard price and may take up to 24 hours. Use `get_job` or `wait_for_job` again when the wait times out; do not resubmit accepted jobs.

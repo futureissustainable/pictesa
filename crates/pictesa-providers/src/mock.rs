@@ -157,6 +157,7 @@ impl Provider for Mock {
                 .input(InputSlot::new(InputRole::Mask, MediaKind::Image, 1))
                 .param(common::aspect_ratio(common::IMAGE_RATIOS, "1:1"))
                 .param(pictesa_core::ParamSpec::seed())
+                .batch()
                 .max_outputs(4)
                 .pricing(Pricing::PerImage { usd: 0.01 })
                 .describe("Free fake model for trying Pictesa without keys. Returns a gradient. The price is fake and only used to test billing.")
@@ -200,7 +201,7 @@ impl Provider for Mock {
             format!("mock-{}", ulid::Ulid::new()),
             json!({
                 "started": now_ms().to_string(), "model": model.remote_id(), "prompt": req.prompt, "w": w, "h": h,
-                "n": req.num_outputs, "seconds": req.i64("duration").unwrap_or(2),
+                "n": req.num_outputs, "seconds": req.i64("duration").unwrap_or(2), "batch": model.is_batch(&req.params),
             }),
         )))
     }
@@ -276,5 +277,9 @@ impl Provider for Mock {
 
     fn poll_interval(&self, _attempt: u32) -> std::time::Duration {
         std::time::Duration::from_millis(400)
+    }
+
+    fn poll_interval_for(&self, _handle: &RemoteHandle, attempt: u32) -> std::time::Duration {
+        self.poll_interval(attempt)
     }
 }

@@ -135,7 +135,7 @@ A generation with `preset` appends `prompt_suffix` to the prompt and merges `par
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
-| POST | `/api/assets` | multipart `file` (repeatable) | `{ assets: [Asset] }` |
+| POST | `/api/assets` | multipart `file` (repeatable), optional `metadata` JSON or metadata text fields | `{ assets: [Asset] }` |
 | POST | `/api/assets/import` | `{ url }` | `{ assets: [Asset] }` |
 | GET | `/api/assets?kind=image&favorite=true&q=fog&model=fal:...&source=generated&trash=false&limit=60&before=<id>` | | `{ assets: [Asset], next }` |
 | GET | `/api/assets/{id}` | | `Asset & { job: Job\|null }` |
@@ -154,6 +154,26 @@ A generation with `preset` appends `prompt_suffix` to the prompt and merges `par
 }
 ```
 `q` searches prompts (SQLite FTS5). `source` also takes `edit` (see Edit helpers); without it, edit helpers are left out of the list.
+
+### Save results from other tools
+
+Both upload and URL import accept `prompt`, `negative_prompt`, `origin` (free text), `model` (optional catalog ID), `model_label`, `params` (a JSON object), and `source_url`. These fields are returned on `Asset`, including in events and MCP. No generation job is created. `q` finds imported prompts too. A matching catalog `model` enables **Reuse settings** in the viewer.
+
+For multipart upload, send one `metadata` JSON object or individual text fields (`params` must contain JSON). Fields may precede or follow the files; the same metadata applies to every file. Duplicate content returns the existing active asset for this user and only fills missing fields and parameter keys. Existing values stay unchanged. Other users' assets are separate. Text limits: prompt and negative prompt 20,000 characters each; origin 200; model and label 500; source URL 4,000. Params allow 64 keys and 64 KB.
+
+```bash
+curl -F 'file=@result.png' \
+  -F 'metadata={"prompt":"a cabin in fog","origin":"gemini-api","model":"google:gemini-3-pro-image","model_label":"Nano Banana Pro","params":{"resolution":"2K"}}' \
+  http://127.0.0.1:4747/api/assets
+```
+
+### Batch speed
+
+Models opt in with `meta.batch: true` and a `speed` parameter: `standard` (default) or `batch`. OpenAI and Google image models expose **Speed** with help text: Batch is half price and can take up to 24 hours. Set `params.speed` to `batch` on a generation. Fixed cost estimates and hosted wallet charges use half the standard price. Variable/token prices remain unknown and require the user's own key, as in Standard mode.
+
+Batch handles persist in the job database. The queue polls every 60 seconds and resumes accepted jobs after a restart. Cancellation uses the provider's batch cancellation route. The queue allows 25 hours including finalization. Cancellation after submission may still incur provider charges. The mock image model supports Batch for free testing and polls faster.
+
+Provider contracts: [OpenAI Batch API](https://developers.openai.com/api/docs/guides/batch), [Gemini REST Batch API](https://ai.google.dev/api/batch-api).
 
 ## Files
 
@@ -244,7 +264,7 @@ Named sets of reference images (a person, a product, a style) that any run can a
 Backends that stream in-progress images (ComfyUI) produce `event: preview` with `{ job_id, version, url }` while a job runs. Pictesa asks ComfyUI for sampler previews on every prompt, so a stock ComfyUI needs no `--preview-method` flag. `GET /api/generations/{id}/preview` returns the latest preview image (JPEG or PNG, not cached); it answers 404 when there is none. Previews disappear when the job ends.
 
 ### Edit helpers
-The studio's Edit view (inpaint, expand, relight, remove background) runs ordinary generations. Two routes prepare the files a mask-taking model needs. Both store PNGs with `source: "edit"` and `origin_id` set to the image they were made from; library lists leave them out unless `source=edit` is asked for.
+The studio's Edit view (inpaint, expand, relight, remove background) runs ordinary generations. Two routes prepare the files a mask-taking model needs. Both store PNGs with `source: "edit"` and `made_from` set to the image they were made from; library lists leave them out unless `source=edit` is asked for.
 
 | Method | Path | Body | Answer |
 |---|---|---|---|

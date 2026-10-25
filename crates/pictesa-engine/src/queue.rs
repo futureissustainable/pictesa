@@ -23,6 +23,8 @@ use crate::{
 
 /// Longest a single generation may run before we give up polling.
 const MAX_RUNTIME: Duration = Duration::from_secs(3 * 3600);
+// Allow the provider's 24-hour processing window plus time to finalize results.
+const MAX_BATCH_RUNTIME: Duration = Duration::from_secs(25 * 3600);
 const MAX_SUBMIT_ATTEMPTS: u32 = 4;
 const MAX_POLL_ERRORS: u32 = 30;
 /// A running job whose heartbeat is older than this has lost its process and can be adopted.
@@ -304,7 +306,9 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
 
     if outputs.is_none() {
         let handle = handle.expect("handle set when not done");
-        let started = tokio::time::Instant::now();
+        let batch = handle.data.get("batch").and_then(serde_json::Value::as_bool) == Some(true);
+        let runtime = if batch { MAX_BATCH_RUNTIME } else { MAX_RUNTIME };
+        let started_at = job.started_at.unwrap_or_else(now_ms);
         let mut attempt: u32 = 0;
         let mut errors: u32 = 0;
         let mut last: Option<(Option<f32>, Option<String>)> = None;
@@ -313,12 +317,13 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                 let _ = provider.cancel(&ctx, &handle).await;
                 return publish(engine, &job.id).await;
             }
-            if started.elapsed() > MAX_RUNTIME {
+            if now_ms().saturating_sub(started_at) as u64 > runtime.as_millis() as u64 {
                 let _ = provider.cancel(&ctx, &handle).await;
-                return fail(engine, &job, "timeout", "The provider did not finish within 3 hours.", false).await;
+                let message = if batch { "The batch provider did not finish within 25 hours." } else { "The provider did not finish within 3 hours." };
+                return fail(engine, &job, "timeout", message, false).await;
             }
             tokio::select! {
-                _ = tokio::time::sleep(provider.poll_interval(attempt)) => {}
+                _ = tokio::time::sleep(provider.poll_interval_for(&handle, attempt)) => {}
                 _ = token.cancelled() => continue,
             }
             attempt += 1;

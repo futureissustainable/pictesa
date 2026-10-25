@@ -99,6 +99,10 @@ pub struct AssetRow {
     pub source: String,
     pub model: Option<String>,
     pub prompt: Option<String>,
+    pub negative_prompt: Option<String>,
+    pub origin: Option<String>,
+    pub model_label: Option<String>,
+    pub params: String,
     pub favorite: bool,
     pub source_url: Option<String>,
     pub created_at: i64,
@@ -106,7 +110,7 @@ pub struct AssetRow {
     #[sqlx(default)]
     pub name: Option<String>,
     #[sqlx(default)]
-    pub origin_id: Option<String>,
+    pub made_from: Option<String>,
 }
 
 impl AssetRow {
@@ -125,11 +129,16 @@ impl AssetRow {
             job_id: self.job_id.clone(),
             model: self.model.clone(),
             prompt: self.prompt.clone(),
+            negative_prompt: self.negative_prompt.clone(),
+            origin: self.origin.clone(),
+            model_label: self.model_label.clone(),
+            params: serde_json::from_str(&self.params).unwrap_or_default(),
+            source_url: self.source_url.clone(),
             favorite: self.favorite,
             created_at: self.created_at,
             deleted_at: self.deleted_at,
             name: self.name.clone(),
-            origin_id: self.origin_id.clone(),
+            made_from: self.made_from.clone(),
         }
     }
 }

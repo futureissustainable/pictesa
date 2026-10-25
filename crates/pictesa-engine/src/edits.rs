@@ -1,6 +1,6 @@
 //! Helpers for the edit canvas: painted masks and expanded canvases. They are stored as library
 //! files with source `edit`, hidden from library lists, and remember the image they were made from
-//! (`origin_id`), so a run that uses them still shows where it came from.
+//! (`made_from`), so a run that uses them still shows where it came from.
 
 use std::io::Cursor;
 

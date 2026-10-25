@@ -37,7 +37,7 @@ fn image_spec(id: &str, name: &str) -> ModelSpec {
     m.pricing = Some(Pricing::Variable {
         note: "Google image token pricing".into(),
     });
-    m
+    m.batch()
 }
 fn video_spec(id: &str) -> ModelSpec {
     let mut m = ModelSpec::new(
@@ -139,6 +139,69 @@ fn image_body(req: &GenerationRequest, parts: Vec<Value>) -> Value {
     json!({"contents":[{"role":"user","parts":parts}],"generationConfig":config})
 }
 
+// REST shapes: https://ai.google.dev/api/batch-api (the SDK renames these fields).
+fn batch_body(req: &GenerationRequest, body: Value) -> Value {
+    json!({"batch":{"displayName":format!("pictesa-{}",req.job_id),"inputConfig":{"requests":{"requests":[
+        {"request":body,"metadata":{"key":req.job_id}}
+    ]}}}})
+}
+
+fn batch_handle(v: &Value) -> ProviderResult<RemoteHandle> {
+    let name = v["name"]
+        .as_str()
+        .filter(|s| s.starts_with("batches/"))
+        .ok_or_else(|| failure("Google returned no batch operation name"))?;
+    Ok(RemoteHandle::with(name, json!({"batch":true})))
+}
+
+fn batch_status(v: &Value) -> ProviderResult<PollStatus> {
+    if let Some(message) = v.pointer("/error/message").and_then(Value::as_str) {
+        return Ok(PollStatus::Failed(failure(message)));
+    }
+    let state = v
+        .pointer("/metadata/state")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if matches!(
+        state,
+        "BATCH_STATE_FAILED"
+            | "BATCH_STATE_CANCELLED"
+            | "BATCH_STATE_EXPIRED"
+            | "JOB_STATE_FAILED"
+            | "JOB_STATE_CANCELLED"
+            | "JOB_STATE_EXPIRED"
+    ) {
+        return Ok(PollStatus::Failed(failure(&format!(
+            "Google batch ended: {state}"
+        ))));
+    }
+    if v["done"].as_bool() != Some(true)
+        && !matches!(state, "BATCH_STATE_SUCCEEDED" | "JOB_STATE_SUCCEEDED")
+    {
+        return Ok(PollStatus::Running {
+            progress: None,
+            message: Some("Batch processing (up to 24 hours)".into()),
+        });
+    }
+    let responses = v
+        .pointer("/metadata/output/inlinedResponses/inlinedResponses")
+        .or_else(|| v.pointer("/response/inlinedResponses/inlinedResponses"))
+        .or_else(|| v.pointer("/response/output/inlinedResponses/inlinedResponses"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| failure("Google batch finished without inline responses"))?;
+    let mut outputs = Vec::new();
+    for response in responses {
+        if let Some(message) = response.pointer("/error/message").and_then(Value::as_str) {
+            return Ok(PollStatus::Failed(failure(message)));
+        }
+        outputs.extend(image_output(&response["response"])?);
+    }
+    if outputs.is_empty() {
+        return Err(failure("Google batch returned no images"));
+    }
+    Ok(PollStatus::Done(outputs))
+}
+
 #[async_trait]
 impl Provider for Google {
     fn info(&self) -> ProviderInfo {
@@ -188,7 +251,12 @@ impl Provider for Google {
                 {
                     // Google names a model and its preview the same; keep them apart in the picker.
                     let name = x.get("displayName").and_then(Value::as_str).unwrap_or(id);
-                    let name = if id.contains("preview") && !name.to_lowercase().contains("preview") { format!("{name} (preview)") } else { name.to_string() };
+                    let name = if id.contains("preview") && !name.to_lowercase().contains("preview")
+                    {
+                        format!("{name} (preview)")
+                    } else {
+                        name.to_string()
+                    };
                     Some(image_spec(id, &name))
                 } else if id.starts_with("veo-")
                     && methods
@@ -225,6 +293,23 @@ impl Provider for Google {
                 );
             }
             let body = image_body(req, parts);
+            if model.is_batch(&req.params) {
+                let body = batch_body(req, body);
+                if body.to_string().len() >= 20 * 1024 * 1024 {
+                    return Err(ProviderError::InvalidInput("Gemini inline batch requests must be smaller than 20 MB. Use fewer or smaller reference images.".into()));
+                }
+                let v = send_json(
+                    ctx.http
+                        .post(format!(
+                            "{API}/models/{}:batchGenerateContent",
+                            model.remote_id()
+                        ))
+                        .header("x-goog-api-key", key),
+                    &body,
+                )
+                .await?;
+                return Ok(Submission::Pending(batch_handle(&v)?));
+            }
             let v = send_json(
                 ctx.http
                     .post(format!(
@@ -287,6 +372,9 @@ impl Provider for Google {
                 .header("x-goog-api-key", key),
         )
         .await?;
+        if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+            return batch_status(&v);
+        }
         if !v.get("done").and_then(Value::as_bool).unwrap_or(false) {
             return Ok(PollStatus::Running {
                 progress: None,
@@ -297,6 +385,17 @@ impl Provider for Google {
             return Ok(PollStatus::Failed(failure(err)));
         }
         Ok(PollStatus::Done(video_output(&v, key)?))
+    }
+    async fn cancel(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<()> {
+        if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+            get_json(
+                ctx.http
+                    .post(format!("{API}/{}:cancel", handle.id))
+                    .header("x-goog-api-key", ctx.api_key()?),
+            )
+            .await?;
+        }
+        Ok(())
     }
 }
 
@@ -334,5 +433,55 @@ mod tests {
         assert!(
             matches!(&video_output(&v,"test-key").unwrap()[0],Output::Url{headers,..} if headers==&vec![("x-goog-api-key".into(),"test-key".into())])
         );
+    }
+    #[test]
+    fn batch_uses_rest_request_and_operation_shapes() {
+        let req = GenerationRequest {
+            job_id: "job-1".into(),
+            model: "google:gemini-3-pro-image".into(),
+            prompt: "draw".into(),
+            negative_prompt: None,
+            params: serde_json::from_value(json!({"speed":"batch","resolution":"2K"})).unwrap(),
+            inputs: vec![],
+            num_outputs: 1,
+        };
+        let body = batch_body(&req, image_body(&req, vec![json!({"text":"draw"})]));
+        assert_eq!(
+            body,
+            json!({"batch":{"displayName":"pictesa-job-1","inputConfig":{"requests":{"requests":[{
+                "metadata":{"key":"job-1"},"request":{"contents":[{"role":"user","parts":[{"text":"draw"}]}],
+                "generationConfig":{"responseModalities":["IMAGE"],"imageConfig":{"imageSize":"2K"}}}
+            }]}}}})
+        );
+        let h =
+            batch_handle(&json!({"name":"batches/abc","metadata":{"state":"BATCH_STATE_PENDING"}}))
+                .unwrap();
+        let h: RemoteHandle = serde_json::from_str(&serde_json::to_string(&h).unwrap()).unwrap();
+        assert_eq!(h.id, "batches/abc");
+        assert_eq!(
+            Google.poll_interval_for(&h, 0),
+            std::time::Duration::from_secs(60)
+        );
+        assert!(matches!(
+            batch_status(&json!({"name":h.id,"done":false})).unwrap(),
+            PollStatus::Running { .. }
+        ));
+        let response = json!({"done":true,"metadata":{"state":"BATCH_STATE_SUCCEEDED","output":{"inlinedResponses":{"inlinedResponses":[{
+            "metadata":{"key":"job-1"},"response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"YQ=="}}]}}]}
+        }]}}}});
+        assert!(
+            matches!(batch_status(&response).unwrap(), PollStatus::Done(out) if matches!(&out[0], Output::Bytes { data, mime } if data == b"a" && mime == "image/png"))
+        );
+        for response in [
+            json!({"done":true,"error":{"code":1,"message":"cancelled"}}),
+            json!({"done":true,"response":{"inlinedResponses":{"inlinedResponses":[{"error":{"code":3,"message":"bad input"}}]}}}),
+            json!({"metadata":{"state":"BATCH_STATE_EXPIRED"},"done":true}),
+        ] {
+            assert!(matches!(
+                batch_status(&response).unwrap(),
+                PollStatus::Failed(_)
+            ));
+        }
+        assert!(batch_status(&json!({"done":true,"response":{}})).is_err());
     }
 }

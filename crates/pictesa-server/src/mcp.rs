@@ -199,8 +199,14 @@ fn tools() -> Value {
         {
             "name": "import_asset",
             "title": "Add to library",
-            "description": "Add a local file (local mode) or a URL to the library, to use as an input.",
-            "inputSchema": { "type": "object", "properties": { "path": { "type": "string" }, "url": { "type": "string" } } }
+            "description": "Save an image or video from another tool with its prompt, model, settings and origin. Local paths work only in local mode. Reimports fill missing metadata without replacing existing values.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": { "type": "string" }, "url": { "type": "string" },
+                "prompt": { "type": "string" }, "negative_prompt": { "type": "string" },
+                "origin": { "type": "string" }, "model": { "type": "string" },
+                "model_label": { "type": "string" }, "params": { "type": "object" },
+                "source_url": { "type": "string" }
+            } }
         }
     ])
 }
@@ -221,6 +227,8 @@ async fn asset_json(ctx: &McpContext, a: &Asset) -> Value {
     let mut v = json!({
         "id": a.id, "kind": a.kind, "mime": a.mime, "width": a.width, "height": a.height,
         "duration_ms": a.duration_ms, "size": a.size, "model": a.model, "prompt": a.prompt, "url": a.url,
+        "negative_prompt": a.negative_prompt, "origin": a.origin, "model_label": a.model_label,
+        "params": a.params, "source_url": a.source_url,
     });
     if ctx.local_files {
         if let Ok((path, _, _)) = ctx.engine.asset_file(Some(&ctx.user_id), &a.id).await {
@@ -263,19 +271,19 @@ async fn resolve_input(ctx: &McpContext, item: &Value) -> Result<JobInput, Strin
         return Ok(JobInput { asset_id: a.id, role });
     }
     if let Some(path) = arg_str(item, "path") {
-        let a = import_path(ctx, path).await?;
+        let a = import_path(ctx, path, &pictesa_engine::ImportMetadata::default()).await?;
         return Ok(JobInput { asset_id: a.id, role });
     }
     Err("each input needs asset_id, url or path".into())
 }
 
-async fn import_path(ctx: &McpContext, path: &str) -> Result<Asset, String> {
+async fn import_path(ctx: &McpContext, path: &str, metadata: &pictesa_engine::ImportMetadata) -> Result<Asset, String> {
     if !ctx.local_files {
         return Err("file paths only work in local mode; pass a url instead".into());
     }
     let bytes = tokio::fs::read(path).await.map_err(|e| format!("cannot read {path}: {e}"))?;
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned());
-    ctx.engine.upload(&ctx.user_id, &bytes, name.as_deref(), None).await.map_err(err)
+    ctx.engine.upload_with_metadata(&ctx.user_id, &bytes, name.as_deref(), None, metadata).await.map_err(err)
 }
 
 async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, String> {
@@ -479,10 +487,11 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
             Ok(text(&v))
         }
         "import_asset" => {
+            let metadata: pictesa_engine::ImportMetadata = serde_json::from_value(args.clone()).map_err(|e| format!("invalid import metadata: {e}"))?;
             let a = if let Some(url) = arg_str(args, "url") {
-                e.import_url(user, url).await.map_err(err)?
+                e.import_url_with_metadata(user, url, &metadata).await.map_err(err)?
             } else if let Some(path) = arg_str(args, "path") {
-                import_path(ctx, path).await?
+                import_path(ctx, path, &metadata).await?
             } else {
                 return Err("pass path or url".into());
             };

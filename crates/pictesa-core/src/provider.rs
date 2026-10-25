@@ -193,6 +193,14 @@ pub trait Provider: Send + Sync + 'static {
     fn poll_interval(&self, attempt: u32) -> Duration {
         Duration::from_millis((800 + 400 * attempt as u64).min(5_000))
     }
+
+    fn poll_interval_for(&self, handle: &RemoteHandle, attempt: u32) -> Duration {
+        if handle.data.get("batch").and_then(Value::as_bool) == Some(true) {
+            Duration::from_secs(60)
+        } else {
+            self.poll_interval(attempt)
+        }
+    }
 }
 
 /// Reads an HTTP response, turning error statuses into [`ProviderError`] and parsing JSON on success.

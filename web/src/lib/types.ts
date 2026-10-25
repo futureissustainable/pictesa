@@ -193,10 +193,15 @@ export interface Asset {
   /** Original file name of uploads and imports. */
   name?: string | null;
   /** Edit helpers: the image this mask or expanded canvas was made from. */
-  origin_id?: string | null;
+  made_from?: string | null;
   job_id: string | null;
   model: string | null;
   prompt: string | null;
+  negative_prompt?: string | null;
+  origin?: string | null;
+  model_label?: string | null;
+  params?: Record<string, unknown>;
+  source_url?: string | null;
   favorite: boolean;
   created_at: number;
   deleted_at: number | null;
