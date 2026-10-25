@@ -254,9 +254,19 @@ fn image_thumb(src: &Path, dst: &Path) -> anyhow::Result<(u32, u32)> {
         std::fs::create_dir_all(parent)?;
     }
     let mut out = std::io::BufWriter::new(std::fs::File::create(dst)?);
-    let rgb = small.to_rgb8();
+    let rgb = if small.color().has_alpha() { on_checkerboard(&small.to_rgba8()) } else { small.to_rgb8() };
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 82).encode_image(&rgb)?;
     Ok((w, h))
+}
+
+/// JPEG thumbnails have no transparency: cut-outs show on a light checkerboard instead of black.
+fn on_checkerboard(img: &image::RgbaImage) -> image::RgbImage {
+    image::RgbImage::from_fn(img.width(), img.height(), |x, y| {
+        let [r, g, b, a] = img.get_pixel(x, y).0;
+        let back: u32 = if (x / 16 + y / 16) % 2 == 0 { 0xf2 } else { 0xe2 };
+        let mix = |c: u8| ((c as u32 * a as u32 + back * (255 - a as u32)) / 255) as u8;
+        image::Rgb([mix(r), mix(g), mix(b)])
+    })
 }
 
 /// Types Pictesa stores and serves. Nothing that a browser could execute (no SVG or HTML).

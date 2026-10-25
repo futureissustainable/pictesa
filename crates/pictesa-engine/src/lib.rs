@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod characters;
 pub mod creds;
 pub mod crypto;
+pub mod edits;
 pub mod enhance;
 pub mod files;
 pub mod jobs;

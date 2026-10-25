@@ -1917,6 +1917,7 @@ dependencies = [
  "bytes",
  "futures",
  "hmac",
+ "image",
  "jsonwebtoken",
  "pictesa-core",
  "reqwest",

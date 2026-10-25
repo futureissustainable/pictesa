@@ -224,7 +224,9 @@ impl Provider for OpenAI {
                 }
                 body["images"] = json!(images);
                 if let Some(mask) = req.input(InputRole::Mask) {
-                    body["mask"] = json!({"image_url":mask.url_or_data_uri().await?});
+                    let png = alpha_mask(&mask.bytes().await?)?;
+                    let uri = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png));
+                    body["mask"] = json!({"image_url":uri});
                 }
             } else if req.input(InputRole::Mask).is_some() {
                 return Err(ProviderError::InvalidInput(
@@ -320,9 +322,35 @@ impl Provider for OpenAI {
     }
 }
 
+/// OpenAI edits the mask's transparent pixels; Pictesa masks are white where to change. Masks that
+/// already carry transparency are taken as OpenAI-style and sent as they are.
+fn alpha_mask(bytes: &[u8]) -> ProviderResult<Vec<u8>> {
+    let img = image::load_from_memory(bytes).map_err(|e| ProviderError::InvalidInput(format!("the mask is not a readable image: {e}")))?;
+    let has_transparency = img.color().has_alpha() && img.to_rgba8().pixels().any(|p| p.0[3] < 255);
+    let out = if has_transparency {
+        img.to_rgba8()
+    } else {
+        let gray = img.to_luma8();
+        image::RgbaImage::from_fn(gray.width(), gray.height(), |x, y| image::Rgba([0, 0, 0, if gray.get_pixel(x, y).0[0] >= 128 { 0 } else { 255 }]))
+    };
+    let mut png = std::io::Cursor::new(Vec::new());
+    out.write_to(&mut png, image::ImageFormat::Png).map_err(|e| ProviderError::InvalidInput(format!("could not prepare the mask: {e}")))?;
+    Ok(png.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn white_mask_areas_become_transparent_for_openai() {
+        let mut mask = image::GrayImage::new(4, 2);
+        mask.put_pixel(1, 0, image::Luma([255]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        mask.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let out = image::load_from_memory(&alpha_mask(png.get_ref()).unwrap()).unwrap().to_rgba8();
+        assert_eq!(out.get_pixel(1, 0).0[3], 0, "painted: edit here");
+        assert_eq!(out.get_pixel(0, 0).0[3], 255, "unpainted: keep");
+    }
     #[test]
     fn parses_recorded_image() {
         let v = json!({"data":[{"b64_json":"YQ=="}]});

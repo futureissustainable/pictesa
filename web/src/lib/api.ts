@@ -11,6 +11,7 @@ import type {
   MediaKind,
   Me,
   ModelSpec,
+  Padding,
   Preset,
   ProviderState,
   Recipe,
@@ -75,8 +76,11 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
       method,
       signal,
       credentials: "same-origin",
-      headers: body === undefined ? { Accept: "application/json" } : { Accept: "application/json", "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers:
+        body === undefined
+          ? { Accept: "application/json" }
+          : { Accept: "application/json", "Content-Type": body instanceof Blob ? body.type || "application/octet-stream" : "application/json" },
+      body: body === undefined ? undefined : body instanceof Blob ? body : JSON.stringify(body),
     });
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -141,6 +145,9 @@ export const api = {
     request<void>("DELETE", withQuery(`/api/assets/${id(assetId)}`, { permanent })),
   restoreAsset: (assetId: string) => request<Asset>("POST", `/api/assets/${id(assetId)}/restore`),
   importAsset: (url: string) => request<{ assets: Asset[] }>("POST", "/api/assets/import", { url }),
+  /** Stores a painted mask (any image; paint is its opaque or light pixels) for an image. */
+  saveMask: (assetId: string, mask: Blob) => request<Asset>("POST", `/api/assets/${id(assetId)}/mask`, mask),
+  expandCanvas: (assetId: string, padding: Padding) => request<{ image: Asset; mask: Asset }>("POST", `/api/assets/${id(assetId)}/expand`, padding),
 
   recipes: () => request<{ recipes: Recipe[] }>("GET", "/api/recipes"),
   runRecipe: (recipeId: string, body: { values: Record<string, string>; inputs: Record<string, string[]>; models?: Record<string, string> }) =>

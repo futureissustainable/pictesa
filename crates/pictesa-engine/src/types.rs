@@ -97,6 +97,9 @@ pub struct Asset {
     /// Original file name for uploads and imports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Edit helpers (source `edit`): the image this mask or expanded canvas was made from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_id: Option<String>,
 }
 
 /// Body of `POST /api/generations`.

@@ -143,7 +143,7 @@ A generation with `preset` appends `prompt_suffix` to the prompt and merges `par
   "favorite": false, "created_at": 0, "deleted_at": null
 }
 ```
-`q` searches prompts (SQLite FTS5).
+`q` searches prompts (SQLite FTS5). `source` also takes `edit` (see Edit helpers); without it, edit helpers are left out of the list.
 
 ## Files
 
@@ -232,3 +232,16 @@ Named sets of reference images (a person, a product, a style) that any run can a
 
 ### Live previews
 Backends that stream in-progress images (ComfyUI) produce `event: preview` with `{ job_id, version, url }` while a job runs. Pictesa asks ComfyUI for sampler previews on every prompt, so a stock ComfyUI needs no `--preview-method` flag. `GET /api/generations/{id}/preview` returns the latest preview image (JPEG or PNG, not cached); it answers 404 when there is none. Previews disappear when the job ends.
+
+### Edit helpers
+The studio's Edit view (inpaint, expand, relight, remove background) runs ordinary generations. Two routes prepare the files a mask-taking model needs. Both store PNGs with `source: "edit"` and `origin_id` set to the image they were made from; library lists leave them out unless `source=edit` is asked for.
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| POST | `/api/assets/{id}/mask` | the painted mask as an image file (`Content-Type: image/png`, up to 32 MB) | `201 Asset` |
+| POST | `/api/assets/{id}/expand` | `{ left, top, right, bottom }` (pixels to add per side) | `201 { image: Asset, mask: Asset }` |
+
+- A mask marks paint with opaque pixels (a transparent canvas export) or with light pixels (a black and white image). It is stored black and white at the image's own size, white = change. A mask with no paint is refused with `field: "mask"`.
+- `expand` repeats the edge pixels into the new area and returns a mask that is white over the new area, reaching a few pixels into the old edge so the seam blends. The result is at most 8192 px per side and 24 megapixels.
+- Then run any model with a `mask` input: `inputs: [{ asset_id: <image or expanded image>, role: "reference" }, { asset_id: <mask>, role: "mask" }]`. Relight and background removal need no helper: send the image itself.
+

@@ -6,7 +6,7 @@ import { subscribeEvents } from "../../lib/events";
 import { bytes, clock, dimensions, formatDate, formatDateTime, kindLabel, money, optionLabel, roleLabel } from "../../lib/format";
 import { prefersReducedMotion } from "../../lib/prefs";
 import { inputUses, reuseSettings, sendToCreate } from "../../lib/reuse";
-import { Link } from "../../lib/router";
+import { Link, navigate } from "../../lib/router";
 import { useSession } from "../../lib/session";
 import { cliCommand, curlCommand, requestFromJob } from "../../lib/snippets";
 import { useStore } from "../../lib/store";
@@ -232,6 +232,12 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
               Reuse settings
             </button>
           )}
+          {asset.kind === "image" && (
+            <button type="button" className="text-button" onClick={() => navigate(`/edit?image=${encodeURIComponent(asset.id)}`)}>
+              <Icon name="edit" />
+              Edit
+            </button>
+          )}
           {asset.kind === "image" && uses.some((use) => use.mode === "video" && use.role === "start_frame") && (
             <button type="button" className="text-button" disabled={working} onClick={() => void run(() => sendToCreate(asset, "video", "start_frame"))}>
               <Icon name="animation" />
@@ -322,6 +328,19 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
         })}
       </dl>
 
+      {asset.origin_id && (
+        <section className="detail-inputs" aria-label="Made from">
+          <h3>Made from</h3>
+          <ul>
+            <li>
+              <button type="button" className="detail-input" onClick={() => stepViewer(asset.origin_id!)} aria-label="Open the original image">
+                <img src={`/thumbs/${encodeURIComponent(asset.origin_id)}`} alt="" loading="lazy" onError={(event) => (event.currentTarget.style.visibility = "hidden")} />
+                <span>Original</span>
+              </button>
+            </li>
+          </ul>
+        </section>
+      )}
       {job && job.inputs?.length > 0 && (
         <section className="detail-inputs" aria-label="Inputs">
           <h3>Inputs</h3>

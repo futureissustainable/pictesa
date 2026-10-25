@@ -10,7 +10,7 @@ const PAGE = 60;
 export function matchesQuery(asset: Asset, query: AssetQuery): boolean {
   if (query.kind && asset.kind !== query.kind) return false;
   if (query.favorite && !asset.favorite) return false;
-  if (query.source && asset.source !== query.source) return false;
+  if (query.source ? asset.source !== query.source : asset.source === "edit") return false;
   if (query.model && asset.model !== query.model) return false;
   return Boolean(query.trash) === Boolean(asset.deleted_at);
 }

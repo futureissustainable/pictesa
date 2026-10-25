@@ -20,6 +20,7 @@ const SettingsPage = lazy(() => import("./pages/settings/settings-page"));
 const AuthPage = lazy(() => import("./pages/auth/auth-page"));
 const TokenPage = lazy(() => import("./pages/auth/auth-page").then((module) => ({ default: module.TokenPage })));
 const Viewer = lazy(() => import("./pages/viewer/viewer"));
+const EditPage = lazy(() => import("./pages/edit/edit-page"));
 
 type Section = "create" | "library" | "favorites" | "uploads" | "characters" | "trash" | "settings" | "none";
 
@@ -44,7 +45,7 @@ const settingsItem: NavItem = { id: "settings", label: "Settings", icon: "tune",
 const mobileItems = [primary[0]!, primary[1]!, collections[0]!, settingsItem];
 
 function sectionOf(url: URL): Section {
-  if (url.pathname === "/" || url.pathname === "/recipes") return "create";
+  if (url.pathname === "/" || url.pathname === "/recipes" || url.pathname === "/edit") return "create";
   if (url.pathname.startsWith("/settings")) return "settings";
   if (url.pathname === "/characters") return "characters";
   if (url.pathname === "/library") {
@@ -136,9 +137,11 @@ function Shell({ me }: { me: Me }) {
   }, [url.pathname]);
 
   const recipes = url.pathname === "/recipes";
+  const editing = url.pathname === "/edit";
+  const pageTitle = recipes ? "Recipes" : editing ? "Edit" : titles[section];
   useEffect(() => {
-    document.title = `${recipes ? "Recipes" : titles[section]} | Pictesa`;
-  }, [section, recipes]);
+    document.title = `${pageTitle} | Pictesa`;
+  }, [pageTitle]);
 
   const navButton = (item: NavItem) => (
     <Link
@@ -174,7 +177,7 @@ function Shell({ me }: { me: Me }) {
         <div className="sidebar-bottom">{navButton(settingsItem)}</div>
       </aside>
       <main className="main" id="workspace">
-        <Topbar title={recipes ? "Recipes" : titles[section]} me={me} />
+        <Topbar title={pageTitle} me={me} />
         <ErrorBoundary key={section}>
           <Suspense
             fallback={
@@ -186,6 +189,8 @@ function Shell({ me }: { me: Me }) {
           >
             {recipes ? (
               <RecipesPage />
+            ) : editing ? (
+              <EditPage />
             ) : section === "create" ? (
               <CreatePage />
             ) : section === "settings" ? (

@@ -508,15 +508,17 @@ impl Engine {
     // ---------- assets ----------
 
     pub(crate) async fn insert_asset(&self, user: &str, stored: &Stored, source: &str, job: Option<&JobRow>, source_url: Option<&str>) -> Result<Asset> {
-        self.insert_named_asset(user, stored, source, job, source_url, None).await
+        self.insert_named_asset(user, stored, source, job, source_url, None, None).await
     }
 
-    pub(crate) async fn insert_named_asset(&self, user: &str, stored: &Stored, source: &str, job: Option<&JobRow>, source_url: Option<&str>, name: Option<&str>) -> Result<Asset> {
+    /// `origin` is set on edit helpers: the asset they were made from.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn insert_named_asset(&self, user: &str, stored: &Stored, source: &str, job: Option<&JobRow>, source_url: Option<&str>, name: Option<&str>, origin: Option<&str>) -> Result<Asset> {
         let id = crate::new_id();
         let name = name.map(|n| n.chars().filter(|c| !c.is_control()).take(200).collect::<String>()).filter(|n| !n.trim().is_empty());
         sqlx::query(
-            "INSERT INTO assets (id, user_id, job_id, kind, mime, hash, ext, size, width, height, duration_ms, has_thumb, source, model, prompt, source_url, created_at, name)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO assets (id, user_id, job_id, kind, mime, hash, ext, size, width, height, duration_ms, has_thumb, source, model, prompt, source_url, created_at, name, origin_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(user)
@@ -536,6 +538,7 @@ impl Engine {
         .bind(source_url)
         .bind(now_ms())
         .bind(name)
+        .bind(origin)
         .execute(&self.inner.db)
         .await?;
         let asset = store::asset_row(&self.inner.db, user, &id).await?.to_asset();
@@ -548,7 +551,7 @@ impl Engine {
             return Err(EngineError::invalid("The file is empty.", Some("file")));
         }
         let stored = self.inner.files.store_bytes(bytes, mime, file_name, false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("file")))?;
-        self.insert_named_asset(user, &stored, "upload", None, None, file_name).await
+        self.insert_named_asset(user, &stored, "upload", None, None, file_name, None).await
     }
 
     /// Stores an upload straight from the request body stream (never buffered in memory).
@@ -557,7 +560,7 @@ impl Engine {
         S: futures::Stream<Item = std::result::Result<bytes::Bytes, std::io::Error>> + Unpin,
     {
         let stored = self.inner.files.store_stream(stream, None, file_name, false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("file")))?;
-        self.insert_named_asset(user, &stored, "upload", None, None, file_name).await
+        self.insert_named_asset(user, &stored, "upload", None, None, file_name, None).await
     }
 
     pub async fn import_url(&self, user: &str, url: &str) -> Result<Asset> {
@@ -577,7 +580,7 @@ impl Engine {
         }
         let stored = self.inner.files.store_response(resp, Some(parsed.path()), false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("url")))?;
         let name = parsed.path_segments().and_then(|mut s| s.next_back()).filter(|n| !n.is_empty()).map(String::from);
-        self.insert_named_asset(user, &stored, "import", None, Some(url), name.as_deref()).await
+        self.insert_named_asset(user, &stored, "import", None, Some(url), name.as_deref(), None).await
     }
 
     pub async fn assets(&self, user: &str, f: &AssetFilter) -> Result<(Vec<Asset>, Option<String>)> {
@@ -591,7 +594,7 @@ impl Engine {
                AND (? IS NULL OR a.kind = ?)
                AND (? IS NULL OR a.favorite = ?)
                AND (? IS NULL OR a.model = ?)
-               AND (? IS NULL OR a.source = ?)
+               AND ((? IS NULL AND a.source != 'edit') OR a.source = ?)
                AND (? IS NULL OR a.id < ?)
                AND (? IS NULL OR a.rowid IN (SELECT rowid FROM assets_fts WHERE assets_fts MATCH ?))
              ORDER BY a.id DESC LIMIT ?",

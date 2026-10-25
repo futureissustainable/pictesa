@@ -156,6 +156,78 @@ async fn hosted_workflow_import_is_for_the_administrator_only() {
     assert!(!matches!(admin_try, Err(pictesa_engine::EngineError::Forbidden(_))), "{admin_try:?}");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn edit_canvas_flows_run_on_the_mock_and_record_the_source() {
+    use pictesa_core::InputRole;
+    use pictesa_engine::{edits::Padding, AssetFilter, JobInput};
+    let e = engine("edit", Mode::Local).await;
+    let source = e.upload(LOCAL_USER, &sized_png(64, 32), Some("photo.png"), None).await.unwrap();
+    let run = |model: &str, prompt: &str, inputs: Vec<JobInput>| {
+        let mut r = req(model, prompt);
+        r.inputs = inputs;
+        r
+    };
+    let input = |asset_id: &str, role| JobInput { asset_id: asset_id.into(), role };
+
+    // Inpaint: a painted canvas export becomes a full-size mask that remembers its source.
+    let mut stroke = image::RgbaImage::new(32, 16);
+    for (x, y) in [(3, 3), (4, 3), (5, 3), (3, 4), (4, 4), (5, 4), (3, 5), (4, 5), (5, 5)] {
+        stroke.put_pixel(x, y, image::Rgba([242, 105, 61, 255]));
+    }
+    let mut painted = Vec::new();
+    image::DynamicImage::ImageRgba8(stroke).write_to(&mut std::io::Cursor::new(&mut painted), image::ImageFormat::Png).unwrap();
+    let mask = e.save_mask(LOCAL_USER, &source.id, painted).await.unwrap();
+    assert_eq!((mask.width, mask.height, mask.source.as_str()), (Some(64), Some(32), "edit"));
+    assert_eq!(mask.origin_id.as_deref(), Some(source.id.as_str()));
+    let inpaint = run("mock:image", "a red door", vec![input(&source.id, InputRole::Reference), input(&mask.id, InputRole::Mask)]);
+    let created = e.create_generation(LOCAL_USER, inpaint).await.expect("a mask is accepted");
+    let job = e.wait_job(LOCAL_USER, &created.jobs[0].id, Duration::from_secs(90)).await.unwrap();
+    assert_eq!(job.status, JobStatus::Succeeded, "{:?}", job.error);
+    assert!(job.inputs.iter().any(|i| i.asset_id == source.id && i.role == InputRole::Reference), "the source is recorded");
+    let out = &job.outputs[0];
+    assert_eq!((out.width, out.height), (Some(768), Some(384)), "edits keep the source's shape");
+
+    // Expand: the padded canvas and its mask are helpers of the source.
+    let grown = e.expand_canvas(LOCAL_USER, &source.id, Padding { left: 16, right: 16, top: 0, bottom: 0 }).await.unwrap();
+    assert_eq!((grown.image.width, grown.image.height), (Some(96), Some(32)));
+    assert_eq!((grown.mask.width, grown.mask.height), (Some(96), Some(32)));
+    let expand = run("mock:image", "", vec![input(&grown.image.id, InputRole::Reference), input(&grown.mask.id, InputRole::Mask)]);
+    let job = e.create_generation(LOCAL_USER, expand).await.unwrap();
+    let job = e.wait_job(LOCAL_USER, &job.jobs[0].id, Duration::from_secs(90)).await.unwrap();
+    assert_eq!(job.status, JobStatus::Succeeded, "{:?}", job.error);
+    assert_eq!((job.outputs[0].width, job.outputs[0].height), (Some(768), Some(256)));
+
+    // Remove background: the result keeps transparency.
+    let cut = e.create_generation(LOCAL_USER, run("mock:remove-background", "", vec![input(&source.id, InputRole::Reference)])).await.unwrap();
+    let job = e.wait_job(LOCAL_USER, &cut.jobs[0].id, Duration::from_secs(90)).await.unwrap();
+    assert_eq!(job.status, JobStatus::Succeeded, "{:?}", job.error);
+    let (path, mime, _) = e.asset_file(Some(LOCAL_USER), &job.outputs[0].id).await.unwrap();
+    assert_eq!(mime, "image/png");
+    let cutout = image::open(&path).unwrap().to_rgba8();
+    assert_eq!(cutout.get_pixel(0, 0).0[3], 0, "the background is transparent");
+    assert_eq!(cutout.get_pixel(cutout.width() / 2, cutout.height() / 2).0[3], 255, "the subject is opaque");
+    // Its thumbnail shows the cut-out on a checkerboard, not on black.
+    let thumb = image::open(e.asset_thumb(Some(LOCAL_USER), &job.outputs[0].id).await.unwrap()).unwrap().to_rgb8();
+    assert!(thumb.get_pixel(0, 0).0.iter().all(|c| *c > 200));
+
+    // Helpers stay out of the library; the results and the source are there.
+    let (listed, _) = e.assets(LOCAL_USER, &AssetFilter::default()).await.unwrap();
+    assert!(listed.iter().all(|a| a.source != "edit"));
+    assert!(listed.iter().any(|a| a.id == source.id));
+    let helpers = AssetFilter { source: Some("edit".into()), ..Default::default() };
+    assert_eq!(e.assets(LOCAL_USER, &helpers).await.unwrap().0.len(), 3);
+
+    // Another user cannot paint on this image.
+    assert!(e.save_mask("someone-else", &source.id, sized_png(4, 4)).await.is_err());
+}
+
+fn sized_png(w: u32, h: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let img = image::RgbImage::from_pixel(w, h, image::Rgb([90, 120, 160]));
+    image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+    out
+}
+
 /// A tiny valid PNG, generated so the test needs no fixture file.
 fn png() -> Vec<u8> {
     let mut out = Vec::new();
