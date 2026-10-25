@@ -91,10 +91,14 @@ impl Engine {
                 values.insert(f.key.clone(), (d.clone(), "default"));
             }
         }
-        let billing = match sources {
-            Sources::Any => "local",
-            Sources::Stored => "byok",
-            Sources::Platform => "platform",
+        let billing = if info.id == "local" {
+            "local"
+        } else {
+            match sources {
+                Sources::Any => "local",
+                Sources::Stored => "byok",
+                Sources::Platform => "platform",
+            }
         };
         Ok(Resolved { values, billing })
     }
@@ -117,7 +121,8 @@ impl Engine {
     }
 
     pub(crate) fn is_configured(info: &pictesa_core::ProviderInfo, resolved: &Resolved) -> bool {
-        info.fields.iter().all(|f| f.optional || resolved.values.contains_key(&f.key))
+        (info.id != "local" || pictesa_providers::local_video::available())
+            && info.fields.iter().all(|f| f.optional || resolved.values.contains_key(&f.key))
     }
 
     /// True when a run would use the operator's keys (and so be charged to the wallet).

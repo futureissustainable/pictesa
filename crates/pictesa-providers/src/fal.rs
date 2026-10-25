@@ -113,6 +113,7 @@ fn category_kind(category: &str, endpoint: &str) -> Option<(MediaKind, Vec<Task>
         "video-to-video" if up => (MediaKind::Video, vec![Task::Upscale]),
         "video-to-video" if lips => (MediaKind::Video, vec![Task::LipSync]),
         "video-to-video" => (MediaKind::Video, vec![Task::VideoToVideo]),
+        "video-to-audio" => (MediaKind::Audio, vec![Task::VideoToAudio]),
         "audio-to-video" => (MediaKind::Video, vec![Task::LipSync]),
         "text-to-audio" | "text-to-speech" => (MediaKind::Audio, vec![Task::TextToAudio]),
         _ => return None,
@@ -616,6 +617,11 @@ fn json_pointer_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_audio_catalog_category_is_kept() {
+        assert_eq!(category_kind("video-to-audio", "fal-ai/video-to-audio"), Some((MediaKind::Audio, vec![Task::VideoToAudio])));
+    }
 
     /// Shapes returned by `GET /v1/models/pricing` on 25.10.2026.
     #[test]

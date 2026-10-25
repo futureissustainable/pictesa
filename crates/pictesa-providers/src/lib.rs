@@ -42,6 +42,7 @@ pub mod freepik;
 pub mod comfy_router;
 pub mod comfyui;
 pub mod sdcpp;
+pub mod local_video;
 // LOCAL-MODULES (comfy_router, comfyui, sdcpp)
 
 /// Every built-in provider, in the order the Settings page shows them.
@@ -76,6 +77,7 @@ pub fn registry() -> Vec<Arc<dyn Provider>> {
         Arc::new(comfy_router::ComfyRouter),
         Arc::new(comfyui::ComfyUi),
         Arc::new(sdcpp::SdCpp),
+        Arc::new(local_video::LocalVideo),
         // LOCAL-REGISTRY
     ];
     if std::env::var("PICTESA_MOCK").is_ok_and(|v| v == "1") {

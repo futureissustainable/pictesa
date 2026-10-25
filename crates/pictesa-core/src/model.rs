@@ -41,6 +41,7 @@ pub enum Task {
     TextToVideo,
     ImageToVideo,
     VideoToVideo,
+    VideoToAudio,
     Upscale,
     LipSync,
     TextToAudio,

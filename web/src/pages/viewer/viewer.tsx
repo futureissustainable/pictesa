@@ -235,10 +235,10 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
               Reuse settings
             </button>
           )}
-          {asset.kind === "image" && (
-            <button type="button" className="text-button" onClick={() => navigate(`/edit?image=${encodeURIComponent(asset.id)}`)}>
+          {(asset.kind === "image" || asset.kind === "video") && (
+            <button type="button" className="text-button" onClick={() => navigate(`/edit?${asset.kind === "video" ? "video" : "image"}=${encodeURIComponent(asset.id)}`)}>
               <Icon name="edit" />
-              Edit
+              {asset.kind === "video" ? "Edit video" : "Edit"}
             </button>
           )}
           {asset.kind === "image" && uses.some((use) => use.mode === "video" && use.role === "start_frame") && (

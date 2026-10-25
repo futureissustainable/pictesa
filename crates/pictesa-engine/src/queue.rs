@@ -263,7 +263,14 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
             if !matches!(started, Ok(r) if r.rows_affected() == 1) {
                 return publish(engine, &job.id).await;
             }
-            let result = provider.submit(&ctx, &spec, &req).await;
+            let result = if job.provider == "local" {
+                tokio::select! {
+                    result = provider.submit(&ctx, &spec, &req) => result,
+                    _ = token.cancelled() => return publish(engine, &job.id).await,
+                }
+            } else {
+                provider.submit(&ctx, &spec, &req).await
+            };
             // Record the outcome before anything else, so a cancel or crash is judged correctly.
             let (remote, still_in_flight) = match &result {
                 Ok(Submission::Done(_)) => (Some(DONE.to_string()), false),

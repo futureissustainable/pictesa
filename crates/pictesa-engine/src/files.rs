@@ -45,8 +45,8 @@ impl FileStore {
             files: data_dir.join("files"),
             thumbs: data_dir.join("thumbs"),
             tmp: data_dir.join("tmp"),
-            ffmpeg: which("ffmpeg"),
-            ffprobe: which("ffprobe"),
+            ffmpeg: pictesa_providers::local_video::binary("ffmpeg"),
+            ffprobe: pictesa_providers::local_video::binary("ffprobe"),
         };
         for d in [&s.files, &s.thumbs, &s.tmp] {
             std::fs::create_dir_all(d)?;
@@ -345,15 +345,4 @@ pub fn ext_for(mime: &str) -> &'static str {
         m if m.starts_with("video/") => "video",
         _ => "bin",
     }
-}
-
-fn which(bin: &str) -> Option<PathBuf> {
-    let exe = if cfg!(windows) { format!("{bin}.exe") } else { bin.to_string() };
-    if let Ok(dir) = std::env::var("PICTESA_FFMPEG_DIR") {
-        let p = Path::new(&dir).join(&exe);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    std::env::var_os("PATH").and_then(|paths| std::env::split_paths(&paths).map(|d| d.join(&exe)).find(|p| p.is_file()))
 }

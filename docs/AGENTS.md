@@ -90,3 +90,7 @@ pictesa generate -m mock:image --prompts-file prompts.csv --no-wait --json
 ```
 
 A `.csv` file uses CSV first-column parsing; other files use one prompt per line. Repeated `--grid key=a,b` adds axes; `--grid 'key=["a,b","c"]'` keeps commas inside values. `--seeds START:COUNT` starts a consecutive seed sweep. `--dry-run` queues nothing. Commands use the running server when reachable, else the local engine; prompt commands always print JSON.
+
+## Local video tools
+
+`list_models` includes the free `local:trim`, `local:join`, `local:frame`, `local:smooth` and `local:add-audio` models when ffmpeg/ffprobe are installed. Call `get_model` for inputs and ranges, then use `generate` or a recipe as usual; no new tool is required. Send 2 to 10 ordered `video` inputs for join. Frame returns an image. Smooth doubles the frame rate and is slow on CPU. Cloud catalog models cover extension, video upscaling and sound; `list_models` also accepts task `video_to_audio`. See [video tool parameters and limits](API.md#video-tools).

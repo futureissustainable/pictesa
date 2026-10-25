@@ -9,6 +9,7 @@ export type Task =
   | "text_to_video"
   | "image_to_video"
   | "video_to_video"
+  | "video_to_audio"
   | "upscale"
   | "lip_sync"
   | "text_to_audio";

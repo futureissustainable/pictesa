@@ -935,3 +935,41 @@ video.viewer-media { max-width: 100%; max-height: 100%; background: #1d1a17; }
   .prompt-row > .choice { flex-basis: 55%; }
   .batch-tabs button { padding-inline: 6px; }
 }
+
+/* Video editing shares the image editor's layout and controls. */
+.video-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--stone); }
+.video-stage { flex: 1; display: grid; place-items: center; min-height: 0; padding: 16px; }
+.video-stage video { width: 100%; height: 100%; max-height: 100%; object-fit: contain; min-height: 0; }
+.video-timeline { flex-shrink: 0; display: grid; gap: 10px; padding: 14px 20px; background: var(--paper); border-top: 1px solid var(--line); }
+.video-timeline .field > span { display: flex; justify-content: space-between; gap: 8px; }
+.video-timeline output { color: var(--muted); font-variant-numeric: tabular-nums; }
+.video-time-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.video-time-fields > output { grid-column: 1 / -1; }
+.video-trim { display: grid; gap: 6px; }
+.video-handles { position: relative; height: 34px; margin: 0 8px; background: linear-gradient(to right, var(--stone) var(--trim-start), var(--picked) var(--trim-start), var(--picked) var(--trim-end), var(--stone) var(--trim-end)) center / 100% 8px no-repeat; }
+.video-handles input[type="range"] { position: absolute; inset: 0; width: 100%; height: 34px; margin: 0; padding: 0; pointer-events: none; appearance: none; background: transparent; }
+.video-handles input[type="range"]::-webkit-slider-runnable-track { background: transparent; }
+.video-handles input[type="range"]::-webkit-slider-thumb { pointer-events: auto; appearance: none; width: 18px; height: 32px; border: 2px solid var(--paper); border-radius: 4px; background: var(--clay); cursor: ew-resize; }
+.video-handles input[type="range"]::-moz-range-track { background: transparent; }
+.video-handles input[type="range"]::-moz-range-thumb { pointer-events: auto; width: 18px; height: 30px; border: 2px solid var(--paper); border-radius: 4px; background: var(--clay); cursor: ew-resize; }
+.video-clips { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.video-clips li { display: flex; align-items: center; min-width: 0; gap: 4px; }
+.video-clips .thumb { flex-shrink: 0; width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
+.video-clips li > span:not(.thumb) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-ui); }
+.video-clips .icon-button { flex-shrink: 0; width: 32px; min-width: 32px; }
+.video-audio audio { width: 100%; }
+.video-audio-pick { display: flex; flex-wrap: wrap; gap: 4px; }
+.video-layout .edit-result-open .thumb { width: 100%; height: 100%; object-fit: cover; }
+@media (max-width: 800px) {
+  .video-layout { display: block; overflow-y: auto; overscroll-behavior: contain; }
+  .video-layout .edit-panel { overflow: visible; }
+  .video-layout .video-stage { flex: none; height: clamp(200px, 45vw, 360px); }
+  .video-stage { padding: 8px; }
+  .video-timeline { padding: 10px 16px; gap: 6px; }
+  .video-time-fields .field { gap: 4px; }
+}
+
+@media (max-width: 650px) {
+  .change-video { width: 44px; justify-content: center; }
+  .change-video > span:not(.icon) { display: none; }
+}

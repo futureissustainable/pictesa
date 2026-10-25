@@ -14,6 +14,7 @@ Pictesa is an open alternative to closed creative platforms like Higgsfield: the
 - **Real prices.** You pay providers directly, at their price. Models show the provider's published price (per image, second or megapixel; fal's whole catalog is priced this way), token-billed models say so, and every run records its cost estimate. No credits, no markup.
 - **Recipes.** Open multi-step pipelines: *Cinema shot* (compose a still with your lens and light, then animate it with a camera move), *Character shot*, *Product hero*, *Animate a photo*, *New angle* and *Upscale*. Each step uses the first model you have set up, cloud or local, and recipes are plain JSON you can fork.
 - **Edit any image.** Paint over a part and describe what goes there, expand the frame to a new shape, relight it or remove the background, with the models you have set up. Results land in the library next to the image they came from, ready to edit again.
+- **Edit video.** Trim, join up to ten clips, grab a frame, smooth to twice the frame rate or add music with the free built-in ffmpeg provider. Extend, upscale and create sound with compatible cloud models you have set up. Open a video and choose **Edit video**, or pick it from **Edit**. Results stay in the library with their inputs, ready to keep editing.
 - **Characters.** Save a person, product or style as a named set of reference images and attach it to any run on any model that takes references.
 - **Compare.** Run one prompt on up to eight models side by side, with parameters adapted to each.
 - **Presets.** 76 camera moves and looks (dolly in, orbit, crane, FPV drone, bullet time, film stocks, light) as editable JSON.
@@ -37,7 +38,7 @@ pnpm --dir web install && pnpm --dir web build   # the web UI, embedded at compi
 cargo build --release                            # target/release/pictesa
 ```
 
-Needs Rust 1.85+ and Node 22+ to build. `ffmpeg` on the PATH enables video thumbnails and durations.
+Needs Rust 1.85+ and Node 22+ to build. `ffmpeg` and `ffprobe` on PATH enable video thumbnails, durations and free local video tools.
 
 ## Command line
 
@@ -47,6 +48,11 @@ pictesa models --task text_to_image --sort arena    # best rated first, by LMAre
 pictesa model fal:kling/v4/image-to-video
 pictesa generate "a timber cabin on a misty lake at dawn" -m fal:google/nano-banana-2.1 -p aspect_ratio=16:9 -n 4 -o ./out
 pictesa generate "slow push in" -m fal:kling/v4/image-to-video -i start_frame=./out/cabin.png -p duration=5
+pictesa generate "" -m local:trim -i video=./clip.mp4 -p start=1 -p end=4
+pictesa generate "" -m local:join -i video=./a.mp4 -i video=./b.mp4
+pictesa generate "" -m local:frame -i video=./clip.mp4 -p time=2 -o ./frames
+pictesa generate "" -m local:smooth -i video=./clip.mp4
+pictesa generate "" -m local:add-audio -i video=./clip.mp4 -i audio=./music.wav -p mode=mix -p volume=0.5 -p fade_in=1 -p fade_out=1
 pictesa recipe run cinema/shot -v scene="a lighthouse in a storm" -v camera=camera/crane-up
 pictesa import result.png --prompt-file prompt.txt --origin gemini-api --model google:gemini-3-pro-image --label "Nano Banana Pro" -p resolution=2K --json
 pictesa workflow import my-flow.json --name "My flow"   # any ComfyUI workflow becomes a model
@@ -56,6 +62,8 @@ pictesa keys set fal api_key        # reads the key from stdin; stored encrypted
 When the studio is running, CLI jobs and imports run there and appear live in the UI. Otherwise imports use the local library. `pictesa import <file>...` accepts `--prompt TEXT` or `--prompt-file FILE`, `--negative`, `--model`, `--label`, `--origin`, repeatable `-p key=value`, `--source-url`, and `--json`. Reimporting the same file fills missing metadata without replacing existing values.
 
 OpenAI and Gemini image models offer **Speed: Batch** (`-p speed=batch`): half price, with a turnaround of up to 24 hours. Accepted jobs resume after restarts and can be canceled in the studio.
+
+Local video inputs are limited to ten minutes, 4K and 120 fps, with a 128 MiB output and ten-minute processing limit. Smooth frames accepts up to 60 fps, uses CPU interpolation and can be slow. Join normalizes size, frame rate and audio; Add audio pads or cuts the track to the video. All models, parameters and limits are in [docs/API.md](docs/API.md#video-tools). Recipes, MCP and CLI use the same models and queue.
 
 ## Agents
 
