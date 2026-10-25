@@ -40,4 +40,6 @@ These ran through the full path (studio or CLI, server, provider) on the same VM
 | Automatic1111/Forge API (`a1111` provider, served by `sd-server`) | SDXS | 512×512 image in 20 s |
 | OpenAI-compatible API (`openai_compatible` provider, served by `sd-server`) | SDXS | 512×512 image in 9 s |
 
+The features added on 25.10.2026 (batch runs, variations, inpainting with a painted mask, the Zooms app, a board step, and the ffmpeg trim and frame tools on the Wan 2.1 clip above) also ran end to end on SDXS and ffmpeg through the API and MCP, 8 of 8 checks passing.
+
 Cloud providers were checked with real keys without spending: the key checks and live catalogs of fal, OpenAI, Google and OpenRouter (1,469 models, 613 of 617 fal image and 544 of 545 fal video models priced) on 25.10.2026, with paid runs switched off.
