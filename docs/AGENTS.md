@@ -14,6 +14,9 @@ claude mcp add pictesa -- pictesa mcp
 [mcp_servers.pictesa]
 command = "pictesa"
 args = ["mcp"]
+# `codex exec` cannot ask before a tool runs, so it refuses Pictesa's tools unless they are
+# pre-approved. Set a budget cap in Pictesa first when paid models are configured.
+default_tools_approval_mode = "approve"
 ```
 
 ```json
