@@ -423,3 +423,115 @@ export interface BatchRequest extends GenerationRequest {
   grid?: { key: string; values: ParamValue[] }[];
 }
 export interface BatchEstimate { run_count: number; total_estimated_cost_usd: number | null; max_runs: number }
+
+/** Boards: a canvas of library files, notes and steps (docs/API.md, Boards). */
+export type BoardRole = "owner" | "editor" | "viewer";
+export type NodeKind = "asset" | "note" | "step";
+
+export interface BoardNode {
+  id: string;
+  kind: NodeKind;
+  x: number;
+  y: number;
+  /** Width on the board; heights follow the content. */
+  w: number;
+  /** The board version of this node's last change. */
+  rev: number;
+  asset_id?: string;
+  text?: string;
+  model?: string;
+  prompt?: string;
+  negative_prompt?: string;
+  params?: ParamValues;
+  count?: number;
+}
+
+/** Into a step, an edge is an input: `role` picks the slot, none the first free one. */
+export interface BoardEdge {
+  id: string;
+  from: string;
+  to: string;
+  role?: InputRole | null;
+  rev: number;
+}
+
+export type StepRunStatus = "waiting" | "starting" | "running" | "succeeded" | "failed" | "canceled";
+
+export interface StepRun {
+  status: StepRunStatus;
+  by: string;
+  jobs?: string[];
+  /** Results of the step's last finished run. */
+  outputs?: string[];
+  after?: string[];
+  error?: string | null;
+  updated_at: number;
+  rev: number;
+}
+
+export interface Person {
+  id: string;
+  name: string | null;
+  email: string | null;
+}
+
+export interface BoardMember extends Person {
+  role: BoardRole;
+  added_at: number;
+}
+
+export interface Board {
+  id: string;
+  name: string;
+  role: BoardRole;
+  owner: Person;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  nodes: BoardNode[];
+  edges: BoardEdge[];
+  runs: Record<string, StepRun>;
+  assets: Record<string, Asset>;
+  members: BoardMember[];
+}
+
+export interface BoardSummary {
+  id: string;
+  name: string;
+  role: BoardRole;
+  owner: Person;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  node_count: number;
+  member_count: number;
+  covers: Asset[];
+}
+
+/** One applied change (an answer or a `board` event): current items, removed ids, new files. */
+export interface BoardChanges {
+  board_id: string;
+  version: number;
+  name?: string;
+  nodes?: BoardNode[];
+  edges?: BoardEdge[];
+  runs?: Record<string, StepRun>;
+  removed_nodes?: string[];
+  removed_edges?: string[];
+  assets?: Record<string, Asset>;
+  by?: Person;
+  /** Another process changed the board: load it again. */
+  reload?: boolean;
+}
+
+export type NodeFields = Pick<BoardNode, "w" | "text" | "model" | "prompt" | "negative_prompt" | "params" | "count">;
+
+export type BoardOp =
+  | { op: "add_node"; node: Partial<BoardNode> & Pick<BoardNode, "id" | "kind" | "x" | "y"> }
+  | { op: "move_node"; id: string; base: number; x: number; y: number }
+  | ({ op: "update_node"; id: string; base: number } & Partial<NodeFields>)
+  | { op: "delete_node"; id: string; base: number }
+  | { op: "add_edge"; edge: { id: string; from: string; to: string; role?: InputRole | null } }
+  | { op: "update_edge"; id: string; base: number; role: InputRole | null }
+  | { op: "delete_edge"; id: string; base: number }
+  | { op: "rename"; name: string };

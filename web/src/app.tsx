@@ -21,8 +21,10 @@ const AuthPage = lazy(() => import("./pages/auth/auth-page"));
 const TokenPage = lazy(() => import("./pages/auth/auth-page").then((module) => ({ default: module.TokenPage })));
 const Viewer = lazy(() => import("./pages/viewer/viewer"));
 const EditPage = lazy(() => import("./pages/edit/edit-page"));
+const BoardsPage = lazy(() => import("./pages/boards/boards-page"));
+const BoardPage = lazy(() => import("./pages/boards/board-page"));
 
-type Section = "create" | "library" | "favorites" | "uploads" | "collections" | "characters" | "trash" | "settings" | "none";
+type Section = "create" | "library" | "boards" | "favorites" | "uploads" | "collections" | "characters" | "trash" | "settings" | "none";
 
 interface NavItem {
   id: Section;
@@ -34,6 +36,7 @@ interface NavItem {
 const primary: NavItem[] = [
   { id: "create", label: "Create", icon: "add_circle", to: "/" },
   { id: "library", label: "Library", icon: "grid_view", to: "/library" },
+  { id: "boards", label: "Boards", icon: "dashboard", to: "/boards" },
 ];
 const collections: NavItem[] = [
   { id: "collections", label: "Collections", icon: "folder_open", to: "/library?collections=true" },
@@ -43,12 +46,13 @@ const collections: NavItem[] = [
   { id: "trash", label: "Trash", icon: "delete", to: "/library?trash=true" },
 ];
 const settingsItem: NavItem = { id: "settings", label: "Settings", icon: "tune", to: "/settings" };
-const mobileItems = [primary[0]!, primary[1]!, collections[1]!, settingsItem];
+const mobileItems = [primary[0]!, primary[1]!, primary[2]!, collections[1]!, settingsItem];
 
 function sectionOf(url: URL): Section {
   if (url.pathname === "/" || url.pathname === "/recipes" || url.pathname === "/edit") return "create";
   if (url.pathname.startsWith("/settings")) return "settings";
   if (url.pathname === "/characters") return "characters";
+  if (url.pathname === "/boards" || url.pathname.startsWith("/boards/")) return "boards";
   if (url.pathname === "/library") {
     if (url.searchParams.has("collection") || url.searchParams.has("collections")) return "collections";
     if (url.searchParams.get("trash") === "true") return "trash";
@@ -62,6 +66,7 @@ function sectionOf(url: URL): Section {
 const titles: Record<Section, string> = {
   create: "Create",
   library: "Library",
+  boards: "Boards",
   favorites: "Favorites",
   collections: "Collections",
   uploads: "Uploads",
@@ -140,6 +145,7 @@ function Shell({ me }: { me: Me }) {
   }, [url.pathname]);
 
   const recipes = url.pathname === "/recipes";
+  const boardId = section === "boards" && url.pathname.startsWith("/boards/") ? decodeURIComponent(url.pathname.slice("/boards/".length)) : null;
   const editing = url.pathname === "/edit";
   const pageTitle = recipes ? "Recipes" : editing ? "Edit" : titles[section];
   useEffect(() => {
@@ -165,7 +171,7 @@ function Shell({ me }: { me: Me }) {
   );
 
   return (
-    <div className={`app ${section === "create" ? "creating" : ""}`}>
+    <div className={`app ${section === "create" ? "creating" : ""} ${boardId ? "boarding" : ""}`}>
       <a className="skip-link" href="#workspace">
         Skip to workspace
       </a>
@@ -200,6 +206,8 @@ function Shell({ me }: { me: Me }) {
               <SettingsPage />
             ) : section === "characters" ? (
               <CharactersPage />
+            ) : section === "boards" ? (
+              boardId ? <BoardPage key={boardId} id={boardId} /> : <BoardsPage />
             ) : section === "none" ? (
               <NotFound />
             ) : (

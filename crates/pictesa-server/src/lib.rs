@@ -2,6 +2,7 @@
 //! support, the MCP endpoint and the embedded web UI, all on one port.
 
 pub mod mcp;
+mod boards;
 mod web;
 mod library;
 mod zip;
@@ -255,6 +256,15 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/recipes/runs/{id}", get(recipe_run))
         .route("/recipes/runs/{id}/cancel", post(cancel_recipe_run))
         .route("/recipes/run/{*id}", post(run_recipe))
+        .route("/boards", get(boards::list).post(boards::create))
+        .route("/boards/{id}", get(boards::get).patch(boards::rename).delete(boards::delete))
+        .route("/boards/{id}/ops", post(boards::ops))
+        .route("/boards/{id}/steps/{node}/run", post(boards::run))
+        .route("/boards/{id}/steps/{node}/cancel", post(boards::cancel))
+        .route("/boards/{id}/members", post(boards::share))
+        .route("/boards/{id}/members/{user}", delete(boards::remove_member))
+        .route("/boards/{id}/presence", post(boards::presence))
+        .route("/boards/{id}/copy", post(boards::copy))
         .route("/billing", get(billing))
         .route("/billing/checkout", post(checkout))
         .route("/billing/webhook", post(stripe_webhook))

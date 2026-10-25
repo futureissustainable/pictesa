@@ -31,6 +31,8 @@ export interface GridProps {
   selected?: ReadonlySet<string>;
   selectable?: boolean;
   placeholders?: GridPlaceholder[];
+  /** What a click does, for the cards' accessible names: "Open" by default. */
+  verb?: string;
 }
 
 /** Width over height, from the asset's own size; 1:1 when unknown, clamped so a cell stays usable. */
@@ -85,7 +87,7 @@ function layoutCells(ratios: number[], width: number, size: number, gap: number)
  * near the viewport are in the DOM, so a library of thousands stays fast. Tab order follows
  * the list (newest first); arrow keys move between cards and scroll them into view.
  */
-export function AssetGrid({ items, size, scroller, label, titleOf, onOpen, onFavorite, hasMore, loading, onEndReached, fresh, selected, selectable, placeholders = NO_PLACEHOLDERS }: GridProps) {
+export function AssetGrid({ items, size, scroller, label, titleOf, onOpen, onFavorite, hasMore, loading, onEndReached, fresh, selected, selectable, placeholders = NO_PLACEHOLDERS, verb }: GridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [view, setView] = useState({ top: 0, bottom: 1200 });
@@ -226,6 +228,7 @@ export function AssetGrid({ items, size, scroller, label, titleOf, onOpen, onFav
             fresh={fresh?.has(asset.id)}
             selected={selected?.has(asset.id)}
             selectable={selectable}
+            verb={verb}
             onOpen={onOpen}
             onFavorite={onFavorite}
             style={place(cell)}

@@ -1,5 +1,5 @@
 import { createStore } from "./store";
-import type { Asset, Character, Job, RecipeRun } from "./types";
+import type { Asset, BoardChanges, Character, Job, Person, RecipeRun } from "./types";
 
 // One EventSource for the whole app (GET /api/events). Lists and the job tray subscribe here.
 
@@ -24,6 +24,12 @@ interface Handlers {
   preview?: (preview: PreviewEvent) => void;
   /** Local only: an asset deleted permanently. */
   removed?: (id: string) => void;
+  /** A change to a board this person can open. */
+  board?: (changes: BoardChanges) => void;
+  /** The board list changed: a board was created, renamed, shared, left or deleted. */
+  boards?: (info: { board_id: string; deleted?: boolean; removed?: string }) => void;
+  /** Who has a board open right now. */
+  presence?: (info: { board_id: string; viewers: Person[] }) => void;
 }
 
 const handlers = new Set<Handlers>();
@@ -93,6 +99,18 @@ export function startEvents() {
   stream.addEventListener("preview", (event) => {
     const preview = parse<PreviewEvent>(event as MessageEvent);
     if (preview) handlers.forEach((handler) => handler.preview?.(preview));
+  });
+  stream.addEventListener("board", (event) => {
+    const changes = parse<BoardChanges>(event as MessageEvent);
+    if (changes) handlers.forEach((handler) => handler.board?.(changes));
+  });
+  stream.addEventListener("boards", (event) => {
+    const info = parse<{ board_id: string; deleted?: boolean; removed?: string }>(event as MessageEvent);
+    if (info) handlers.forEach((handler) => handler.boards?.(info));
+  });
+  stream.addEventListener("board_presence", (event) => {
+    const info = parse<{ board_id: string; viewers: Person[] }>(event as MessageEvent);
+    if (info) handlers.forEach((handler) => handler.presence?.(info));
   });
   // Sent after a reconnect or when this tab fell behind and missed events.
   stream.addEventListener("resync", refetchAll);

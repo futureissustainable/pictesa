@@ -806,10 +806,11 @@ impl Engine {
         Ok((row.to_asset(), job))
     }
 
-    /// Path, MIME type and download name of an asset's original file.
+    /// Path, MIME type and download name of an asset's original file. A user sees their own files
+    /// and the files on boards they can open.
     pub async fn asset_file(&self, user: Option<&str>, id: &str) -> Result<(std::path::PathBuf, String, String)> {
         let row = match user {
-            Some(u) => store::asset_row(&self.inner.db, u, id).await,
+            Some(u) => self.visible_asset_row(u, id).await,
             None => Ok(sqlx::query_as::<_, AssetRow>("SELECT * FROM assets WHERE id = ? AND deleted_at IS NULL").bind(id).fetch_one(&self.inner.db).await?),
         }
         .map_err(|_| EngineError::not_found("file"))?;
@@ -819,7 +820,7 @@ impl Engine {
 
     pub async fn asset_thumb(&self, user: Option<&str>, id: &str) -> Result<std::path::PathBuf> {
         let row = match user {
-            Some(u) => store::asset_row(&self.inner.db, u, id).await,
+            Some(u) => self.visible_asset_row(u, id).await,
             None => Ok(sqlx::query_as::<_, AssetRow>("SELECT * FROM assets WHERE id = ?").bind(id).fetch_one(&self.inner.db).await?),
         }
         .map_err(|_| EngineError::not_found("file"))?;

@@ -25,8 +25,12 @@ export function inputUses(kind: MediaKind): { mode: MediaKind; role: InputRole; 
   return [...uses.values()];
 }
 
-/** Puts the asset into a slot, switching to a model that has the slot when the current one does not. */
-export async function sendToCreate(asset: Asset, mode: MediaKind, role: InputRole) {
+/** Puts the assets (of one kind) into a slot, as many as it takes, switching to a model that has
+ * the slot when the current one does not. */
+export async function sendToCreate(input: Asset | Asset[], mode: MediaKind, role: InputRole) {
+  const assets = Array.isArray(input) ? input : [input];
+  const asset = assets[0];
+  if (!asset) return;
   await loadModels(mode);
   const models = peekModels(mode) ?? [];
   const currentId = composer.get().modelByMode[mode];
@@ -47,7 +51,9 @@ export async function sendToCreate(asset: Asset, mode: MediaKind, role: InputRol
     selectModel(mode, target, current);
     notify(`Switched to ${target.name}, which takes a ${roleLabel[role].toLowerCase()}.`);
   }
-  placeAsset(mode, role, asset, fits(target, role, asset.kind)?.max ?? 1);
+  const max = fits(target, role, asset.kind)?.max ?? 1;
+  for (const item of assets.slice(0, max)) placeAsset(mode, role, item, max);
+  if (assets.length > max) notify(`${target.name} takes ${max} ${roleLabel[role].toLowerCase()}${max === 1 ? "" : "s"}. The first ${max} are in Create.`);
   navigate("/", { replace: true });
 }
 
