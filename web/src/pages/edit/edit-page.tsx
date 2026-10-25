@@ -29,6 +29,7 @@ import { Icon, Spinner } from "../../ui/icon";
 import { LibraryPicker } from "../create/library-picker";
 import { ModelPicker } from "../create/model-picker";
 import { ModeSwitch } from "../create/mode-switch";
+import VideoPage from "./video-page";
 import { MaskCanvas, type MaskHandle } from "./mask-canvas";
 
 // The edit view (`/edit?image=<id>`): paint, expand, relight or cut out any library image.
@@ -57,8 +58,11 @@ export default function EditPage() {
   const url = useLocation();
   const id = url.searchParams.get("image");
   const tool = url.searchParams.get("tool");
-  const [picking, setPicking] = useState(false);
-  const choose = (asset: Asset) => navigate(`/edit?image=${encodeURIComponent(asset.id)}${isTool(tool) ? `&tool=${tool}` : ""}`);
+  const [picking, setPicking] = useState<"image" | "video" | null>(null);
+  const choose = (asset: Asset) => navigate(`/edit?${asset.kind === "video" ? "video" : "image"}=${encodeURIComponent(asset.id)}${isTool(tool) ? `&tool=${tool}` : ""}`);
+
+  const video = url.searchParams.get("video");
+  if (video) return <VideoPage key={video} id={video} />;
 
   return (
     <div className="workspace workspace-edit">
@@ -66,26 +70,27 @@ export default function EditPage() {
         <h1 className="sr-only">Edit</h1>
         <ModeSwitch active="edit" />
         {id && (
-          <button type="button" className="text-button change-image" onClick={() => setPicking(true)} aria-label="Change image" title="Change image">
+          <button type="button" className="text-button change-image" onClick={() => setPicking("image")} aria-label="Change image" title="Change image">
             <Icon name="photo_library" />
             <span>Change image</span>
           </button>
         )}
       </div>
       {id ? (
-        <Editor key={id} id={id} initialTool={isTool(tool) ? tool : "inpaint"} onChoose={() => setPicking(true)} />
+        <Editor key={id} id={id} initialTool={isTool(tool) ? tool : "inpaint"} onChoose={() => setPicking("image")} />
       ) : (
         <div className="empty edit-empty">
           <Icon name="edit" />
-          <h2>Choose an image to edit.</h2>
-          <p>Paint over a part to change it, expand the frame, relight it or remove the background.</p>
-          <button type="button" className="primary-button" onClick={() => setPicking(true)}>
+          <h2>Choose an image or video to edit.</h2>
+          <p>Retouch an image, or trim, join and finish a video.</p>
+          <button type="button" className="primary-button" onClick={() => setPicking("image")}>
             Choose an image
             <Icon name="photo_library" />
           </button>
+          <button type="button" className="text-button" onClick={() => setPicking("video")}><Icon name="movie" />Choose a video</button>
         </div>
       )}
-      {picking && <LibraryPicker kind="image" room={1} title="Choose an image to edit" onClose={() => setPicking(false)} onPick={([asset]) => asset && choose(asset)} />}
+      {picking && <LibraryPicker kind={picking} room={1} title={`Choose ${picking === "image" ? "an image" : "a video"} to edit`} onClose={() => setPicking(null)} onPick={([asset]) => asset && choose(asset)} />}
     </div>
   );
 }

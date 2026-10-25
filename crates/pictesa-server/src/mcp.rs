@@ -88,7 +88,7 @@ fn tools() -> Value {
             "description": "List image and video models. By default only models whose provider is set up. Each model carries its LMArena rank per task when rated (human-preference leaderboards, updated daily).",
             "inputSchema": { "type": "object", "properties": {
                 "output": { "type": "string", "enum": ["image", "video", "audio"] },
-                "task": { "type": "string", "enum": ["text_to_image", "image_edit", "text_to_video", "image_to_video", "video_to_video", "upscale", "lip_sync", "text_to_audio"] },
+                "task": { "type": "string", "enum": ["text_to_image", "image_edit", "text_to_video", "image_to_video", "video_to_video", "video_to_audio", "upscale", "lip_sync", "text_to_audio"] },
                 "q": { "type": "string", "description": "Search in name, id and maker" },
                 "provider": { "type": "string" },
                 "configured_only": { "type": "boolean", "default": true },

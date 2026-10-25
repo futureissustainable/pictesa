@@ -111,6 +111,7 @@ export const taskLabel: Record<Task, string> = {
   text_to_video: "Text to video",
   image_to_video: "Image to video",
   video_to_video: "Video to video",
+  video_to_audio: "Video to audio",
   upscale: "Upscale",
   lip_sync: "Lip sync",
   text_to_audio: "Text to audio",

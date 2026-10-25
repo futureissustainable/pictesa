@@ -343,3 +343,36 @@ async fn accepted_batch_resumes_after_restart_beyond_the_standard_runtime() {
     assert_eq!(result.attempts, 1, "accepted batch must be polled, never resubmitted");
     assert_eq!(result.outputs.len(), 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn local_video_uses_normal_jobs_with_owned_inputs_and_no_wallet_charge() {
+    if !pictesa_providers::local_video::available() {
+        eprintln!("skipping local video queue test: ffmpeg/ffprobe missing");
+        return;
+    }
+    let e = engine("local-video", Mode::Hosted).await;
+    let user = e.signup("video@example.com", "correct horse battery", None).await.unwrap();
+    let other = e.signup("other-video@example.com", "correct horse battery", None).await.unwrap();
+    let path = e.config().data_dir.join("source.mp4");
+    let status = tokio::process::Command::new(pictesa_providers::local_video::binary("ffmpeg").unwrap())
+        .args(["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=8:duration=1", "-threads", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+        .arg(&path).status().await.unwrap();
+    assert!(status.success());
+    let bytes = tokio::fs::read(&path).await.unwrap();
+    let source = e.upload(&user.id, &bytes, Some("source.mp4"), Some("video/mp4")).await.unwrap();
+    let request = || CreateGeneration {
+        model: "local:trim".into(), params: json!({"start":0.25,"end":0.75}).as_object().unwrap().clone(),
+        inputs: vec![pictesa_engine::JobInput { asset_id: source.id.clone(), role: pictesa_core::InputRole::Video }],
+        ..Default::default()
+    };
+    assert!(e.create_generation(&other.id, request()).await.is_err(), "other users cannot edit this input");
+    let created = e.create_generation(&user.id, request()).await.unwrap();
+    let job = e.wait_job(&user.id, &created.jobs[0].id, Duration::from_secs(30)).await.unwrap();
+    assert_eq!(job.status, JobStatus::Succeeded, "{:?}", job.error);
+    assert_eq!(job.inputs[0].asset_id, source.id);
+    assert_eq!(job.cost_usd, Some(0.0));
+    assert_eq!(job.outputs.len(), 1);
+    assert_eq!(job.outputs[0].job_id.as_deref(), Some(job.id.as_str()));
+    assert_eq!(job.outputs[0].kind, pictesa_core::MediaKind::Video);
+    assert_eq!(e.billing_view(&user.id).await.unwrap().balance_usd, 0.0);
+}

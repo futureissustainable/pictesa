@@ -69,3 +69,7 @@ For nonurgent OpenAI or Gemini image generation, pass `params: { "speed": "batch
 Create or rename collections in the studio's Collections section or through the HTTP API. Call `list_collections`, generate or import assets, then call `add_to_collection` with their library IDs. Hosted agents can only list and change their own collections and assets.
 
 Settings > Spend shows recent costs and optional daily and monthly budgets. All generation paths, including MCP, CLI, comparisons and recipe steps, check the caps before queuing. A refusal names the cap and remaining USD. Local runs count as zero; known wallet charges include markup; direct-key runs use estimates. See [API.md](API.md) for spend, tags, filters and ZIP routes.
+
+## Local video tools
+
+`list_models` includes the free `local:trim`, `local:join`, `local:frame`, `local:smooth` and `local:add-audio` models when ffmpeg/ffprobe are installed. Call `get_model` for inputs and ranges, then use `generate` or a recipe as usual; no new tool is required. Send 2 to 10 ordered `video` inputs for join. Frame returns an image. Smooth doubles the frame rate and is slow on CPU. Cloud catalog models cover extension, video upscaling and sound; `list_models` also accepts task `video_to_audio`. See [video tool parameters and limits](API.md#video-tools).

@@ -309,3 +309,31 @@ The spend view contains `today_usd`, `seven_days_usd`, `thirty_days_usd`, `days:
 Spend is isolated per hosted user and uses the single global local user otherwise. Queued runs reserve their estimated cost. Wallet-funded runs record the actual wallet charge including markup. Direct-key runs keep the estimate because provider responses currently do not report final charges. Local backends count as zero. Confirmed unbilled failures and cancellations release spend, including wallet refunds; uncertain upstream submissions keep their reservation. Deleting a job does not erase spend. Unpriced runs are counted in `unknown_runs` and excluded from totals.
 
 Caps are optional, from $0 to $1,000,000; null removes a cap and zero blocks paid runs. Both caps are replaced by PUT. A paid batch that exceeds either remaining cap is rejected atomically before queuing or provider submission, with `field: "budget"` and the cap name, amount and remainder. The exact boundary is allowed. A paid model without a cost estimate is refused while a cap is active. Amounts are stored in integer micro-dollars.
+
+## Video tools
+
+When `ffmpeg` and `ffprobe` are executable on PATH, the built-in `local` provider is configured automatically. It is free (`kind: "local"`, `pricing: {"unit":"local"}`), needs no key and runs one job at a time. `PICTESA_FFMPEG_DIR`, when set, also supports a bundled installation. Local tools use the same generation, recipe, library and event APIs as every other model. Jobs record all input asset IDs, their roles and parameters. No video-specific endpoint is needed.
+
+| Model | Required inputs | Parameters |
+|---|---|---|
+| `local:trim` | One `video` | `start` (default 0), `end` (default 1), in seconds; `0 <= start < end <= clip duration` |
+| `local:join` | 2 to 10 `video` inputs, in playback order | None. Re-encodes to the first clip's size and frame rate, fits each image without cropping, pads with black, and uses stereo 48 kHz audio. Silent clips get silence. |
+| `local:frame` | One `video` | `time` in seconds (default 0), before the end of the clip; outputs a PNG image |
+| `local:smooth` | One `video` | None. Uses ffmpeg `minterpolate` to produce 2× the input frame rate; slow on CPU. |
+| `local:add-audio` | One `video`, one `audio` | `mode`: `replace` (default) or `mix`; `volume`: 0 to 4 (default 1); `fade_in`, `fade_out`: seconds (default 0), each no longer than the video |
+
+Added audio is padded with silence or cut to the video's length. Volume and fades affect only the added track. Mix keeps existing sound, or behaves like replace on a silent source. Video outputs use MP4/H.264/AAC; odd dimensions round down to an even pixel count for H.264. Join uses the first input's display dimensions and frame rate.
+
+Limits: inputs need a known duration of at most 600 seconds each; joined duration must total at most 600 seconds. Videos must be at most 3840 pixels per side, 3840 × 2160 pixels total and 120 fps (60 fps for smoothing). Each command uses at most two threads per codec or filter pool, a ten-minute runtime and a 128 MiB output limit. Commands run directly without a shell, disallow network and playlist protocols, and remove temporary files on completion, failure or cancellation. Supported containers include MP4/MOV, WebM/Matroska, AVI, MPEG/TS, WAV, MP3, Ogg, FLAC and AAC. Invalid files and unsupported settings fail the job with a readable error.
+
+```json
+{
+  "model": "local:trim",
+  "prompt": "",
+  "inputs": [{"asset_id":"YOUR_VIDEO_ID","role":"video"}],
+  "params": {"start":1.5,"end":4},
+  "count":1
+}
+```
+
+The video editor's cloud tools use configured catalog models and their published parameter schemas: **Extend** selects video extension endpoints; **Upscale** selects video upscalers such as Topaz or SeedVR; **Create sound** selects video-to-audio or synchronized sound models. Models may return audio alone or a video with sound. Their prices and limits come from the provider. See [fal MMAudio](https://fal.ai/models/fal-ai/mmaudio-v2/api) and [Topaz](https://fal.ai/topaz). Catalog task `video_to_audio` is available as a model-list filter and through MCP `list_models`; existing generation tools handle it.
