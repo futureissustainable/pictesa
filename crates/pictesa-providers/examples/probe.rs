@@ -21,7 +21,7 @@ async fn main() {
             creds.insert(f.key.clone(), v);
         }
     }
-    let ctx = Ctx { http: reqwest::Client::builder().user_agent("pictesa-probe").build().unwrap(), creds };
+    let ctx = Ctx::new(reqwest::Client::builder().user_agent("pictesa-probe").build().unwrap(), creds);
     if args.iter().any(|a| a == "--check") {
         println!("check: {:?}", provider.check(&ctx).await);
     }

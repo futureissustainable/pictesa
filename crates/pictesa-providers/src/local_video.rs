@@ -672,10 +672,7 @@ mod tests {
         for (input, (path, _)) in req.inputs.iter_mut().zip(paths) {
             input.path = path.to_path_buf();
         }
-        let ctx = Ctx {
-            http: reqwest::Client::new(),
-            creds: Default::default(),
-        };
+        let ctx = Ctx::new(reqwest::Client::new(), Default::default());
         let result = LocalVideo
             .submit(&ctx, &LocalVideo.models()[0], &req)
             .await

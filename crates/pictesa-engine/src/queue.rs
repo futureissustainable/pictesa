@@ -426,7 +426,22 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
         .bind(&engine.inner.instance)
         .execute(&engine.inner.db)
         .await;
+    if let Some(usd) = ctx.reported_cost() {
+        record_actual_cost(engine, &job, usd).await;
+    }
     publish(engine, &job.id).await;
+}
+
+/// Stores the charge the provider reported as the run's actual cost. Only runs on the person's own
+/// key change: wallet-paid runs keep what the wallet took, and free runs stay free.
+async fn record_actual_cost(engine: &Engine, job: &JobRow, usd: f64) {
+    let _ = sqlx::query("UPDATE spend_runs SET actual_micros = ? WHERE job_id = ? AND user_id = ? AND actual_micros IS NULL")
+        .bind(crate::billing::to_micros(usd))
+        .bind(&job.id)
+        .bind(&job.user_id)
+        .execute(&engine.inner.db)
+        .await;
+    let _ = sqlx::query("UPDATE jobs SET cost_usd = ? WHERE id = ? AND charged_micros = 0").bind(usd).bind(&job.id).execute(&engine.inner.db).await;
 }
 
 /// Providers that only accept inputs as public HTTPS links.

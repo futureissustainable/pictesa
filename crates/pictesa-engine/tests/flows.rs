@@ -409,7 +409,7 @@ async fn accepted_batch_resumes_after_restart_beyond_the_standard_runtime() {
     let created = e.create_generation(LOCAL_USER, request).await.unwrap();
     let job = &created.jobs[0];
     let provider = pictesa_providers::mock::Mock;
-    let context = Ctx { http: reqwest::Client::new(), creds: Default::default() };
+    let context = Ctx::new(reqwest::Client::new(), Default::default());
     let spec = e.model(LOCAL_USER, "mock:image").await.unwrap();
     let submitted = provider.submit(&context, &spec, &GenerationRequest {
         job_id: job.id.clone(), model: "image".into(), prompt: job.prompt.clone(),

@@ -84,6 +84,8 @@ pub struct Ctx {
     pub http: reqwest::Client,
     /// Resolved credential fields (stored value, else environment, else default).
     pub creds: HashMap<String, String>,
+    /// What the provider's answer says the run cost, in US dollars. One job per context.
+    cost: std::sync::Arc<std::sync::Mutex<Option<f64>>>,
 }
 
 impl Ctx {
@@ -98,6 +100,18 @@ impl Ctx {
     }
     pub fn base_url(&self, default: &str) -> String {
         self.get("base_url").unwrap_or(default).trim_end_matches('/').to_string()
+    }
+    pub fn new(http: reqwest::Client, creds: HashMap<String, String>) -> Self {
+        Self { http, creds, cost: Default::default() }
+    }
+    /// Records the charge a provider reports with its answer (OpenRouter sends `usage.cost`).
+    pub fn report_cost(&self, usd: f64) {
+        if usd.is_finite() && usd >= 0.0 {
+            *self.cost.lock().unwrap() = Some(usd);
+        }
+    }
+    pub fn reported_cost(&self) -> Option<f64> {
+        *self.cost.lock().unwrap()
     }
 }
 

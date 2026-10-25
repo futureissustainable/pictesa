@@ -343,10 +343,7 @@ mod tests {
     use std::{collections::HashMap, path::PathBuf};
     #[tokio::test]
     async fn maps_upscale_and_image_input() {
-        let ctx = Ctx {
-            http: reqwest::Client::new(),
-            creds: HashMap::new(),
-        };
+        let ctx = Ctx::new(reqwest::Client::new(), HashMap::new());
         let mut req = GenerationRequest {
             job_id: "x".into(),
             model: "gen4.5".into(),

@@ -2670,13 +2670,10 @@ mod tests {
         std::fs::create_dir_all(root.join("broken")).unwrap();
         std::fs::write(root.join("broken/manifest.json"), "{").unwrap();
         std::fs::write(root.join("broken/workflow.json"), "{}").unwrap();
-        let ctx = Ctx {
-            http: reqwest::Client::new(),
-            creds: HashMap::from([(
-                "workflows_dir".to_string(),
-                root.to_string_lossy().into_owned(),
-            )]),
-        };
+        let ctx = Ctx::new(
+            reqwest::Client::new(),
+            HashMap::from([("workflows_dir".to_string(), root.to_string_lossy().into_owned())]),
+        );
         let all = all_templates(&ctx);
         let mine: Vec<&Template> = all.iter().filter(|t| t.id == "esrgan-upscale").collect();
         assert_eq!(mine.len(), 1);

@@ -18,7 +18,7 @@ fn ctx() -> Ctx {
     } else {
         creds.insert("base_url".to_string(), "http://127.0.0.1:1234".to_string());
     }
-    Ctx { http: reqwest::Client::new(), creds }
+    Ctx::new(reqwest::Client::new(), creds)
 }
 
 fn request(model: &str, prompt: &str, params: Value, inputs: Vec<MediaInput>, n: u32) -> GenerationRequest {

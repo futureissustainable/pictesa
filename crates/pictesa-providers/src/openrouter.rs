@@ -72,6 +72,12 @@ fn parse_image(v: &Value) -> ProviderResult<Vec<Output>> {
     }
 }
 
+/// What OpenRouter charged for this answer. Every response carries it in `usage.cost`, in credits,
+/// and one OpenRouter credit is one US dollar.
+fn charged(v: &Value) -> Option<f64> {
+    v.pointer("/usage/cost").and_then(Value::as_f64)
+}
+
 fn chat_body(model: &ModelSpec, req: &GenerationRequest, refs: Vec<String>) -> Value {
     let mut parts = vec![json!({"type":"text", "text":req.prompt})];
     parts.extend(
@@ -100,7 +106,10 @@ impl Provider for OpenRouter {
             id: "openrouter".into(),
             name: "OpenRouter".into(),
             kind: ProviderKind::Gateway,
-            fields: vec![CredentialField::api_key(&["OPENROUTER_API_KEY"])],
+            fields: vec![
+                CredentialField::api_key(&["OPENROUTER_API_KEY"]),
+                CredentialField::base_url(API, &["OPENROUTER_BASE_URL"]),
+            ],
             signup_url: Some("https://openrouter.ai/keys".into()),
             docs_url: Some(
                 "https://openrouter.ai/docs/guides/overview/multimodal/image-generation".into(),
@@ -122,7 +131,7 @@ impl Provider for OpenRouter {
     async fn discover(&self, ctx: &Ctx) -> ProviderResult<Vec<ModelSpec>> {
         let v = get_json(
             ctx.http
-                .get(format!("{API}/models"))
+                .get(format!("{}/models", ctx.base_url(API)))
                 .bearer_auth(ctx.api_key()?),
         )
         .await?;
@@ -154,7 +163,7 @@ impl Provider for OpenRouter {
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
         get_json(
             ctx.http
-                .get(format!("{API}/key"))
+                .get(format!("{}/key", ctx.base_url(API)))
                 .bearer_auth(ctx.api_key()?),
         )
         .await?;
@@ -173,12 +182,16 @@ impl Provider for OpenRouter {
         let body = chat_body(model, req, refs);
         let v = send_json(
             ctx.http
-                .post(format!("{API}/chat/completions"))
+                .post(format!("{}/chat/completions", ctx.base_url(API)))
                 .bearer_auth(ctx.api_key()?),
             &body,
         )
         .await?;
-        Ok(Submission::Done(parse_image(&v)?))
+        let outputs = parse_image(&v)?;
+        if let Some(usd) = charged(&v) {
+            ctx.report_cost(usd);
+        }
+        Ok(Submission::Done(outputs))
     }
 }
 
@@ -209,6 +222,12 @@ mod tests {
             "https://example.com/ref.png"
         );
         assert_eq!(body["image_config"]["aspect_ratio"], "16:9");
+    }
+    #[test]
+    fn reads_the_charge_from_usage() {
+        let v = json!({"choices":[], "usage":{"prompt_tokens":12,"completion_tokens":1290,"cost":0.0387}});
+        assert_eq!(charged(&v), Some(0.0387));
+        assert_eq!(charged(&json!({"choices":[]})), None);
     }
     #[test]
     fn parses_recorded_chat_image() {

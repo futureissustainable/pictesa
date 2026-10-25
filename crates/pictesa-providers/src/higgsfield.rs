@@ -419,10 +419,7 @@ mod tests {
     }
     #[tokio::test]
     async fn maps_seedance_frame_urls_without_upload() {
-        let ctx = Ctx {
-            http: reqwest::Client::new(),
-            creds: std::collections::HashMap::new(),
-        };
+        let ctx = Ctx::new(reqwest::Client::new(), std::collections::HashMap::new());
         let mut req:GenerationRequest=serde_json::from_value(json!({"job_id":"x","model":"bytedance/seedance-2.5/image-to-video","prompt":"move","params":{"duration":8,"generate_audio":true},"inputs":[],"num_outputs":1})).unwrap();
         req.inputs.push(MediaInput {
             role: InputRole::StartFrame,

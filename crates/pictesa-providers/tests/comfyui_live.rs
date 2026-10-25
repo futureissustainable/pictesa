@@ -20,7 +20,7 @@ fn ctx() -> Ctx {
             creds.insert(key.to_string(), v);
         }
     }
-    Ctx { http: reqwest::Client::builder().user_agent("pictesa-test").build().unwrap(), creds }
+    Ctx::new(reqwest::Client::builder().user_agent("pictesa-test").build().unwrap(), creds)
 }
 
 fn request(model: &ModelSpec, prompt: &str, params: Value, inputs: Vec<MediaInput>, n: u32) -> GenerationRequest {

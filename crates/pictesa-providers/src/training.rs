@@ -495,10 +495,7 @@ mod zip_tests {
     use super::*;
     #[tokio::test]
     async fn zip_is_readable_with_intact_input_and_trigger_caption() {
-        let ctx = Ctx {
-            http: reqwest::Client::new(),
-            creds: HashMap::new(),
-        };
+        let ctx = Ctx::new(reqwest::Client::new(), HashMap::new());
         let temp = Temp::new(&ctx).unwrap();
         let image = temp.0.join("source.png");
         std::fs::write(&image, b"input bytes").unwrap();

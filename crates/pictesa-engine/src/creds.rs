@@ -114,7 +114,7 @@ impl Engine {
         let http = if guard { self.inner.http_guarded.clone() } else { self.inner.http.clone() };
         let mut creds:HashMap<String,String>=resolved.values.into_iter().map(|(k,(v,_))|(k,v)).collect();
         creds.insert("_data_dir".into(),self.data_dir().to_string_lossy().into_owned());
-        Ctx {http,creds}
+        Ctx::new(http, creds)
     }
 
     /// Hosted runs against an endpoint a user chose must not reach private addresses.

@@ -12,6 +12,7 @@ Rules
 - `poll()` maps the provider's states to `PollStatus` (report real progress or queue position when given; never invent percentages). Map failures with `util::failure` / `ProviderError::from_http` so the engine retries only transient errors and rate limits.
 - `check()` must be the cheapest authenticated call (list models, account info). It must never spend money.
 - Outputs: return `Output::Url` (with auth headers if the download needs them) or `Output::Bytes` for base64 answers. The engine downloads, hashes, thumbnails and stores them.
+- Charges: when the provider's answer states what the run cost, call `ctx.report_cost(usd)`; the engine records it as the run's actual cost (see `openrouter.rs`).
 
 Testing
 - `cargo check -p pictesa-providers` (env: `PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/build/pictesa-target`, run builds with `nice -n 10`; the target dir is shared, so cargo may wait for a lock).
