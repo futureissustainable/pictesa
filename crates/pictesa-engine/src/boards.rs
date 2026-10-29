@@ -1175,7 +1175,20 @@ impl Engine {
         }
         let email = email.trim().to_lowercase();
         let target: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE email = ?").bind(&email).fetch_optional(&self.inner.db).await?;
-        let target = target.ok_or_else(|| EngineError::invalid("No account uses that email.", Some("email")))?;
+        let Some(target) = target else {
+            // The owner needs to know, but guessing emails is slowed to 10 misses an hour per person.
+            let now = now_ms();
+            let mut misses = self.inner.share_misses.lock().unwrap();
+            let entry = misses.entry(user.to_string()).or_insert((now, 0));
+            if now - entry.0 > 3_600_000 {
+                *entry = (now, 0);
+            }
+            entry.1 += 1;
+            if entry.1 > 10 {
+                return Err(EngineError::TooMany("Too many emails without an account. Try again in an hour.".into()));
+            }
+            return Err(EngineError::invalid("No account uses that email.", Some("email")));
+        };
         if target == row.owner_id {
             return Err(EngineError::invalid("You own this board.", Some("email")));
         }

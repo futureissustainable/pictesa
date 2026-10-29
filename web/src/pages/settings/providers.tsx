@@ -200,6 +200,7 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
           <CredentialInput
             key={field.key}
             field={field}
+            locked={provider.id === "ai-toolkit" && field.key === "path" ? "Pictesa runs this program, so set it with pictesa keys set ai-toolkit path or PICTESA_AI_TOOLKIT_PATH." : undefined}
             state={provider.values?.[field.key]}
             value={edits[field.key]}
             error={isUrlField(field) && edits[field.key] !== undefined ? urlProblem(edits[field.key]!) : null}
@@ -269,9 +270,12 @@ function CredentialInput({
   state,
   value,
   error,
+  locked,
   onChange,
 }: {
   field: CredentialField;
+  /** Set outside the studio: shown read-only with this explanation. */
+  locked?: string;
   state?: FieldValue;
   value?: string;
   error?: string | null;
@@ -289,8 +293,8 @@ function CredentialInput({
         : "Saved. Type to replace."
       : (field.placeholder ?? "Paste your key")
     : (field.placeholder ?? field.default ?? "");
-  const hint =
-    state?.source === "env"
+  const hint = locked ??
+    (state?.source === "env"
       ? `Read from ${env.join(" or ") || "the environment"}.`
       : state?.source === "stored"
         ? field.secret
@@ -300,7 +304,7 @@ function CredentialInput({
           ? "Default."
           : env.length
             ? `Or set ${env.join(" or ")}.`
-            : null;
+            : null);
   return (
     <div className="field">
       <label className="field-top" htmlFor={id}>
@@ -316,6 +320,7 @@ function CredentialInput({
           autoCapitalize="off"
           value={value ?? storedValue}
           placeholder={placeholder}
+          readOnly={Boolean(locked)}
           aria-invalid={error ? true : undefined}
           aria-describedby={[error && `${id}-error`, hint && `${id}-hint`].filter(Boolean).join(" ") || undefined}
           onChange={(event) => onChange(event.target.value === storedValue ? undefined : event.target.value)}

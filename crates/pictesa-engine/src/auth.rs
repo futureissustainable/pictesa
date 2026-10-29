@@ -98,7 +98,18 @@ impl Engine {
             .fetch_optional(&self.inner.db)
             .await?;
         let bad = || EngineError::Unauthorized("Email or password is wrong.".into());
-        let row = row.ok_or_else(bad)?;
+        // Unknown emails still pay for one password check, so the answer time does not tell
+        // whether an account exists.
+        let Some(row) = row.filter(|r| r.password_hash.is_some()) else {
+            static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            let dummy = DUMMY.get_or_init(|| {
+                Argon2::default().hash_password(b"pictesa timing guard", &SaltString::generate(&mut OsRng)).map(|h| h.to_string()).unwrap_or_default()
+            });
+            if let Ok(parsed) = PasswordHash::new(dummy) {
+                let _ = Argon2::default().verify_password(password.as_bytes(), &parsed);
+            }
+            return Err(bad());
+        };
         let stored = row.password_hash.clone().ok_or_else(bad)?;
         let parsed = PasswordHash::new(&stored).map_err(|_| bad())?;
         Argon2::default().verify_password(password.as_bytes(), &parsed).map_err(|_| bad())?;

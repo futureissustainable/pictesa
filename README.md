@@ -100,7 +100,7 @@ pictesa serve --hosted --host 0.0.0.0 --public-url https://studio.example.com
 
 Hosted mode adds sign-up, sessions and personal API tokens. Users can bring their own keys (stored encrypted per user). To let them run on your keys instead, set `PICTESA_BILLING=1`, `PICTESA_MARKUP` (default 1.25), `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`: runs are charged from a prepaid wallet at provider price times the markup, failed runs are refunded automatically, and `pictesa billing grant` adds allowances. Your environment keys are never used for free in hosted mode.
 
-For an invite-only server, set `PICTESA_SIGNUP=closed` and add each account with `pictesa users add judge@example.com` (reads the password from stdin; the first account administers the server).
+For an invite-only server, set `PICTESA_SIGNUP=closed` and add each account with `pictesa users add judge@example.com` (reads the password from stdin; the first account administers the server). Each account may store `PICTESA_USER_STORAGE_MB` of files (default 5,120, trash included). Hosted users never see the server's own settings, folders or backend addresses, and failed runs show the reason without paths or internal URLs.
 
 ## How it fits together
 

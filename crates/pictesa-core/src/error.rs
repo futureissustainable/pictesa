@@ -93,8 +93,9 @@ impl From<reqwest::Error> for ProviderError {
         if e.is_builder() {
             return Self::InvalidInput("the server address is not a valid URL".into());
         }
+        // The queue reads this prefix: a timed-out submission may have started, so it is never retried.
         if e.is_timeout() {
-            return Self::Transient(format!("{server} did not answer in time"));
+            return Self::Transient(format!("request timed out: {server} did not answer in time"));
         }
         if e.is_connect() {
             return Self::Transient(format!("nothing answered at {server}"));

@@ -51,16 +51,17 @@ pub async fn public_address(url: &Url) -> Result<SocketAddr, String> {
     }
     let host = url.host_str().ok_or("the URL has no host")?;
     let port = url.port_or_known_default().ok_or("the URL has no port")?;
+    // One answer for names that do not resolve and for private addresses, so the reply never tells
+    // which internal names exist.
+    const REFUSED: &str = "the address is not a public server this one can reach";
     let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.trim_start_matches('[').trim_end_matches(']'), port))
         .await
-        .map_err(|_| "the host name does not resolve".to_string())?
+        .map_err(|_| REFUSED.to_string())?
         .collect();
-    if addrs.is_empty() {
-        return Err("the host name does not resolve".into());
-    }
     // Every answer must be public, or DNS could alternate between a public and a private address.
-    if addrs.iter().any(|a| !ip_is_public(a.ip())) {
-        return Err("private and local network addresses are not allowed".into());
+    if addrs.is_empty() || addrs.iter().any(|a| !ip_is_public(a.ip())) {
+        tracing::debug!("refused address {host}: {} answers, private: {}", addrs.len(), addrs.iter().any(|a| !ip_is_public(a.ip())));
+        return Err(REFUSED.into());
     }
     Ok(addrs[0])
 }
@@ -113,6 +114,11 @@ impl reqwest::dns::Resolve for PublicResolver {
 
 /// A client that never reaches private addresses: names resolve through [`PublicResolver`] and
 /// redirects to literal private IPs are refused (literal IPs skip DNS).
+/// A client like [`guarded_client`] that returns redirects instead of following them.
+pub fn guarded_no_redirect_client(ua: &str, connect: std::time::Duration) -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder().user_agent(ua).connect_timeout(connect).redirect(reqwest::redirect::Policy::none()).dns_resolver(std::sync::Arc::new(PublicResolver)).build()?)
+}
+
 pub fn guarded_client(ua: &str, connect: std::time::Duration, total: Option<std::time::Duration>) -> anyhow::Result<reqwest::Client> {
     let policy = reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() >= 5 {
@@ -160,5 +166,12 @@ mod tests {
         for good in ["1.1.1.1", "142.250.180.14", "2606:4700:4700::1111"] {
             assert!(ip_is_public(good.parse().unwrap()), "{good} must be allowed");
         }
+    }
+
+    #[tokio::test]
+    async fn refused_addresses_all_read_the_same() {
+        let private = public_address(&Url::parse("http://localhost:9/").unwrap()).await.unwrap_err();
+        let missing = public_address(&Url::parse("http://no-such-host.invalid/").unwrap()).await.unwrap_err();
+        assert_eq!(private, missing);
     }
 }

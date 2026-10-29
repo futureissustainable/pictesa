@@ -86,6 +86,9 @@ pub struct Ctx {
     pub creds: HashMap<String, String>,
     /// What the provider's answer says the run cost, in US dollars. One job per context.
     cost: std::sync::Arc<std::sync::Mutex<Option<f64>>>,
+    /// A client that does not follow redirects, for providers that must see a redirect before
+    /// following it (keys must not travel to the target). Guarded like `http` when that is.
+    no_redirect: Option<reqwest::Client>,
 }
 
 impl Ctx {
@@ -102,7 +105,20 @@ impl Ctx {
         self.get("base_url").unwrap_or(default).trim_end_matches('/').to_string()
     }
     pub fn new(http: reqwest::Client, creds: HashMap<String, String>) -> Self {
-        Self { http, creds, cost: Default::default() }
+        Self { http, creds, cost: Default::default(), no_redirect: None }
+    }
+    pub fn with_no_redirect(mut self, client: reqwest::Client) -> Self {
+        self.no_redirect = Some(client);
+        self
+    }
+    /// The context's no-redirect client, or a plain one when the engine set none (tests, tools).
+    pub fn no_redirect_client(&self) -> reqwest::Client {
+        static PLAIN: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        self.no_redirect.clone().unwrap_or_else(|| {
+            PLAIN
+                .get_or_init(|| reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(std::time::Duration::from_secs(15)).build().unwrap_or_default())
+                .clone()
+        })
     }
     /// Records the charge a provider reports with its answer (OpenRouter sends `usage.cost`).
     pub fn report_cost(&self, usd: f64) {

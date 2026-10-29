@@ -148,6 +148,9 @@ pub(crate) struct Inner {
     /// for providers whose endpoint a user chose.
     pub http_guarded: reqwest::Client,
     pub download_guarded: reqwest::Client,
+    /// No-redirect clients for providers that inspect redirects themselves (plain and guarded).
+    pub no_redirect: reqwest::Client,
+    pub no_redirect_guarded: reqwest::Client,
     /// Scoped engines (a CLI run next to a server) only process batches they created themselves.
     pub scoped: std::sync::atomic::AtomicBool,
     pub owned_batches: Mutex<std::collections::HashSet<String>>,
@@ -160,6 +163,8 @@ pub(crate) struct Inner {
     pub(crate) boards: boards::Live,
     /// ComfyUI model files being downloaded or done since start.
     pub model_downloads: Mutex<Vec<downloads::Download>>,
+    /// Board shares to emails without an account, per person: (window start, count).
+    pub share_misses: Mutex<HashMap<String, (i64, u32)>>,
 }
 
 /// Cheap to clone; all clones share the same state.
@@ -192,6 +197,8 @@ impl Engine {
             .build()?;
         let http_guarded = netguard::guarded_client(&ua, Duration::from_secs(15), None)?;
         let download_guarded = netguard::guarded_client(&ua, Duration::from_secs(20), Some(Duration::from_secs(1800)))?;
+        let no_redirect = reqwest::Client::builder().user_agent(&ua).connect_timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none()).build()?;
+        let no_redirect_guarded = netguard::guarded_no_redirect_client(&ua, Duration::from_secs(15))?;
         let (events, _) = broadcast::channel(1024);
         let inner = Inner {
             cfg,
@@ -208,6 +215,8 @@ impl Engine {
             instance: new_id(),
             http_guarded,
             download_guarded,
+            no_redirect,
+            no_redirect_guarded,
             events,
             wake: Notify::new(),
             cancels: Mutex::new(HashMap::new()),
@@ -219,6 +228,7 @@ impl Engine {
             arenas: Default::default(),
             boards: Default::default(),
             model_downloads: Mutex::new(Vec::new()),
+            share_misses: Mutex::new(HashMap::new()),
         };
         let engine = Self { inner: Arc::new(inner) };
         engine.inner.catalog.load_cache(&engine.inner.db).await;

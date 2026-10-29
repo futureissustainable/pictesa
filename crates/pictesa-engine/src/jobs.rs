@@ -123,6 +123,21 @@ impl Engine {
         self.model_prefs(user).await
     }
 
+    /// One model as API and MCP callers see it. Hosted users get only the `meta` keys the studio
+    /// uses: never the operator's folders, server paths or backend addresses.
+    pub async fn model_view(&self, user: &str, id: &str) -> Result<ModelSpec> {
+        let mut spec = self.model(user, id).await?;
+        if self.mode() == crate::Mode::Hosted {
+            const PUBLIC: &[&str] = &["supports_loras", "lora_family", "training_schema", "batch", "downloads", "models", "missing_models", "missing_nodes", "template", "license", "sources", "date"];
+            let mut public: Map<String, Value> = PUBLIC.iter().filter_map(|key| spec.meta.get(*key).cloned().map(|value| ((*key).to_string(), value))).collect();
+            if spec.meta.get("unavailable").is_some() {
+                public.insert("unavailable".into(), json!("The server's model backend did not answer. Try again later."));
+            }
+            spec.meta = Value::Object(public);
+        }
+        Ok(spec)
+    }
+
     /// Full spec for one model (fetches its schema on first use).
     pub async fn model(&self, user: &str, id: &str) -> Result<ModelSpec> {
         let spec = self.inner.catalog.find(id).ok_or_else(|| EngineError::not_found("model"))?;
@@ -715,10 +730,39 @@ impl Engine {
         Ok(asset)
     }
 
+    /// Hosted accounts keep at most `PICTESA_USER_STORAGE_MB` (default 5,120) of files, counting the
+    /// trash, so one account cannot fill the operator's disk. Local mode has no limit.
+    async fn check_storage(&self, user: &str, adding: u64) -> Result<()> {
+        if self.mode() != crate::Mode::Hosted {
+            return Ok(());
+        }
+        let quota = std::env::var("PICTESA_USER_STORAGE_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(5120) << 20;
+        let (used,): (i64,) = sqlx::query_as("SELECT COALESCE(SUM(size), 0) FROM assets WHERE user_id = ?").bind(user).fetch_one(&self.inner.db).await?;
+        if used.max(0) as u64 + adding > quota {
+            let gb = |b: u64| format!("{:.1} GB", b as f64 / (1u64 << 30) as f64);
+            return Err(EngineError::invalid(format!("Your storage is full ({} of {}). Delete files and empty the trash to make room.", gb(used.max(0) as u64), gb(quota)), Some("file")));
+        }
+        Ok(())
+    }
+
+    /// Checks a freshly stored file against the quota; a refused file is removed unless another
+    /// asset already uses the same content.
+    async fn admit_stored(&self, user: &str, stored: &crate::files::Stored) -> Result<()> {
+        if let Err(e) = self.check_storage(user, stored.size).await {
+            let (users,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM assets WHERE hash = ?").bind(&stored.hash).fetch_one(&self.inner.db).await?;
+            if users == 0 {
+                self.inner.files.remove(&stored.hash, &stored.ext).await;
+            }
+            return Err(e);
+        }
+        Ok(())
+    }
+
     pub async fn upload(&self, user: &str, bytes: &[u8], file_name: Option<&str>, mime: Option<&str>) -> Result<Asset> {
         if bytes.is_empty() {
             return Err(EngineError::invalid("The file is empty.", Some("file")));
         }
+        self.check_storage(user, bytes.len() as u64).await?;
         let stored = self.inner.files.store_bytes(bytes, mime, file_name, false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("file")))?;
         self.insert_named_asset(user, &stored, "upload", None, None, file_name, None).await
     }
@@ -728,7 +772,9 @@ impl Engine {
     where
         S: futures::Stream<Item = std::result::Result<bytes::Bytes, std::io::Error>> + Unpin,
     {
+        self.check_storage(user, 0).await?;
         let stored = self.inner.files.store_stream(stream, None, file_name, false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("file")))?;
+        self.admit_stored(user, &stored).await?;
         self.insert_named_asset(user, &stored, "upload", None, None, file_name, None).await
     }
 
@@ -752,7 +798,9 @@ impl Engine {
         if !resp.status().is_success() {
             return Err(EngineError::invalid(if hosted { "The download failed.".to_string() } else { format!("Download failed with HTTP {}.", resp.status()) }, Some("url")));
         }
+        self.check_storage(user, 0).await?;
         let stored = self.inner.files.store_response(resp, Some(parsed.path()), false).await.map_err(|e| EngineError::invalid(format!("{e:#}"), Some("url")))?;
+        self.admit_stored(user, &stored).await?;
         let name = parsed.path_segments().and_then(|mut s| s.next_back()).filter(|n| !n.is_empty()).map(String::from);
         let asset = self.insert_named_asset(user, &stored, "import", None, metadata.source_url.as_deref().or(Some(url)), name.as_deref(), None).await?;
         self.fill_asset_metadata(user, &asset.id, metadata).await

@@ -330,13 +330,15 @@ async fn shutdown() {
 
 // ---------- health and auth ----------
 
-async fn health(State(s): State<AppState>) -> Json<Value> {
+async fn health(State(s): State<AppState>, req: Request) -> Json<Value> {
+    // The data folder names the account and home path: only for a signed-in local caller.
+    let trusted = s.engine.mode() == Mode::Local && (s.opts.token.is_none() || req.extensions().get::<Caller>().is_some());
     Json(json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
         "mode": mode_name(s.engine.mode()),
         "ffmpeg": s.engine.has_ffmpeg(),
-        "data_dir": (s.engine.mode() == Mode::Local).then(|| s.engine.data_dir().display().to_string()),
+        "data_dir": trusted.then(|| s.engine.data_dir().display().to_string()),
     }))
 }
 
@@ -501,8 +503,15 @@ struct ProviderValues {
 }
 
 async fn set_provider(State(s): State<AppState>, c: Caller, Path(id): Path<String>, Json(b): Json<ProviderValues>) -> ApiResult<Json<Value>> {
+    // Pictesa runs the program at the ai-toolkit path, so only the machine's owner sets it (CLI or
+    // environment); another program that can reach this port must not choose what runs.
+    if id == "ai-toolkit" && b.values.contains_key("path") {
+        return Err(ApiError(EngineError::invalid(AI_TOOLKIT_PATH_HINT, Some("path"))));
+    }
     Ok(Json(json!(s.engine.set_credentials(&c.user_id, &id, &b.values).await?)))
 }
+
+const AI_TOOLKIT_PATH_HINT: &str = "Set the ai-toolkit path with `pictesa keys set ai-toolkit path` or PICTESA_AI_TOOLKIT_PATH.";
 
 async fn clear_provider(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<StatusCode> {
     s.engine.clear_credentials(&c.user_id, &id).await?;
@@ -521,7 +530,7 @@ async fn models(State(s): State<AppState>, c: Caller, Query(f): Query<ModelFilte
 }
 
 async fn model(State(s): State<AppState>, c: Caller, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(s.engine.model(&c.user_id, &id).await?)))
+    Ok(Json(json!(s.engine.model_view(&c.user_id, &id).await?)))
 }
 
 async fn model_prefs(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
@@ -551,8 +560,11 @@ async fn start_download(State(s): State<AppState>, c: Caller, Json(b): Json<Down
     Ok((StatusCode::ACCEPTED, Json(json!({ "downloads": downloads }))).into_response())
 }
 
-async fn list_downloads(State(s): State<AppState>, _c: Caller) -> Json<Value> {
-    Json(json!({ "downloads": s.engine.downloads() }))
+async fn list_downloads(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
+    if s.engine.mode() == Mode::Hosted && c.user.as_ref().is_none_or(|u| u.role != "admin") {
+        return Err(ApiError(EngineError::Forbidden("Only the administrator can see model downloads.".into())));
+    }
+    Ok(Json(json!({ "downloads": s.engine.downloads() })))
 }
 
 #[derive(Deserialize)]

@@ -14,6 +14,7 @@ import { useSession } from "../../lib/session";
 import type { Asset, BoardNode, Person } from "../../lib/types";
 import { openViewer, useSequence } from "../../lib/viewer";
 import { Choice, Control } from "../../ui/control";
+import { ConfirmDialog } from "../../ui/dialog";
 import { Icon, Spinner } from "../../ui/icon";
 import { Canvas, fitView, nodeHeight, toBoard, typing, zoomAround, type Point, type Viewport } from "./canvas";
 import { assetHeight, type NodeActions } from "./nodes";
@@ -448,20 +449,13 @@ function Viewers({ people }: { people: Person[] }) {
 }
 
 function BoardMenu({ boardId, myId, owner, hosted }: { boardId: string; myId: string; owner: boolean; hosted: boolean }) {
+  const [deleting, setDeleting] = useState(false);
   if (!owner && !hosted) return null;
   return (
+    <>
     <Control label="Board" icon="more_horiz" caret={false} showTitle={false} triggerProps={{ title: "More" }}>
       {owner ? (
-        <Choice
-          icon="delete"
-          onPick={() => {
-            if (!confirm("Delete this board for everyone? Its files stay in the libraries.")) return;
-            api.deleteBoard(boardId).then(
-              () => navigate("/boards"),
-              (error: unknown) => notifyError(errorMessage(error)),
-            );
-          }}
-        >
+        <Choice icon="delete" onPick={() => setDeleting(true)}>
           Delete board
         </Choice>
       ) : (
@@ -478,5 +472,19 @@ function BoardMenu({ boardId, myId, owner, hosted }: { boardId: string; myId: st
         </Choice>
       )}
     </Control>
+    {deleting && (
+      <ConfirmDialog
+        title="Delete this board for everyone?"
+        confirm="Delete board"
+        onClose={() => setDeleting(false)}
+        onConfirm={async () => {
+          await api.deleteBoard(boardId);
+          navigate("/boards");
+        }}
+      >
+        <p>Its files stay in the libraries.</p>
+      </ConfirmDialog>
+    )}
+    </>
   );
 }

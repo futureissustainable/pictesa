@@ -190,17 +190,39 @@ fn never_sent(job: &JobRow) -> bool {
     job.remote.is_none() && job.submitting == 0
 }
 
+/// Blanks web addresses and absolute file paths in a backend's message (a ComfyUI exception, for
+/// example), keeping the words that explain what went wrong.
+fn redact(text: &str) -> String {
+    let words: Vec<String> = text
+        .split(' ')
+        .map(|w| {
+            let bare = w.trim_matches(|c: char| "\"'()[]{}<>,;".contains(c));
+            let path = (bare.starts_with('/') && bare[1..].contains('/')) || bare.get(1..3) == Some(":\\") || bare.starts_with("\\\\");
+            if bare.contains("://") {
+                w.replace(bare, "[address]")
+            } else if path {
+                w.replace(bare, "[path]")
+            } else {
+                w.to_string()
+            }
+        })
+        .collect();
+    words.join(" ")
+}
+
 /// A timed-out request may have reached the provider: never retried, never refunded.
 fn is_timeout(e: &ProviderError) -> bool {
     matches!(e, ProviderError::Transient(m) if m.starts_with("request timed out"))
 }
 
 /// Text stored for a failure. Hosted runs against a user-chosen endpoint keep only the kind, so a
-/// remote server's answer is never relayed.
-fn failure_text(e: &ProviderError, guarded: bool) -> String {
+/// remote server's answer is never relayed; other hosted runs keep the message without the
+/// operator's addresses and file paths.
+fn failure_text(e: &ProviderError, guarded: bool, hosted: bool) -> String {
     if !guarded {
-        return e.to_string();
+        return if hosted { redact(&e.to_string()) } else { e.to_string() };
     }
+    tracing::info!("run failed: {e}");
     match e.kind() {
         "auth" => "The provider rejected the key.",
         "insufficient_credits" => "The provider account has no credits left.",
@@ -233,6 +255,7 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
         Ok(_) => return fail(engine, &job, "auth", "The key this job was created with is no longer available. Add it again in Settings > Providers and retry.", never_sent(&job)).await,
         Err(e) => return fail(engine, &job, "auth", &e.to_string(), never_sent(&job)).await,
     };
+    let hosted = engine.mode() == crate::Mode::Hosted;
     let spec = match engine.model(&job.user_id, &job.model).await {
         Ok(s) => s,
         Err(e) => return fail(engine, &job, "not_supported", &e.to_string(), never_sent(&job)).await,
@@ -308,7 +331,7 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                     set_progress(engine, &job, None, Some(format!("Provider busy, retrying in {}s", wait.as_secs().max(1)))).await;
                     tokio::select! { _ = tokio::time::sleep(wait) => {}, _ = token.cancelled() => return publish(engine, &job.id).await }
                 }
-                Err(e) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded), true).await,
+                Err(e) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded, hosted), true).await,
             }
         }
         publish(engine, &job.id).await;
@@ -347,7 +370,7 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                     break;
                 }
                 // The provider reports the job failed; providers do not bill failed generations.
-                Ok(PollStatus::Failed(e)) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded), true).await,
+                Ok(PollStatus::Failed(e)) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded, hosted), true).await,
                 Ok(PollStatus::Queued { position }) => {
                     errors = 0;
                     let msg = Some(match position {
@@ -386,13 +409,13 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
                 Err(e) if e.is_retryable() || matches!(e, ProviderError::Failed(_)) && errors < 3 => {
                     errors += 1;
                     if errors > MAX_POLL_ERRORS {
-                        return fail(engine, &job, "lost_contact", &format!("Lost contact with the provider: {}", failure_text(&e, guarded)), false).await;
+                        return fail(engine, &job, "lost_contact", &format!("Lost contact with the provider: {}", failure_text(&e, guarded, hosted)), false).await;
                     }
                     if let Some(wait) = e.retry_after() {
                         tokio::time::sleep(wait).await;
                     }
                 }
-                Err(e) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded), false).await,
+                Err(e) => return fail(engine, &job, e.kind(), &failure_text(&e, guarded, hosted), false).await,
             }
         }
     }
@@ -416,7 +439,8 @@ async fn process(engine: &Engine, job: JobRow, token: CancellationToken) {
     }
     if saved == 0 {
         let _ = sqlx::query("UPDATE jobs SET status = 'running' WHERE id = ? AND status = 'canceled'").bind(&job.id).execute(&engine.inner.db).await;
-        return fail(engine, &job, "download_failed", &format!("Could not download the result: {:#}", last_error.unwrap()), false).await;
+        let detail = if hosted { String::new() } else { format!(": {:#}", last_error.unwrap()) };
+        return fail(engine, &job, "download_failed", &format!("Could not download the result{detail}"), false).await;
     }
     // Before the job reads as finished, so whoever waits for it sees the real cost.
     if let Some(usd) = ctx.reported_cost() {
@@ -637,5 +661,35 @@ impl Engine {
             spawn_job(self, job);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosted_failures_keep_the_reason_but_not_paths_or_addresses() {
+        let text = redact("Prompt outputs failed validation: CheckpointLoader: 'x.safetensors' not in /home/op/ComfyUI/models (see http://127.0.0.1:8188/api/view?x=1) C:\\ComfyUI\\models");
+        assert!(text.starts_with("Prompt outputs failed validation"), "{text}");
+        for leak in ["/home/op", "127.0.0.1", "C:\\ComfyUI"] {
+            assert!(!text.contains(leak), "{text}");
+        }
+        assert_eq!(redact("Add a start frame."), "Add a start frame.");
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_submission_is_never_retried() {
+        // A server that accepts the connection but never answers: the request times out.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _held = listener.accept().await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+        let client = reqwest::Client::builder().timeout(Duration::from_millis(200)).build().unwrap();
+        let e = ProviderError::from(client.get(format!("http://{addr}/submit?key=secret")).send().await.unwrap_err());
+        assert!(is_timeout(&e), "{e}");
+        assert!(!e.to_string().contains("secret"), "{e}");
     }
 }

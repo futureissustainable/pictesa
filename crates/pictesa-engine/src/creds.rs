@@ -114,7 +114,8 @@ impl Engine {
         let http = if guard { self.inner.http_guarded.clone() } else { self.inner.http.clone() };
         let mut creds:HashMap<String,String>=resolved.values.into_iter().map(|(k,(v,_))|(k,v)).collect();
         creds.insert("_data_dir".into(),self.data_dir().to_string_lossy().into_owned());
-        Ctx::new(http, creds)
+        let no_redirect = if guard { self.inner.no_redirect_guarded.clone() } else { self.inner.no_redirect.clone() };
+        Ctx::new(http, creds).with_no_redirect(no_redirect)
     }
 
     /// Hosted runs against an endpoint a user chose must not reach private addresses.
@@ -138,7 +139,8 @@ impl Engine {
         let mut values = Map::new();
         for f in &info.fields {
             let state = match resolved.values.get(&f.key) {
-                Some((v, source)) => json!({ "set": true, "source": source, "value": if f.secret { Value::Null } else { json!(v) } }),
+                // The operator's own settings (platform) stay private on a hosted server.
+                Some((v, source)) => json!({ "set": true, "source": source, "value": if f.secret || *source == "platform" { Value::Null } else { json!(v) } }),
                 None => json!({ "set": false }),
             };
             values.insert(f.key.clone(), state);

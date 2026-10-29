@@ -1293,14 +1293,7 @@ async fn output_for(ctx: &Ctx, url: String) -> ProviderResult<Output> {
     if headers.is_empty() {
         return Ok(Output::url(url));
     }
-    static NO_REDIRECT: OnceLock<reqwest::Client> = OnceLock::new();
-    let client = NO_REDIRECT.get_or_init(|| {
-        reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .build()
-            .unwrap_or_default()
-    });
+    let client = ctx.no_redirect_client();
     let mut rb = client.get(&url).timeout(API_TIMEOUT);
     for (k, v) in &headers {
         rb = rb.header(k, v);

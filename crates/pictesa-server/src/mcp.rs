@@ -485,7 +485,7 @@ async fn call(ctx: &McpContext, name: &str, args: &Value) -> Result<Vec<Value>, 
         }
         "get_model" => {
             let id = arg_str(args, "id").ok_or("id is required")?;
-            Ok(text(&json!(e.model(user, id).await.map_err(err)?)))
+            Ok(text(&json!(e.model_view(user, id).await.map_err(err)?)))
         }
         "list_presets" => {
             let output: Option<MediaKind> = arg_str(args, "output").and_then(|o| serde_json::from_value(json!(o)).ok());

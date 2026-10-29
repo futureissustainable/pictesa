@@ -205,7 +205,8 @@ impl FileStore {
     async fn probe(&self, path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
         let ffprobe = self.ffprobe.as_ref()?;
         let out = tokio::process::Command::new(ffprobe)
-            .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
+            // Stored media only: no network or other protocols, whatever the file claims to be.
+            .args(["-v", "error", "-protocol_whitelist", "file", "-print_format", "json", "-show_format", "-show_streams"])
             .arg(path)
             .stdin(Stdio::null())
             .output()
@@ -230,7 +231,7 @@ impl FileStore {
         }
         let at = duration_ms.map(|d| (d as f64 / 1000.0 * 0.15).min(1.0)).unwrap_or(0.0);
         let status = tokio::process::Command::new(ffmpeg)
-            .args(["-v", "error", "-y", "-ss", &format!("{at:.2}"), "-i"])
+            .args(["-v", "error", "-y", "-protocol_whitelist", "file", "-ss", &format!("{at:.2}"), "-i"])
             .arg(path)
             .args(["-frames:v", "1", "-vf", &format!("scale='min({THUMB_EDGE},iw)':-2"), "-q:v", "4"])
             .arg(thumb)
