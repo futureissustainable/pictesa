@@ -198,6 +198,10 @@ impl Engine {
             if text.len() > 8192 {
                 return Err(EngineError::invalid(format!("{} is too long", field.label), Some(key)));
             }
+            // URL fields take web addresses, so a typo fails here instead of as a transport error later.
+            if !field.secret && key.contains("url") && !url::Url::parse(&text).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.has_host()) {
+                return Err(EngineError::invalid(format!("{} must be an http:// or https:// address", field.label), Some(key)));
+            }
             // Hosted users may not point the server at its own files.
             if self.mode() == crate::Mode::Hosted && !field.secret && (key.contains("dir") || key.contains("path")) {
                 return Err(EngineError::invalid(format!("{} is managed by the server operator.", field.label), Some(key)));

@@ -83,11 +83,23 @@ impl ProviderError {
 }
 
 impl From<reqwest::Error> for ProviderError {
+    /// Plain messages that name only the server, never the full URL: some APIs take the key as a
+    /// query parameter, and these messages reach the studio and the logs.
     fn from(e: reqwest::Error) -> Self {
+        let server = e.url().map(|u| u.origin().ascii_serialization()).filter(|o| o != "null").unwrap_or_else(|| "the server".into());
         if let Some(status) = e.status() {
-            return Self::from_http(status.as_u16(), &e.to_string(), None);
+            return Self::from_http(status.as_u16(), &e.without_url().to_string(), None);
         }
-        Self::Transient(e.to_string())
+        if e.is_builder() {
+            return Self::InvalidInput("the server address is not a valid URL".into());
+        }
+        if e.is_timeout() {
+            return Self::Transient(format!("{server} did not answer in time"));
+        }
+        if e.is_connect() {
+            return Self::Transient(format!("nothing answered at {server}"));
+        }
+        Self::Transient(format!("{} ({server})", e.without_url()))
     }
 }
 

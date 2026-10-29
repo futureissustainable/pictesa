@@ -52,7 +52,11 @@ export function Composer() {
   const models = useModels(mode);
   const providers = useProviders().data;
   const presets = usePresets(mode).data;
-  const list = models.data ?? [];
+  // Image and audio models that need a video (Grab frame) are video tools; they live in Edit.
+  const list = useMemo(
+    () => (models.data ?? []).filter((item) => mode === "video" || !item.inputs.some((slot) => slot.kind === "video" && slot.min > 0)),
+    [models.data, mode],
+  );
   const listed = list.find((item) => item.id === draft.modelByMode[mode]) ?? defaultModel(list);
   // Discovered gateway models are listed without params; their full spec loads on selection.
   const full = useFullModel(listed);
@@ -102,6 +106,10 @@ export function Composer() {
   const [dragging, setDragging] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [enhancing, setEnhancing] = useState(false);
+  const [canEnhance, setCanEnhance] = useState(false);
+  useEffect(() => {
+    void api.enhanceAvailable().then(({ available }) => setCanEnhance(available), () => undefined);
+  }, []);
   const [enhanceError, setEnhanceError] = useState<string | null>(null);
   const [undo, setUndo] = useState<{ before: string; after: string } | null>(null);
 
@@ -422,7 +430,7 @@ export function Composer() {
                     Undo
                   </button>
                 )}
-                {mode !== "audio" && (
+                {mode !== "audio" && canEnhance && (
                   <button
                     type="button"
                     className="icon-button"

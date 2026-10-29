@@ -223,7 +223,7 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/models/prefs", get(model_prefs).put(set_model_prefs))
         .route("/models/{*id}", get(model))
         .route("/presets", get(presets))
-        .route("/prompt/enhance", post(enhance_prompt))
+        .route("/prompt/enhance", get(enhance_available).post(enhance_prompt))
         .route("/prompts/history", get(prompts::history))
         .route("/prompts", get(prompts::list).post(prompts::save))
         .route("/prompts/{id}", axum::routing::patch(prompts::rename).delete(prompts::delete))
@@ -586,6 +586,10 @@ async fn presets(State(s): State<AppState>, _c: Caller, Query(q): Query<PresetQu
 struct EnhanceBody {
     prompt: String,
     output: Option<MediaKind>,
+}
+
+async fn enhance_available(State(s): State<AppState>, c: Caller) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "available": s.engine.enhance_available(&c.user_id).await? })))
 }
 
 async fn enhance_prompt(State(s): State<AppState>, c: Caller, Json(b): Json<EnhanceBody>) -> ApiResult<Json<Value>> {

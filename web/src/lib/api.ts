@@ -170,6 +170,8 @@ export const api = {
   importWorkflow: (name: string, workflow: unknown) => request<WorkflowImport>("POST", "/api/workflows/import", { name, workflow }),
   presets: (output: MediaKind) => request<{ presets: Preset[] }>("GET", withQuery("/api/presets", { output })),
   enhancePrompt: (prompt: string, output: MediaKind) => request<{ prompt: string }>("POST", "/api/prompt/enhance", { prompt, output }),
+  /** Whether "Improve prompt" has an OpenRouter key it may use for this person. */
+  enhanceAvailable: () => request<{ available: boolean }>("GET", "/api/prompt/enhance"),
 
   promptHistory: (q = "", limit = 50) => request<{ history: PromptHistory[] }>("GET", withQuery("/api/prompts/history", { q, limit })),
   savedPrompts: (q = "") => request<{ prompts: SavedPrompt[] }>("GET", withQuery("/api/prompts", { q, limit: 100 })),

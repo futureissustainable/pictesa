@@ -17,8 +17,8 @@ fn spec(id: &str, output: MediaKind, complete: bool) -> ModelSpec {
     } else {
         vec![Task::TextToImage, Task::ImageEdit]
     };
-    let mut m = ModelSpec::new("replicate", id, id, output, &tasks);
-    m.vendor = Some(id.split('/').next().unwrap_or("Replicate").into());
+    let mut m = ModelSpec::new("replicate", id, &crate::util::slug_name(id), output, &tasks);
+    m.vendor = Some(id.split('/').next().map(crate::util::owner_name).unwrap_or_else(|| "Replicate".into()));
     m.complete = complete;
     m.pricing = Some(Pricing::Variable {
         note: "Replicate model pricing".into(),
@@ -115,7 +115,7 @@ impl Provider for Replicate {
                     continue;
                 };
                 let mut s = spec(&format!("{owner}/{name}"), kind, false);
-                s.name = m.get("name").and_then(Value::as_str).unwrap_or(name).into();
+                s.name = crate::util::slug_name(name);
                 s.description = m
                     .get("description")
                     .and_then(Value::as_str)

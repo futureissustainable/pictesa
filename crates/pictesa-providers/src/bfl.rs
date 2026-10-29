@@ -14,7 +14,7 @@ fn image_spec(id: &str, price: f64, max_refs: u32) -> ModelSpec {
     let mut m = ModelSpec::new(
         "bfl",
         id,
-        id,
+        &crate::util::slug_name(id),
         MediaKind::Image,
         &[Task::TextToImage, Task::ImageEdit],
     );

@@ -18,7 +18,9 @@ export function inputUses(kind: MediaKind): { mode: MediaKind; role: InputRole; 
       for (const slot of model.inputs) {
         if (slot.kind !== kind) continue;
         const key = `${mode}:${slot.role}`;
-        if (!uses.has(key)) uses.set(key, { mode, role: slot.role, label: `${roleLabel[slot.role]} for ${kindLabel[mode].toLowerCase()}` });
+        // An image model's "start frame" is the picture it edits.
+        const label = mode === "image" && slot.role === "start_frame" ? "Image to edit" : `${roleLabel[slot.role]} for ${kindLabel[mode].toLowerCase()}`;
+        if (!uses.has(key)) uses.set(key, { mode, role: slot.role, label });
       }
     }
   }

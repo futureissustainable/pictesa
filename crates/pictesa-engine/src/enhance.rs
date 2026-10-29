@@ -46,6 +46,14 @@ fn extract_prompt(text: &str) -> Option<String> {
 }
 
 impl Engine {
+    /// Whether "Improve prompt" can run for this user (an OpenRouter key it may use is set).
+    pub async fn enhance_available(&self, user: &str) -> Result<bool> {
+        let Some(provider) = self.inner.catalog.provider("openrouter") else { return Ok(false) };
+        let sources = if self.mode() == crate::Mode::Hosted { crate::creds::Sources::Stored } else { crate::creds::Sources::Any };
+        let resolved = self.resolve_with(user, provider.as_ref(), sources).await?;
+        Ok(Self::is_configured(&provider.info(), &resolved))
+    }
+
     pub async fn enhance_prompt(&self, user: &str, prompt: &str, output: MediaKind) -> Result<String> {
         let prompt = prompt.trim();
         if prompt.is_empty() {

@@ -235,7 +235,7 @@ Show the balance and top-up only when `enabled` is true. A generation the wallet
 `POST /api/generations` accepts `"compare": ["model id", ...]` (up to 7 extra models). The same prompt, inputs and params run on every model in one batch; params are adapted to each model (unknown ones dropped, values snapped to the nearest allowed option) and inputs a model does not take are left out. Show the batch side by side.
 
 ### Prompt help
-`POST /api/prompt/enhance { prompt, output: "image"|"video" }` → `{ prompt }`. Rewrites a short idea into a detailed prompt with a free OpenRouter text model (the person's OpenRouter key; `PICTESA_ENHANCE_MODEL` picks another). Errors come back as validation errors with a readable message (no key, models busy).
+`POST /api/prompt/enhance { prompt, output: "image"|"video" }` → `{ prompt }`. Rewrites a short idea into a detailed prompt with a free OpenRouter text model (the person's OpenRouter key; `PICTESA_ENHANCE_MODEL` picks another). Errors come back as validation errors with a readable message (no key, models busy). `GET /api/prompt/enhance` → `{ available }` says whether a usable key is set, so a client can hide the button.
 
 ### Notes for clients (v1.2)
 - `ModelSpec.prompt` means the model *accepts* a prompt. A prompt is required only for text-to-image, text-to-video and text-to-audio runs without input files.

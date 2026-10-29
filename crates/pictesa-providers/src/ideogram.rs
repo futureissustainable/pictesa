@@ -119,7 +119,8 @@ impl Provider for Ideogram {
             MediaKind::Image,
             &[Task::TextToImage, Task::ImageEdit],
         )
-        .input(InputSlot::new(InputRole::StartFrame, MediaKind::Image, 1))
+        // The image to remix or edit; the role is shared with video start frames.
+        .input(InputSlot { label: Some("Image to edit".into()), ..InputSlot::new(InputRole::StartFrame, MediaKind::Image, 1) })
         .input(InputSlot::new(InputRole::Mask, MediaKind::Image, 1))
         .input(InputSlot::new(InputRole::Reference, MediaKind::Image, 10))
         .param(common::aspect_ratio(
