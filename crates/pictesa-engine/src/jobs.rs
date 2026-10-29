@@ -93,7 +93,9 @@ impl Engine {
                 v
             })
             .collect();
-        out.sort_by_key(|v| (!v.configured, !v.spec.tags.iter().any(|t| t == "featured")));
+        // Set-up models first; among them the free local ones, so agents searching a large catalog
+        // find the user's own ComfyUI or stable-diffusion.cpp models before paid cloud versions.
+        out.sort_by_key(|v| (!v.configured, !matches!(v.spec.pricing, Some(Pricing::Local)), !v.spec.tags.iter().any(|t| t == "featured")));
         match f.sort.as_deref() {
             Some("arena") => out.sort_by(|a, b| b.rating(task).unwrap_or(f64::MIN).total_cmp(&a.rating(task).unwrap_or(f64::MIN))),
             Some("newest") => out.sort_by(|a, b| b.released.cmp(&a.released)),

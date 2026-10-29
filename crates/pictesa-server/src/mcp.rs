@@ -158,7 +158,7 @@ fn tools() -> Value {
         {
             "name": "list_models",
             "title": "List models",
-            "description": "List generation and training models. By default only models whose provider is set up. Each model carries its LMArena rank per task when rated (human-preference leaderboards, updated daily).",
+            "description": "List generation and training models. By default only models whose provider is set up. Each model carries its LMArena rank per task when rated (human-preference leaderboards, updated daily). Free local models (pricing unit \"local\") come first.",
             "inputSchema": { "type": "object", "properties": {
                 "output": { "type": "string", "enum": ["image", "video", "audio", "lora"] },
                 "task": { "type": "string", "enum": ["text_to_image", "image_edit", "text_to_video", "image_to_video", "video_to_video", "video_to_audio", "upscale", "lip_sync", "text_to_audio", "training"] },

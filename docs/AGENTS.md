@@ -26,8 +26,10 @@ default_tools_approval_mode = "approve"
 
 Remote or shared, over Streamable HTTP: point the client at `http://127.0.0.1:4747/mcp` (add `Authorization: Bearer <token>` when the server requires one; hosted users create tokens in Settings > Agents).
 
+`generate` waits for its result, and a local video can take a few minutes. Give the client a long tool timeout so it waits instead of giving up and submitting again; for Claude Code, `MCP_TOOL_TIMEOUT=1200000 claude`. If a call does time out, the job keeps running: call `wait_for_job` with its id.
+
 Tools: `list_characters`, `list_recipes`, `run_recipe`, `import_workflow`, `train_lora`, `get_training`, `list_loras`, `list_collections`, `add_to_collection`, `list_models`, `get_model`, `list_presets`, `generate`, `get_job`, `wait_for_job`, `cancel_job`, `list_assets`, `get_asset`, `import_asset`, `list_boards`, `create_board`, `get_board`, `add_to_board`, `run_board_step`.
-`list_models` returns each model's LMArena rank per task when people have rated it; pass `sort: "arena"` with a `task` to get the best rated first, or `sort: "newest"`.
+`list_models` lists set-up models first and, among them, free local models (ComfyUI, stable-diffusion.cpp) before paid ones. Each model carries its LMArena rank per task when people have rated it; pass `sort: "arena"` with a `task` to get the best rated first, or `sort: "newest"`.
 `generate` waits for the result by default and returns local file paths, so an agent can open the image right away. Pass `include_preview: true` to also receive small JPEG previews for vision models.
 
 ### Apps (recipes)
