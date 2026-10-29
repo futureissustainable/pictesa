@@ -812,7 +812,8 @@ impl Engine {
         if metadata.is_empty() {
             return Ok(store::asset_row(&self.inner.db, user, id).await.map_err(|_| EngineError::not_found("file"))?.to_asset());
         }
-        let mut tx = self.inner.db.begin().await?;
+        // Reads then writes: take the write lock first, or a concurrent write fails it with SQLITE_BUSY_SNAPSHOT.
+        let mut tx = self.inner.db.begin_with("BEGIN IMMEDIATE").await?;
         let updated = sqlx::query("UPDATE assets SET prompt = coalesce(nullif(prompt, ''), nullif(?, '')),
             negative_prompt = coalesce(nullif(negative_prompt, ''), nullif(?, '')),
             origin = coalesce(nullif(origin, ''), nullif(?, '')),
