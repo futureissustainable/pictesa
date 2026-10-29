@@ -44,7 +44,7 @@ The features added on 25.10.2026 (batch runs, variations, inpainting with a pain
 
 Cloud providers were checked with real keys without spending: the key checks and live catalogs of fal, OpenAI, Google and OpenRouter (1,469 models, 613 of 617 fal image and 544 of 545 fal video models priced) on 25.10.2026, with paid runs switched off.
 
-Paid generation has run through OpenRouter only (one image on 25.10.2026, its charge recorded as the run's cost). Direct generation on fal, OpenAI and Google is untested: those accounts had no credit.
+Paid generation has run through OpenRouter only (one image on 25.10.2026, its charge recorded as the run's cost). Direct generation on fal, OpenAI and Google has not run live: those accounts had no credit. Every one of the 22 cloud adapters has offline contract tests instead (`crates/pictesa-providers/tests/contract_*.rs`): a local HTTPS stand-in replays the provider's documented answers through submit, poll, outputs and error handling.
 
 ## Real local models on a GPU
 
