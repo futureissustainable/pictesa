@@ -6,7 +6,7 @@ use pictesa_core::{
 };
 use serde_json::{json, Value};
 
-use crate::util::{failure, get_json, send_json};
+use crate::util::{failure, net_error, API_TIMEOUT};
 
 const BASE: &str = "https://dashscope-intl.aliyuncs.com/api/v1";
 pub struct Alibaba;
@@ -28,19 +28,55 @@ fn checked(v: Value) -> ProviderResult<Value> {
         .and_then(Value::as_str)
         .unwrap_or(code)
         .to_string();
-    Err(
-        if code.contains("InvalidApiKey") || code.contains("Unauthorized") {
-            ProviderError::Auth(message)
-        } else if code.contains("Throttling") || code.contains("RateLimit") {
-            ProviderError::RateLimited {
-                retry_after_ms: None,
-            }
-        } else if code.contains("Balance") || code.contains("Quota") {
-            ProviderError::InsufficientCredits(message)
-        } else {
-            failure(message)
-        },
-    )
+    Err(code_error(code, message))
+}
+
+/// Billing states DashScope reports as 400, 403 or 429 (overdue account, free tier only, spent
+/// budget); retrying or a new key does not help (https://www.alibabacloud.com/help/en/model-studio/error-code).
+const BILLING: &[&str] = &["Arrearage", "BillOverdue", "BudgetLimitExceeded", "FreeTierOnly", "CommodityNotPurchased"];
+
+fn code_error(code: &str, message: String) -> ProviderError {
+    if code.contains("InvalidApiKey") || code.contains("Unauthorized") {
+        ProviderError::Auth(message)
+    } else if BILLING.iter().any(|c| code.contains(c)) {
+        ProviderError::InsufficientCredits(message)
+    } else if code.contains("Throttling") || code.contains("RateLimit") {
+        ProviderError::RateLimited {
+            retry_after_ms: None,
+        }
+    } else if code.contains("Balance") || code.contains("Quota") {
+        ProviderError::InsufficientCredits(message)
+    } else if code.contains("DataInspection") || code.contains("IPInfringement") {
+        ProviderError::ContentPolicy(message)
+    } else {
+        failure(message)
+    }
+}
+
+/// Reads a DashScope answer; error statuses keep their billing code, the rest map by HTTP status.
+async fn answer(resp: reqwest::Response) -> ProviderResult<Value> {
+    let status = resp.status();
+    if status.is_success() {
+        return checked(pictesa_core::json_response(resp).await?);
+    }
+    let retry_after = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|s| (s * 1000.0) as u64);
+    let text = resp.text().await.map_err(net_error)?;
+    let v: Value = serde_json::from_str(&text).unwrap_or_default();
+    Err(match v.get("code").and_then(Value::as_str) {
+        Some(code) if BILLING.iter().any(|c| code.contains(c)) => {
+            ProviderError::InsufficientCredits(v["message"].as_str().unwrap_or(code).to_string())
+        }
+        _ => ProviderError::from_http(status.as_u16(), &text, retry_after),
+    })
+}
+
+async fn call(req: reqwest::RequestBuilder) -> ProviderResult<Value> {
+    answer(req.timeout(API_TIMEOUT).send().await.map_err(net_error)?).await
 }
 
 fn video_size(ratio: &str, resolution: &str) -> &'static str {
@@ -114,10 +150,15 @@ fn parse_task(v: &Value, kind: MediaKind) -> ProviderResult<PollStatus> {
             progress: None,
             message: None,
         }),
-        "FAILED" | "CANCELED" => Ok(PollStatus::Failed(failure(
-            v.get("message")
+        // The failure's code and message sit in `output`
+        // (https://www.alibabacloud.com/help/en/model-studio/text-to-video-api-reference).
+        "FAILED" | "CANCELED" => Ok(PollStatus::Failed(code_error(
+            out.get("code").or_else(|| v.get("code")).and_then(Value::as_str).unwrap_or(""),
+            out.get("message")
+                .or_else(|| v.get("message"))
                 .and_then(Value::as_str)
-                .unwrap_or("DashScope task failed"),
+                .unwrap_or("DashScope task failed")
+                .to_string(),
         ))),
         "SUCCEEDED" => {
             let urls: Vec<&str> = if kind == MediaKind::Video {
@@ -240,19 +281,11 @@ impl Provider for Alibaba {
             .bearer_auth(ctx.api_key()?)
             .send()
             .await
-            .map_err(crate::util::net_error)?;
-        if resp.status().is_success() {
-            checked(pictesa_core::json_response(resp).await?)?;
-            Ok(())
-        } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            Ok(())
-        } else {
-            Err(ProviderError::from_http(
-                resp.status().as_u16(),
-                "DashScope credential check failed",
-                None,
-            ))
+            .map_err(net_error)?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
         }
+        answer(resp).await.map(|_| ())
     }
     async fn submit(
         &self,
@@ -261,23 +294,22 @@ impl Provider for Alibaba {
         req: &GenerationRequest,
     ) -> ProviderResult<Submission> {
         let id = model.remote_id();
+        // Only the keyframe models keep the image2video path; Wan text and first-frame video share one.
         let path = if model.output == MediaKind::Image {
             "services/aigc/image-generation/generation"
-        } else if id.contains("t2v") {
-            "services/aigc/video-generation/video-synthesis"
-        } else {
+        } else if id.contains("kf2v") {
             "services/aigc/image2video/video-synthesis"
+        } else {
+            "services/aigc/video-generation/video-synthesis"
         };
-        let answer = checked(
-            send_json(
-                ctx.http
-                    .post(format!("{}/{path}", base(ctx)))
-                    .bearer_auth(ctx.api_key()?)
-                    .header("X-DashScope-Async", "enable"),
-                &body(model, req).await?,
-            )
-            .await?,
-        )?;
+        let answer = call(
+            ctx.http
+                .post(format!("{}/{path}", base(ctx)))
+                .bearer_auth(ctx.api_key()?)
+                .header("X-DashScope-Async", "enable")
+                .json(&body(model, req).await?),
+        )
+        .await?;
         let task = answer
             .pointer("/output/task_id")
             .and_then(Value::as_str)
@@ -293,14 +325,12 @@ impl Provider for Alibaba {
         )))
     }
     async fn poll(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
-        let v = checked(
-            get_json(
-                ctx.http
-                    .get(format!("{}/tasks/{}", base(ctx), handle.id))
-                    .bearer_auth(ctx.api_key()?),
-            )
-            .await?,
-        )?;
+        let v = call(
+            ctx.http
+                .get(format!("{}/tasks/{}", base(ctx), handle.id))
+                .bearer_auth(ctx.api_key()?),
+        )
+        .await?;
         let kind = handle
             .data
             .get("kind")

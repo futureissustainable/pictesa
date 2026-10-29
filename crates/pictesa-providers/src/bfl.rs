@@ -1,7 +1,7 @@
-use crate::util::{failure, get_json, send_json};
+use crate::util::{failure, get_json, net_error, send_json, API_TIMEOUT};
 use async_trait::async_trait;
 use pictesa_core::{
-    keys, CredentialField, Ctx, GenerationRequest, InputRole, InputSlot, MediaKind, ModelSpec,
+    json_response, keys, CredentialField, Ctx, GenerationRequest, InputRole, InputSlot, MediaKind, ModelSpec,
     Output, ParamSpec, PollStatus, Pricing, Provider, ProviderError, ProviderInfo, ProviderKind,
     ProviderResult, RemoteHandle, Submission, Task,
 };
@@ -248,15 +248,32 @@ impl Provider for Bfl {
         let url = handle
             .data_str("polling_url")
             .ok_or_else(|| ProviderError::Failed("BFL handle has no polling URL".into()))?;
-        let v = get_json(ctx.http.get(url).header("x-key", ctx.api_key()?)).await?;
+        let resp = ctx.http.get(url).header("x-key", ctx.api_key()?).timeout(API_TIMEOUT).send().await.map_err(net_error)?;
+        // A failed task can answer 503 with its normal JSON body; read its status first.
+        let v = if resp.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            let text = resp.text().await.map_err(net_error)?;
+            match serde_json::from_str::<Value>(&text) {
+                Ok(v) if v.get("status").is_some_and(Value::is_string) => v,
+                _ => return Err(ProviderError::from_http(503, &text, None)),
+            }
+        } else {
+            json_response(resp).await?
+        };
         match v.get("status").and_then(Value::as_str).unwrap_or("") {
-            "Pending" | "Task not found" => Ok(PollStatus::Queued { position: None }),
-            "Processing" => Ok(PollStatus::Running {
+            "Pending" => Ok(PollStatus::Queued { position: None }),
+            "Processing" | "Reasoning" | "Generating" => Ok(PollStatus::Running {
                 progress: v.get("progress").and_then(Value::as_f64).map(|n| n as f32),
                 message: None,
             }),
             "Ready" => Ok(PollStatus::Done(result(&v)?)),
-            "Error" | "Content Moderated" | "Request Moderated" => Ok(PollStatus::Failed(failure(
+            // Unknown or expired id: retried a few times by the engine, then the job fails.
+            "Task not found" => Err(ProviderError::Failed("BFL task not found or expired".into())),
+            "Content Moderated" | "Request Moderated" => Ok(PollStatus::Failed(ProviderError::ContentPolicy(format!(
+                "BFL {}: {}",
+                v["status"].as_str().unwrap_or_default(),
+                v.pointer("/details/Moderation Reasons").map(Value::to_string).unwrap_or_default()
+            )))),
+            "Error" => Ok(PollStatus::Failed(failure(
                 v.get("error")
                     .and_then(Value::as_str)
                     .unwrap_or("BFL generation failed"),

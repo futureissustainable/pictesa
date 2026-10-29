@@ -564,7 +564,6 @@
      "fal:lightricks/ltx-2.5/image-to-video/pro",
      "fal:alibaba/wan-3.0-prime/image-to-video",
      "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
-     "openai:sora-2",
      "comfyui:ltx25-i2v",
      "comfyui:wan22-i2v",
      "mock:video"
@@ -631,7 +630,6 @@
      "fal:lightricks/ltx-2.5/image-to-video/pro",
      "fal:alibaba/wan-3.0-prime/image-to-video",
      "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
-     "openai:sora-2",
      "comfyui:ltx25-i2v",
      "comfyui:wan22-i2v",
      "mock:video"
@@ -734,7 +732,6 @@
      "fal:lightricks/ltx-2.5/image-to-video/pro",
      "fal:alibaba/wan-3.0-prime/image-to-video",
      "fal:fal-ai/minimax/hailuo-2.3/pro/image-to-video",
-     "openai:sora-2",
      "comfyui:ltx25-i2v",
      "comfyui:wan22-i2v",
      "mock:video"

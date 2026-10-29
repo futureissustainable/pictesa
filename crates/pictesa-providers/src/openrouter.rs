@@ -7,7 +7,7 @@ use pictesa_core::{
 };
 use serde_json::{json, Value};
 
-use crate::util::{get_json, send_json};
+use crate::util::{get_json, net_error, API_TIMEOUT};
 
 pub struct OpenRouter;
 const API: &str = "https://openrouter.ai/api/v1";
@@ -99,6 +99,50 @@ fn chat_body(model: &ModelSpec, req: &GenerationRequest, refs: Vec<String>) -> V
     body
 }
 
+/// OpenRouter errors are `{"error": {"code", "message", "metadata"}}`
+/// (https://openrouter.ai/docs/api_reference/errors-and-debugging). `metadata` separates answers that
+/// share a status: a spent budget (403) or in-flight hold (402, see
+/// https://openrouter.ai/docs/api_reference/limits#handling-402-errors) and content refusals.
+fn api_error(status: u16, error: &Value, retry_after_ms: Option<u64>) -> ProviderError {
+    let message = error.get("message").and_then(Value::as_str).unwrap_or("OpenRouter error").to_string();
+    let meta = &error["metadata"];
+    match meta.get("limit_source").and_then(Value::as_str) {
+        Some("openrouter_in_flight_budget") if retry_after_ms.is_some() => return ProviderError::RateLimited { retry_after_ms },
+        Some(_) => return ProviderError::InsufficientCredits(message),
+        None => {}
+    }
+    if matches!(meta.get("error_type").and_then(Value::as_str), Some("content_policy_violation" | "refusal")) || meta.get("flagged_input").is_some() {
+        return ProviderError::ContentPolicy(message);
+    }
+    ProviderError::from_http(status, &message, retry_after_ms)
+}
+
+/// Sends a chat request. A provider failure after OpenRouter accepted the request comes back as an
+/// error body under HTTP 200, with the real status in `error.code` (errors guide, "Mid-stream errors").
+async fn post_chat(ctx: &Ctx, body: &Value) -> ProviderResult<Value> {
+    let resp = ctx
+        .http
+        .post(format!("{}/chat/completions", ctx.base_url(API)))
+        .bearer_auth(ctx.api_key()?)
+        .timeout(API_TIMEOUT)
+        .json(body)
+        .send()
+        .await
+        .map_err(net_error)?;
+    let status = resp.status().as_u16();
+    let retry_after_ms = resp.headers().get(reqwest::header::RETRY_AFTER).and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<f64>().ok()).map(|s| (s * 1000.0) as u64);
+    let text = resp.text().await.map_err(net_error)?;
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if let Some(e) = v.get("error").filter(|e| e.is_object()) {
+        let code = e.get("code").and_then(Value::as_u64).filter(|_| status < 300).map_or(status, |c| c as u16);
+        return Err(api_error(code, e, retry_after_ms));
+    }
+    if status >= 300 {
+        return Err(ProviderError::from_http(status, &text, retry_after_ms));
+    }
+    Ok(v)
+}
+
 #[async_trait]
 impl Provider for OpenRouter {
     fn info(&self) -> ProviderInfo {
@@ -179,14 +223,7 @@ impl Provider for OpenRouter {
         for input in req.inputs(InputRole::Reference) {
             refs.push(input.url_or_data_uri().await?);
         }
-        let body = chat_body(model, req, refs);
-        let v = send_json(
-            ctx.http
-                .post(format!("{}/chat/completions", ctx.base_url(API)))
-                .bearer_auth(ctx.api_key()?),
-            &body,
-        )
-        .await?;
+        let v = post_chat(ctx, &chat_body(model, req, refs)).await?;
         let outputs = parse_image(&v)?;
         if let Some(usd) = charged(&v) {
             ctx.report_cost(usd);

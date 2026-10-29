@@ -4,14 +4,14 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use hmac::{Hmac, Mac};
 use pictesa_core::{
-    common, keys, CredentialField, Ctx, GenerationRequest, InputRole, InputSlot, MediaInput,
-    MediaKind, ModelSpec, Output, ParamSpec, PollStatus, Provider, ProviderError, ProviderInfo,
-    ProviderKind, ProviderResult, RemoteHandle, Submission, Task,
+    common, json_response, keys, CredentialField, Ctx, GenerationRequest, InputRole, InputSlot,
+    MediaInput, MediaKind, ModelSpec, Output, ParamSpec, PollStatus, Provider, ProviderError,
+    ProviderInfo, ProviderKind, ProviderResult, RemoteHandle, Submission, Task,
 };
 use serde_json::{json, Value};
 use sha2::Sha256;
 
-use crate::util::{failure, get_json, send_json};
+use crate::util::{failure, net_error, API_TIMEOUT};
 
 const BASE: &str = "https://api-singapore.klingai.com";
 pub struct Kling;
@@ -59,6 +59,32 @@ fn checked(v: Value) -> ProviderResult<Value> {
         return Err(failure(message));
     }
     Ok(v)
+}
+
+/// Sends a Kling API call. An error answer carries a service code next to the HTTP status, and the
+/// code is what tells an empty account (1101, 1102: HTTP 429) or a content refusal (1300, 1301:
+/// HTTP 400) from a rate limit or a bad parameter (docs: Get Started > Error Codes).
+async fn call(req: reqwest::RequestBuilder) -> ProviderResult<Value> {
+    let resp = req.timeout(API_TIMEOUT).send().await.map_err(net_error)?;
+    let status = resp.status();
+    if status.is_success() {
+        return checked(json_response(resp).await?);
+    }
+    let retry_after = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok()?.parse::<f64>().ok())
+        .map(|s| (s * 1000.0) as u64);
+    let text = resp.text().await.map_err(net_error)?;
+    let detail = pictesa_core::error::truncate(&text, 600);
+    let code = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v.get("code")?.as_i64());
+    Err(match code {
+        Some(1101 | 1102) => ProviderError::InsufficientCredits(detail),
+        Some(1300 | 1301) => ProviderError::ContentPolicy(detail),
+        _ => ProviderError::from_http(status.as_u16(), &text, retry_after),
+    })
 }
 
 async fn image(input: &MediaInput) -> ProviderResult<String> {
@@ -229,14 +255,13 @@ impl Provider for Kling {
         v
     }
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
-        let v = get_json(
+        call(
             ctx.http
                 .get(format!("{BASE}/v1/images/generations"))
                 .query(&[("pageNum", "1"), ("pageSize", "1")])
                 .bearer_auth(auth(ctx)?),
         )
         .await?;
-        checked(v)?;
         Ok(())
     }
     async fn submit(
@@ -254,15 +279,13 @@ impl Provider for Kling {
         } else {
             "videos/text2video"
         };
-        let v = checked(
-            send_json(
-                ctx.http
-                    .post(format!("{BASE}/v1/{route}"))
-                    .bearer_auth(auth(ctx)?),
-                &body(model, req).await?,
-            )
-            .await?,
-        )?;
+        let v = call(
+            ctx.http
+                .post(format!("{BASE}/v1/{route}"))
+                .bearer_auth(auth(ctx)?)
+                .json(&body(model, req).await?),
+        )
+        .await?;
         let id = v
             .pointer("/data/task_id")
             .and_then(Value::as_str)
@@ -281,14 +304,12 @@ impl Provider for Kling {
             .get("kind")
             .and_then(|v| serde_json::from_value::<MediaKind>(v.clone()).ok())
             .unwrap_or(MediaKind::Video);
-        let v = checked(
-            get_json(
-                ctx.http
-                    .get(format!("{BASE}/v1/{route}/{}", handle.id))
-                    .bearer_auth(auth(ctx)?),
-            )
-            .await?,
-        )?;
+        let v = call(
+            ctx.http
+                .get(format!("{BASE}/v1/{route}/{}", handle.id))
+                .bearer_auth(auth(ctx)?),
+        )
+        .await?;
         parse_task(&v, kind)
     }
 }

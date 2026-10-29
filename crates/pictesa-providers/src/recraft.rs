@@ -21,8 +21,9 @@ fn fields(model: &ModelSpec, req: &GenerationRequest) -> Vec<(&'static str, Stri
     if let Some(v) = req.str(keys::ASPECT_RATIO) {
         out.push(("size", v.to_string()));
     }
+    // V4.1 takes a custom style id; curated `style` names are V2/V3 only.
     if let Some(v) = req.str(keys::STYLE) {
-        out.push(("style", v.to_string()));
+        out.push(("style_id", v.to_string()));
     }
     if let Some(v) = req.u64(keys::SEED) {
         out.push(("random_seed", v.to_string()));
@@ -104,7 +105,7 @@ impl Provider for Recraft {
                     &["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
                     "1:1",
                 ))
-                .param(ParamSpec::text(keys::STYLE, "Style").advanced())
+                .param(ParamSpec::text(keys::STYLE, "Style ID").help("A custom style id from Recraft").advanced())
                 .param(ParamSpec::seed())
                 .max_outputs(4)
                 .pricing(Pricing::PerImage { usd: price });
@@ -175,10 +176,10 @@ mod tests {
         };
         req.params.insert(keys::ASPECT_RATIO.into(), json!("16:9"));
         req.params
-            .insert(keys::STYLE.into(), json!("realistic_image"));
+            .insert(keys::STYLE.into(), json!("229b2a75-05e4-4580-85f9-b47ee521a00d"));
         let got = fields(&model, &req);
         assert!(got.contains(&("size", "16:9".into())));
-        assert!(got.contains(&("style", "realistic_image".into())));
+        assert!(got.contains(&("style_id", "229b2a75-05e4-4580-85f9-b47ee521a00d".into())));
         assert!(got.contains(&("n", "2".into())));
     }
     #[test]

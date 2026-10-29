@@ -94,11 +94,19 @@ fn image_output(v: &Value) -> ProviderResult<Vec<Output>> {
         }
     }
     if out.is_empty() {
-        Err(failure(
-            v.pointer("/promptFeedback/blockReason")
-                .and_then(Value::as_str)
-                .unwrap_or("Google returned no image"),
-        ))
+        // A blocked prompt names its reason in promptFeedback, a blocked image in the candidate's
+        // finishReason (https://ai.google.dev/api/generate-content#FinishReason).
+        let reason = v
+            .pointer("/promptFeedback/blockReason")
+            .or_else(|| v.pointer("/candidates/0/finishReason"))
+            .and_then(Value::as_str);
+        Err(match reason {
+            Some(r) if ["SAFETY", "PROHIBITED", "BLOCKLIST", "SPII", "RECITATION"].iter().any(|w| r.contains(w)) => {
+                ProviderError::ContentPolicy(format!("Google blocked the request: {r}"))
+            }
+            Some(r) => failure(format!("Google returned no image ({r})")),
+            None => failure("Google returned no image"),
+        })
     } else {
         Ok(out)
     }
@@ -202,6 +210,30 @@ fn batch_status(v: &Value) -> ProviderResult<PollStatus> {
     Ok(PollStatus::Done(outputs))
 }
 
+fn discovered(x: &Value) -> Option<ModelSpec> {
+    let id = x.get("name")?.as_str()?.trim_start_matches("models/");
+    let methods = x.get("supportedGenerationMethods").and_then(Value::as_array);
+    // Image models carry "image" in their id, except the Nano Banana names (gemini-nano-banana-2.1).
+    if (id.contains("image") || id.contains("nano-banana"))
+        && methods.is_some_and(|m| m.iter().any(|s| s.as_str() == Some("generateContent")))
+    {
+        // Google names a model and its preview the same; keep them apart in the picker.
+        let name = x.get("displayName").and_then(Value::as_str).unwrap_or(id);
+        let name = if id.contains("preview") && !name.to_lowercase().contains("preview") {
+            format!("{name} (preview)")
+        } else {
+            name.to_string()
+        };
+        Some(image_spec(id, &name))
+    } else if id.starts_with("veo-")
+        && methods.is_some_and(|m| m.iter().any(|s| s.as_str() == Some("predictLongRunning")))
+    {
+        Some(video_spec(id))
+    } else {
+        None
+    }
+}
+
 #[async_trait]
 impl Provider for Google {
     fn info(&self) -> ProviderInfo {
@@ -230,44 +262,23 @@ impl Provider for Google {
         .collect()
     }
     async fn discover(&self, ctx: &Ctx) -> ProviderResult<Vec<ModelSpec>> {
-        let v = get_json(
-            ctx.http
-                .get(format!("{API}/models"))
-                .header("x-goog-api-key", ctx.api_key()?),
-        )
-        .await?;
-        Ok(v.get("models")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|x| {
-                let id = x.get("name")?.as_str()?.trim_start_matches("models/");
-                let methods = x
-                    .get("supportedGenerationMethods")
-                    .and_then(Value::as_array);
-                if id.contains("image")
-                    && methods
-                        .is_some_and(|m| m.iter().any(|s| s.as_str() == Some("generateContent")))
-                {
-                    // Google names a model and its preview the same; keep them apart in the picker.
-                    let name = x.get("displayName").and_then(Value::as_str).unwrap_or(id);
-                    let name = if id.contains("preview") && !name.to_lowercase().contains("preview")
-                    {
-                        format!("{name} (preview)")
-                    } else {
-                        name.to_string()
-                    };
-                    Some(image_spec(id, &name))
-                } else if id.starts_with("veo-")
-                    && methods
-                        .is_some_and(|m| m.iter().any(|s| s.as_str() == Some("predictLongRunning")))
-                {
-                    Some(video_spec(id))
-                } else {
-                    None
-                }
-            })
-            .collect())
+        let key = ctx.api_key()?;
+        let mut out = Vec::new();
+        let mut page: Option<String> = None;
+        // models.list answers 50 models a page unless asked for more; nextPageToken leads to the rest.
+        for _ in 0..20 {
+            let mut req = ctx.http.get(format!("{API}/models")).query(&[("pageSize", "1000")]);
+            if let Some(token) = &page {
+                req = req.query(&[("pageToken", token)]);
+            }
+            let v = get_json(req.header("x-goog-api-key", key)).await?;
+            out.extend(v.get("models").and_then(Value::as_array).into_iter().flatten().filter_map(discovered));
+            match v.get("nextPageToken").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+                Some(token) => page = Some(token.to_string()),
+                None => break,
+            }
+        }
+        Ok(out)
     }
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
         get_json(

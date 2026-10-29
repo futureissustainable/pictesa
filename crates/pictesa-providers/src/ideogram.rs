@@ -64,7 +64,11 @@ async fn form(req: &GenerationRequest) -> ProviderResult<reqwest::multipart::For
         f = f.part("image", part(input).await?);
     }
     if let Some(input) = req.input(InputRole::Mask) {
-        f = f.part("mask", part(input).await?);
+        let mask = reqwest::multipart::Part::bytes(black_edits(&input.bytes().await?)?)
+            .file_name("mask.png")
+            .mime_str("image/png")
+            .map_err(|_| ProviderError::InvalidInput("invalid mask".into()))?;
+        f = f.part("mask", mask);
     }
     let field = if req.str("reference_type") == Some("style") {
         "style_reference_images"
@@ -77,6 +81,18 @@ async fn form(req: &GenerationRequest) -> ProviderResult<reqwest::multipart::For
     Ok(f)
 }
 
+/// Ideogram edits the mask's black regions; Pictesa masks are white where to change.
+fn black_edits(mask: &[u8]) -> ProviderResult<Vec<u8>> {
+    let mut gray = image::load_from_memory(mask)
+        .map_err(|e| ProviderError::InvalidInput(format!("the mask is not a readable image: {e}")))?
+        .to_luma8();
+    image::imageops::invert(&mut gray);
+    let mut png = std::io::Cursor::new(Vec::new());
+    gray.write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| ProviderError::InvalidInput(format!("could not prepare the mask: {e}")))?;
+    Ok(png.into_inner())
+}
+
 fn outputs(v: &Value) -> ProviderResult<Vec<Output>> {
     let items = v
         .get("data")
@@ -87,15 +103,18 @@ fn outputs(v: &Value) -> ProviderResult<Vec<Output>> {
             "Ideogram returned an empty image list".into(),
         ));
     }
-    items
+    // Images that fail the safety check come back with an empty `url`.
+    let out: Vec<Output> = items
         .iter()
-        .map(|v| {
-            v.get("url")
-                .and_then(Value::as_str)
-                .map(Output::url)
-                .ok_or_else(|| ProviderError::Failed("Ideogram image has no URL".into()))
-        })
-        .collect()
+        .filter_map(|v| v.get("url").and_then(Value::as_str).filter(|u| !u.is_empty()).map(Output::url))
+        .collect();
+    if !out.is_empty() {
+        Ok(out)
+    } else if items.iter().any(|v| v.get("is_image_safe") == Some(&Value::Bool(false))) {
+        Err(ProviderError::ContentPolicy("Ideogram withheld the image: it failed the safety check".into()))
+    } else {
+        Err(ProviderError::Failed("Ideogram image has no URL".into()))
+    }
 }
 
 #[async_trait]

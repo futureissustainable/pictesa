@@ -23,7 +23,8 @@ pub struct Fal;
 const CATALOG: &str = "https://api.fal.ai/v1/models";
 const QUEUE: &str = "https://queue.fal.run";
 const OPENAPI: &str = "https://fal.ai/api/openapi/queue/openapi.json";
-const UPLOAD: &str = "https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3";
+/// https://fal.ai/docs/documentation/model-apis/file-access-controls (two-step upload).
+const UPLOAD: &str = "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3";
 
 /// Families whose newest endpoint is tagged `featured` in the picker.
 const FAMILIES: &[&str] = &[
@@ -660,8 +661,27 @@ fn deref<'a>(node: &'a Value, schemas: &'a Value) -> &'a Value {
     node.get("$ref").and_then(Value::as_str).and_then(|r|r.strip_prefix("#/components/schemas/")).and_then(|k|schemas.get(k)).unwrap_or(node)
 }
 
+/// fal publishes preset-or-custom fields as `anyOf: [{"$ref": ImageSize}, {"type": "string", "enum": [...]}]`
+/// (`image_size` in the queue OpenAPI of `fal-ai/flux/dev`). The shared reader takes the first branch,
+/// an object it cannot offer, so the field would vanish; the preset branch is offered instead.
+fn prefer_presets(input: &Value, schemas: &Value) -> Value {
+    let mut input = deref(input, schemas).clone();
+    if let Some(props) = input.get_mut("properties").and_then(Value::as_object_mut) {
+        for field in props.values_mut() {
+            let presets = field.get("anyOf").and_then(Value::as_array).and_then(|alts| alts.iter().map(|a| deref(a, schemas)).find(|a| a.get("enum").is_some())).cloned();
+            if let (Some(Value::Object(presets)), Some(field)) = (presets, field.as_object_mut()) {
+                field.remove("anyOf");
+                for (k, v) in presets {
+                    field.entry(k).or_insert(v);
+                }
+            }
+        }
+    }
+    input
+}
+
 fn resolve_schema(model: &ModelSpec, doc: &Value, input: &Value, schemas: &Value) -> ProviderResult<ModelSpec> {
-    let read = schema::read_input_schema(input, Some(schemas), model.output);
+    let read = schema::read_input_schema(&prefer_presets(input, schemas), Some(schemas), model.output);
     let mut spec=model.clone();
     spec.params=read.params;spec.inputs=read.inputs;spec.prompt=read.has_prompt;spec.negative_prompt=read.has_negative_prompt;spec.max_outputs=read.max_outputs;
     spec.meta["bindings"]=read.bindings;

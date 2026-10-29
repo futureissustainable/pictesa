@@ -51,8 +51,12 @@ async fn form(
             f = f.text("negative_prompt", v.clone());
         }
     }
-    if let Some(v) = req.str(keys::ASPECT_RATIO) {
+    let sd3_image = id.starts_with("sd3.5-") && req.input(InputRole::Reference).is_some();
+    if let Some(v) = req.str(keys::ASPECT_RATIO).filter(|_| !sd3_image) {
         f = f.text("aspect_ratio", v.to_string());
+    }
+    if sd3_image {
+        f = f.text("mode", "image-to-image");
     }
     if let Some(v) = req.str(keys::OUTPUT_FORMAT) {
         f = f.text("output_format", v.to_string());
@@ -63,7 +67,8 @@ async fn form(
     if let Some(v) = req.f64(keys::GUIDANCE) {
         f = f.text("cfg_scale", v.to_string());
     }
-    if model.remote_id().starts_with("sd3.5-") && req.input(InputRole::Reference).is_some() {
+    // Ultra and SD 3.5 require `strength` whenever an image is sent.
+    if (id.starts_with("sd3.5-") || id == "ultra") && req.input(InputRole::Reference).is_some() {
         f = f.text(
             "strength",
             req.f64(keys::STRENGTH).unwrap_or(0.5).to_string(),
@@ -100,11 +105,26 @@ fn upscale_id(v: &Value) -> ProviderResult<&str> {
         .ok_or_else(|| ProviderError::Failed("Stability upscale returned no id".into()))
 }
 
-async fn read_image(resp: reqwest::Response, format: &str) -> ProviderResult<Output> {
+/// Passes a successful answer through. Stability names moderation refusals in the error body
+/// (`content_moderation` on 403, `public_figure` on 422), which the status alone does not.
+async fn checked(resp: reqwest::Response) -> ProviderResult<reqwest::Response> {
     let status = resp.status();
-    if !status.is_success() {
-        let message = resp.text().await.map_err(net_error)?;
-        return Err(ProviderError::from_http(status.as_u16(), &message, None));
+    if status.is_success() {
+        return Ok(resp);
+    }
+    let message = resp.text().await.map_err(net_error)?;
+    let name = serde_json::from_str::<Value>(&message).ok().and_then(|v| v.get("name")?.as_str().map(str::to_string));
+    Err(match name.as_deref() {
+        Some("content_moderation" | "public_figure") => ProviderError::ContentPolicy(pictesa_core::error::truncate(&message, 600)),
+        _ => ProviderError::from_http(status.as_u16(), &message, None),
+    })
+}
+
+async fn read_image(resp: reqwest::Response, format: &str) -> ProviderResult<Output> {
+    let resp = checked(resp).await?;
+    // A blurred image: "the output violated the content moderation policy".
+    if resp.headers().get("finish-reason").is_some_and(|v| v == "CONTENT_FILTERED") {
+        return Err(ProviderError::ContentPolicy("Stability blurred the result: it violated the content moderation policy".into()));
     }
     let mime = resp
         .headers()
@@ -271,32 +291,28 @@ impl Provider for Stability {
             .bearer_auth(ctx.api_key()?)
             .header(
                 reqwest::header::ACCEPT,
-                if id == "creative" || id == "conservative" {
-                    "application/json"
-                } else {
-                    "image/*"
-                },
+                if id == "creative" { "application/json" } else { "image/*" },
             )
             .multipart(f)
             .send()
             .await
             .map_err(net_error)?;
-        if id == "creative" || id == "conservative" {
-            let v = pictesa_core::json_response(resp).await?;
+        // Creative upscale is the only asynchronous endpoint here.
+        if id == "creative" {
+            let v = pictesa_core::json_response(checked(resp).await?).await?;
             let task = upscale_id(&v)?;
             return Ok(Submission::Pending(RemoteHandle::with(
                 task,
-                json!({"format":format,"upscale":id}),
+                json!({"format":format}),
             )));
         }
         Ok(Submission::Done(vec![read_image(resp, format).await?]))
     }
     async fn poll(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
         let format = handle.data_str("format").unwrap_or("png");
-        let upscale = handle.data_str("upscale").unwrap_or("creative");
         let resp = ctx
             .http
-            .get(format!("{BASE}/upscale/{upscale}/result/{}", handle.id))
+            .get(format!("https://api.stability.ai/v2beta/results/{}", handle.id))
             .bearer_auth(ctx.api_key()?)
             .header(reqwest::header::ACCEPT, "image/*")
             .send()
@@ -309,6 +325,10 @@ impl Provider for Stability {
             });
         }
         Ok(PollStatus::Done(vec![read_image(resp, format).await?]))
+    }
+    /// "Rate-limiting or other errors may occur if you poll more than once every 10 seconds."
+    fn poll_interval(&self, _attempt: u32) -> std::time::Duration {
+        std::time::Duration::from_secs(10)
     }
 }
 

@@ -188,15 +188,23 @@ fn parse_result(v: &Value, kind: MediaKind) -> ProviderResult<PollStatus> {
             Ok(PollStatus::Done(out))
         }
         "failed" | "cancelled" | "canceled" | "timeout" | "deleted" => {
-            Ok(PollStatus::Failed(failure(
-                data.get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("WaveSpeed task failed"),
-            )))
+            let msg = data
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("WaveSpeed task failed");
+            // Task error codes, https://wavespeed.ai/docs/error-codes.
+            Ok(PollStatus::Failed(match data.get("code").and_then(Value::as_i64) {
+                Some(1407) => ProviderError::InsufficientCredits(msg.into()),
+                Some(1200) => ProviderError::ContentPolicy(msg.into()),
+                _ => failure(msg),
+            }))
         }
-        state => Err(ProviderError::Failed(format!(
-            "unknown WaveSpeed state: {state}"
-        ))),
+        // "created, processing or any other status: keep polling"
+        // (https://wavespeed.ai/docs/errors-retries-timeouts).
+        state => Ok(PollStatus::Running {
+            progress: None,
+            message: Some(state.to_string()).filter(|s| !s.is_empty()),
+        }),
     }
 }
 

@@ -103,11 +103,18 @@ fn parse_generation(v: &Value, kind: MediaKind) -> ProviderResult<PollStatus> {
                 })?;
             Ok(PollStatus::Done(vec![Output::url(url)]))
         }
-        "failed" => Ok(PollStatus::Failed(failure(
-            v.get("failure_reason")
+        "failed" => {
+            let reason = v
+                .get("failure_reason")
                 .and_then(Value::as_str)
-                .unwrap_or("Luma generation failed"),
-        ))),
+                .unwrap_or("Luma generation failed");
+            // Luma's errors page lists "Contains blacklisted words" under moderation failures.
+            Ok(PollStatus::Failed(if reason.contains("blacklisted") {
+                ProviderError::ContentPolicy(reason.into())
+            } else {
+                failure(reason)
+            }))
+        }
         other => Err(ProviderError::Failed(format!(
             "unknown Luma state: {other}"
         ))),

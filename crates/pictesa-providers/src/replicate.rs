@@ -60,6 +60,31 @@ fn output_media(v: &Value, want: MediaKind, key: &str) -> ProviderResult<Vec<Out
         Ok(out)
     }
 }
+/// Cog publishes enum fields as `"allOf": [{"$ref": "#/components/schemas/aspect_ratio"}]` beside
+/// their default (https://replicate.com/docs/reference/openapi#model-schemas). The shared schema
+/// reader follows only a bare `$ref`, so the referenced enum is inlined into the field first.
+fn inline_enum_refs(input: &Value, defs: Option<&Value>) -> Value {
+    let mut input = input.clone();
+    if let Some(props) = input.get_mut("properties").and_then(Value::as_object_mut) {
+        for field in props.values_mut() {
+            let target = field
+                .get("allOf")
+                .and_then(Value::as_array)
+                .filter(|all| all.len() == 1)
+                .and_then(|all| all[0].get("$ref")?.as_str())
+                .and_then(|r| defs?.get(r.rsplit('/').next()?))
+                .and_then(Value::as_object)
+                .cloned();
+            if let (Some(target), Some(field)) = (target, field.as_object_mut()) {
+                field.remove("allOf");
+                for (k, v) in target {
+                    field.entry(k).or_insert(v);
+                }
+            }
+        }
+    }
+    input
+}
 fn prediction_body(
     model: &ModelSpec,
     version: &str,
@@ -144,7 +169,7 @@ impl Provider for Replicate {
             ProviderError::NotSupported("Replicate model has no Input schema".into())
         })?;
         let defs = doc.pointer("/components/schemas");
-        let read = schema::read_input_schema(input, defs, model.output);
+        let read = schema::read_input_schema(&inline_enum_refs(input, defs), defs, model.output);
         let mut s = model.clone();
         s.params = read.params;
         s.inputs = read.inputs;

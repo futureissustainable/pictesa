@@ -29,10 +29,20 @@ fn checked(v: Value) -> ProviderResult<Value> {
         1002 => ProviderError::RateLimited {
             retry_after_ms: None,
         },
-        1004 => ProviderError::Auth(message),
+        1004 | 2049 => ProviderError::Auth(message),
         1008 => ProviderError::InsufficientCredits(message),
         _ => failure(message),
     })
+}
+
+/// The v2 API refuses sensitive content with HTTP 422; the message ends in the code, "(1026)".
+fn sensitive(e: ProviderError) -> ProviderError {
+    match e {
+        ProviderError::InvalidInput(m) if m.contains("(1026)") || m.contains("(1027)") => {
+            ProviderError::ContentPolicy(m)
+        }
+        e => e,
+    }
 }
 
 async fn body(model: &ModelSpec, req: &GenerationRequest) -> ProviderResult<Value> {
@@ -130,7 +140,7 @@ fn parse_v2(v: &Value) -> ProviderResult<PollStatus> {
                 })?;
             Ok(PollStatus::Done(vec![Output::url(url)]))
         }
-        "failed" => Ok(PollStatus::Failed(failure(
+        "failed" | "cancelled" => Ok(PollStatus::Failed(failure(
             task.pointer("/error/message")
                 .and_then(Value::as_str)
                 .unwrap_or("MiniMax H3 task failed"),
@@ -275,7 +285,8 @@ impl Provider for Minimax {
                     .bearer_auth(ctx.api_key()?),
                 &body(model, req).await?,
             )
-            .await?,
+            .await
+            .map_err(sensitive)?,
         )?;
         if id == "image-01" {
             return Ok(Submission::Done(image_outputs(&ans)?));
@@ -300,26 +311,28 @@ impl Provider for Minimax {
             .await?;
             return parse_v2(&v);
         }
-        let v = checked(
-            get_json(
-                ctx.http
-                    .get(format!("{BASE}/v1/query/video_generation"))
-                    .query(&[("task_id", &handle.id)])
-                    .bearer_auth(key),
-            )
-            .await?,
-        )?;
+        let v = get_json(
+            ctx.http
+                .get(format!("{BASE}/v1/query/video_generation"))
+                .query(&[("task_id", &handle.id)])
+                .bearer_auth(key),
+        )
+        .await?;
+        // A failed task reports its reason (1026/1027 sensitive content) in base_resp.
+        if v.get("status").and_then(Value::as_str) == Some("Fail") {
+            return Ok(PollStatus::Failed(
+                checked(v)
+                    .err()
+                    .unwrap_or_else(|| failure("MiniMax task failed")),
+            ));
+        }
+        let v = checked(v)?;
         match v.get("status").and_then(Value::as_str).unwrap_or("") {
             "Preparing" | "Queueing" => Ok(PollStatus::Queued { position: None }),
             "Processing" => Ok(PollStatus::Running {
                 progress: None,
                 message: None,
             }),
-            "Fail" => Ok(PollStatus::Failed(failure(
-                v.pointer("/base_resp/status_msg")
-                    .and_then(Value::as_str)
-                    .unwrap_or("MiniMax task failed"),
-            ))),
             "Success" => {
                 let file = v.get("file_id").and_then(Value::as_str).ok_or_else(|| {
                     ProviderError::Failed("MiniMax succeeded without file id".into())

@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use pictesa_core::{
-    collect_media_urls, common, keys, CredentialField, Ctx, GenerationRequest, InputRole,
-    InputSlot, MediaInput, MediaKind, ModelSpec, Output, ParamSpec, PollStatus, Pricing, Provider,
-    ProviderError, ProviderInfo, ProviderKind, ProviderResult, RemoteHandle, Submission, Task,
+    collect_media_urls, common, json_response, keys, CredentialField, Ctx, GenerationRequest,
+    InputRole, InputSlot, MediaInput, MediaKind, ModelSpec, Output, ParamSpec, PollStatus, Pricing,
+    Provider, ProviderError, ProviderInfo, ProviderKind, ProviderResult, RemoteHandle, Submission,
+    Task,
 };
 use serde_json::{json, Value};
 
-use crate::util::{failure, get_json, net_error, send_json};
+use crate::util::{failure, net_error, API_TIMEOUT};
 
 pub struct Higgsfield;
 const API: &str = "https://api.higgsfield.ai";
@@ -20,6 +21,19 @@ fn auth(ctx: &Ctx) -> ProviderResult<String> {
         ctx.require("key_secret")?
     ))
 }
+/// Sends a Higgsfield API call. Higgsfield answers 403 for an empty balance (docs: Errors and
+/// retries; the official SDK reads every 403 as NotEnoughCreditsError), not for a bad key.
+async fn call(req: reqwest::RequestBuilder) -> ProviderResult<Value> {
+    let resp = req.timeout(API_TIMEOUT).send().await.map_err(net_error)?;
+    if resp.status() == reqwest::StatusCode::FORBIDDEN {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(ProviderError::InsufficientCredits(
+            pictesa_core::error::truncate(&text, 600),
+        ));
+    }
+    json_response(resp).await
+}
+
 fn image(id: &str, name: &str, edit: bool) -> ModelSpec {
     let tasks = if edit {
         vec![Task::ImageEdit]
@@ -67,15 +81,17 @@ fn video(id: &str, name: &str, mode: &str) -> ModelSpec {
         .pricing(Pricing::Variable {
             note: "Higgsfield USD endpoint pricing".into(),
         });
+    // The video schemas reject unknown fields: none has a seed, and image-to-video takes its
+    // framing from the image, so it has no aspect_ratio.
     if mode != "v2v" {
-        m = m
-            .param(ParamSpec::int(keys::DURATION, "Duration (seconds)", 4, 30).default_value(5))
-            .param(common::aspect_ratio(
+        m = m.param(ParamSpec::int(keys::DURATION, "Duration (seconds)", 4, 30).default_value(5));
+        if mode != "i2v" {
+            m = m.param(common::aspect_ratio(
                 &["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
                 "16:9",
-            ))
-            .param(common::generate_audio(true))
-            .param(ParamSpec::seed());
+            ));
+        }
+        m = m.param(common::generate_audio(true));
     }
     match mode {
         "i2v" => {
@@ -106,11 +122,11 @@ async fn public_url(ctx: &Ctx, input: &MediaInput) -> ProviderResult<String> {
             return Ok(url.clone());
         }
     }
-    let v = send_json(
+    let v = call(
         ctx.http
             .post(format!("{API}/files/generate-upload-url"))
-            .header("Authorization", auth(ctx)?),
-        &json!({"content_type":input.mime}),
+            .header("Authorization", auth(ctx)?)
+            .json(&json!({"content_type":input.mime})),
     )
     .await?;
     let upload = v
@@ -241,7 +257,13 @@ fn status(v: &Value, kind: MediaKind) -> ProviderResult<PollStatus> {
                 urls.into_iter().map(Output::url).collect(),
             ))
         }
-        "failed" | "nsfw" | "canceled" => Ok(PollStatus::Failed(failure(
+        "nsfw" => Ok(PollStatus::Failed(ProviderError::ContentPolicy(
+            v.get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("Higgsfield moderation rejected the input or output")
+                .into(),
+        ))),
+        "failed" | "canceled" => Ok(PollStatus::Failed(failure(
             v.pointer("/error/message")
                 .and_then(Value::as_str)
                 .or_else(|| v.get("error").and_then(Value::as_str))
@@ -316,7 +338,7 @@ impl Provider for Higgsfield {
         ]
     }
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
-        get_json(
+        call(
             ctx.http
                 .get(format!("{API}/models/usage"))
                 .header("Authorization", auth(ctx)?),
@@ -331,12 +353,12 @@ impl Provider for Higgsfield {
         req: &GenerationRequest,
     ) -> ProviderResult<Submission> {
         let b = body(ctx, model, req).await?;
-        let v = send_json(
+        let v = call(
             ctx.http
                 .post(format!("{API}/{}", model.remote_id()))
                 .header("Authorization", auth(ctx)?)
-                .header("Idempotency-Key", &req.job_id),
-            &b,
+                .header("Idempotency-Key", &req.job_id)
+                .json(&b),
         )
         .await?;
         let id = v
@@ -375,7 +397,7 @@ impl Provider for Higgsfield {
             .get("kind")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or(MediaKind::Image);
-        let v = get_json(ctx.http.get(url).header("Authorization", auth(ctx)?)).await?;
+        let v = call(ctx.http.get(url).header("Authorization", auth(ctx)?)).await?;
         status(&v, kind)
     }
     async fn cancel(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<()> {

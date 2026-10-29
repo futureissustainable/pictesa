@@ -294,7 +294,11 @@ impl Provider for Runway {
         let path = if model.remote_id() == "magnific_video_upscaler_creative" {
             "video_upscale"
         } else if model.output == MediaKind::Video {
-            "image_to_video"
+            if req.input(InputRole::StartFrame).is_some() {
+                "image_to_video"
+            } else {
+                "text_to_video"
+            }
         } else {
             "text_to_image"
         };

@@ -91,7 +91,8 @@ async fn access_token(ctx: &Ctx) -> ProviderResult<String> {
         ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
         ("assertion", jwt.as_str()),
     ]))
-    .await?;
+    .await
+    .map_err(token_error)?;
     let token = v
         .get("access_token")
         .and_then(Value::as_str)
@@ -109,6 +110,16 @@ async fn access_token(ctx: &Ctx) -> ProviderResult<String> {
             },
         );
     Ok(token)
+}
+
+/// The token endpoint answers a deleted, disabled or foreign key with HTTP 400 `invalid_grant`
+/// (https://developers.google.com/identity/protocols/oauth2/service-account#error-codes): a
+/// credential problem for the user to fix, not bad generation input.
+fn token_error(e: ProviderError) -> ProviderError {
+    match e {
+        ProviderError::InvalidInput(m) => ProviderError::Auth(m),
+        e => e,
+    }
 }
 
 fn project_location(ctx: &Ctx) -> ProviderResult<(&str, &str)> {
@@ -230,12 +241,8 @@ fn media(v: &Value, kind: MediaKind) -> ProviderResult<Vec<Output>> {
     } else {
         "predictions"
     };
-    let items = v
-        .get(key)
-        .and_then(Value::as_array)
-        .ok_or_else(|| ProviderError::Failed(format!("Vertex returned no {key}")))?;
     let mut out = Vec::new();
-    for item in items {
+    for item in v.get(key).and_then(Value::as_array).into_iter().flatten() {
         if let Some(encoded) = item.get("bytesBase64Encoded").and_then(Value::as_str) {
             out.push(Output::Bytes {
                 data: base64::engine::general_purpose::STANDARD
@@ -257,11 +264,25 @@ fn media(v: &Value, kind: MediaKind) -> ProviderResult<Vec<Output>> {
             ));
         }
     }
-    if out.is_empty() {
-        Err(ProviderError::Failed("Vertex returned no media".into()))
-    } else {
-        Ok(out)
+    if !out.is_empty() {
+        return Ok(out);
     }
+    // Veo leaves out the videos its responsible-AI filters removed, counts them and names the
+    // reasons (https://docs.cloud.google.com/vertex-ai/generative-ai/docs/model-reference/veo-video-generation).
+    if v.get("raiMediaFilteredCount").and_then(Value::as_u64).is_some_and(|n| n > 0) {
+        let reasons: Vec<&str> = v
+            .get("raiMediaFilteredReasons")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        return Err(ProviderError::ContentPolicy(format!(
+            "Vertex filtered the output: {}",
+            reasons.join("; ")
+        )));
+    }
+    Err(ProviderError::Failed(format!("Vertex returned no {key}")))
 }
 
 fn operation(v: &Value) -> ProviderResult<PollStatus> {
@@ -279,7 +300,10 @@ fn operation(v: &Value) -> ProviderResult<PollStatus> {
                 .unwrap_or("Vertex operation failed"),
         )));
     }
-    Ok(PollStatus::Done(media(&v["response"], MediaKind::Video)?))
+    match media(&v["response"], MediaKind::Video) {
+        Err(e @ ProviderError::ContentPolicy(_)) => Ok(PollStatus::Failed(e)),
+        out => Ok(PollStatus::Done(out?)),
+    }
 }
 
 #[async_trait]

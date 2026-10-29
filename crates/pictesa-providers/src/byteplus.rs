@@ -1,4 +1,4 @@
-use crate::util::{failure, get_json, send_json};
+use crate::util::{failure, net_error, API_TIMEOUT};
 use async_trait::async_trait;
 use base64::Engine;
 use pictesa_core::{
@@ -39,6 +39,26 @@ fn image_outputs(v: &Value) -> ProviderResult<Vec<Output>> {
     } else {
         Ok(out)
     }
+}
+/// Sends a ModelArk call. Its error codes (https://docs.byteplus.com/en/docs/ModelArk/error-codes)
+/// name moderation and empty accounts, which the HTTP status alone does not.
+async fn ark(req: reqwest::RequestBuilder) -> ProviderResult<Value> {
+    let resp = req.timeout(API_TIMEOUT).send().await.map_err(net_error)?;
+    if resp.status().is_success() {
+        return pictesa_core::json_response(resp).await;
+    }
+    let status = resp.status().as_u16();
+    let retry_after = resp.headers().get(reqwest::header::RETRY_AFTER).and_then(|v| v.to_str().ok()?.parse::<f64>().ok()).map(|s| (s * 1000.0) as u64);
+    let text = resp.text().await.map_err(net_error)?;
+    let code = serde_json::from_str::<Value>(&text).ok().and_then(|v| v.pointer("/error/code")?.as_str().map(str::to_string)).unwrap_or_default();
+    let detail = pictesa_core::error::truncate(&text, 600);
+    Err(if code.contains("SensitiveContentDetected") {
+        ProviderError::ContentPolicy(detail)
+    } else if code == "AccountOverdueError" || (code == "QuotaExceeded" && text.contains("free trial quota")) {
+        ProviderError::InsufficientCredits(detail)
+    } else {
+        ProviderError::from_http(status, &text, retry_after)
+    })
 }
 fn video_options(req: &GenerationRequest) -> Value {
     let mut body = json!({"content":[{"type":"text","text":req.prompt}]});
@@ -158,11 +178,11 @@ impl Provider for BytePlus {
         out
     }
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
-        get_json(
-            ctx.http
-                .get(format!("{API}/models"))
-                .bearer_auth(ctx.api_key()?),
-        )
+        // Listing models needs Access Key auth on another host; listing tasks takes the API key.
+        ark(ctx
+            .http
+            .get(format!("{API}/contents/generations/tasks?page_size=1"))
+            .bearer_auth(ctx.api_key()?))
         .await?;
         Ok(())
     }
@@ -198,12 +218,11 @@ impl Provider for BytePlus {
             } else if !refs.is_empty() {
                 body["image"] = json!(refs);
             }
-            let v = send_json(
-                ctx.http
-                    .post(format!("{API}/images/generations"))
-                    .bearer_auth(key),
-                &body,
-            )
+            let v = ark(ctx
+                .http
+                .post(format!("{API}/images/generations"))
+                .bearer_auth(key)
+                .json(&body))
             .await?;
             Ok(Submission::Done(image_outputs(&v)?))
         } else {
@@ -239,12 +258,11 @@ impl Provider for BytePlus {
                 content.push(json!({"type":"audio_url","audio_url":{"url":input.url_or_data_uri().await?},"role":"reference_audio"}));
             }
             body["model"] = json!(model.remote_id());
-            let v = send_json(
-                ctx.http
-                    .post(format!("{API}/contents/generations/tasks"))
-                    .bearer_auth(key),
-                &body,
-            )
+            let v = ark(ctx
+                .http
+                .post(format!("{API}/contents/generations/tasks"))
+                .bearer_auth(key)
+                .json(&body))
             .await?;
             let id = v
                 .get("id")
@@ -254,11 +272,10 @@ impl Provider for BytePlus {
         }
     }
     async fn poll(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
-        let v = get_json(
-            ctx.http
-                .get(format!("{API}/contents/generations/tasks/{}", handle.id))
-                .bearer_auth(ctx.api_key()?),
-        )
+        let v = ark(ctx
+            .http
+            .get(format!("{API}/contents/generations/tasks/{}", handle.id))
+            .bearer_auth(ctx.api_key()?))
         .await?;
         match v.get("status").and_then(Value::as_str).unwrap_or("") {
             "queued" => Ok(PollStatus::Queued { position: None }),
@@ -275,7 +292,7 @@ impl Provider for BytePlus {
                     })?;
                 Ok(PollStatus::Done(vec![Output::url(url)]))
             }
-            "failed" | "expired" => Ok(PollStatus::Failed(failure(
+            "failed" | "expired" | "cancelled" => Ok(PollStatus::Failed(failure(
                 v.pointer("/error/message")
                     .and_then(Value::as_str)
                     .unwrap_or("BytePlus task failed"),

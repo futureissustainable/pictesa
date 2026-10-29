@@ -53,33 +53,6 @@ fn image_spec(id: &str) -> ModelSpec {
     });
     m.batch()
 }
-fn video_spec(id: &str) -> ModelSpec {
-    let mut m = ModelSpec::new(
-        "openai",
-        id,
-        id,
-        MediaKind::Video,
-        &[Task::TextToVideo, Task::ImageToVideo],
-    );
-    m.vendor = Some("OpenAI".into());
-    m.inputs = vec![InputSlot::new(InputRole::StartFrame, MediaKind::Image, 1)];
-    m.params = vec![
-        ParamSpec::choices(keys::DURATION, "Duration", &["4", "8", "12", "16", "20"]),
-        ParamSpec::choices(
-            keys::RESOLUTION,
-            "Size",
-            if id == "sora-2" {
-                &["1280x720", "720x1280"]
-            } else {
-                &["1280x720", "720x1280", "1920x1080", "1080x1920"]
-            },
-        ),
-    ];
-    m.pricing = Some(Pricing::Variable {
-        note: "OpenAI Sora per-second pricing".into(),
-    });
-    m
-}
 fn image_size(req: &GenerationRequest) -> Option<String> {
     if let (Some(w), Some(h)) = (req.u64(keys::WIDTH), req.u64(keys::HEIGHT)) {
         return Some(format!("{w}x{h}"));
@@ -299,7 +272,6 @@ impl Provider for OpenAI {
         ]
         .into_iter()
         .map(image_spec)
-        .chain(["sora-2", "sora-2-pro"].into_iter().map(video_spec))
         .collect()
     }
     async fn discover(&self, ctx: &Ctx) -> ProviderResult<Vec<ModelSpec>> {
@@ -314,15 +286,8 @@ impl Provider for OpenAI {
             .into_iter()
             .flatten()
             .filter_map(|x| x.get("id").and_then(Value::as_str))
-            .filter_map(|id| {
-                if id.starts_with("gpt-image-") && !id.contains("2026-") && id != "gpt-image-1" {
-                    Some(image_spec(id))
-                } else if id == "sora-2" || id == "sora-2-pro" {
-                    Some(video_spec(id))
-                } else {
-                    None
-                }
-            })
+            .filter(|id| id.starts_with("gpt-image-") && !id.contains("2026-") && *id != "gpt-image-1")
+            .map(image_spec)
             .collect())
     }
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
@@ -341,117 +306,49 @@ impl Provider for OpenAI {
         req: &GenerationRequest,
     ) -> ProviderResult<Submission> {
         let key = ctx.api_key()?;
-        if model.output == MediaKind::Image {
-            let (endpoint, body) = image_request(model, req).await?;
-            if model.is_batch(&req.params) {
-                let line = batch_line(&req.job_id, &endpoint, body);
-                let file = Part::text(format!("{line}\n"))
-                    .file_name("pictesa-batch.jsonl")
-                    .mime_str("application/jsonl")
-                    .map_err(|e| ProviderError::InvalidInput(e.to_string()))?;
-                let uploaded = get_json(
-                    ctx.http
-                        .post(format!("{API}/files"))
-                        .bearer_auth(key)
-                        .multipart(Form::new().text("purpose", "batch").part("file", file)),
-                )
-                .await?;
-                let file_id = uploaded["id"]
-                    .as_str()
-                    .ok_or_else(|| failure("OpenAI returned no batch input file id"))?;
-                let v = send_json(
-                    ctx.http.post(format!("{API}/batches")).bearer_auth(key),
-                    &batch_body(file_id, &endpoint),
-                )
-                .await?;
-                return Ok(Submission::Pending(batch_handle(&v, req, file_id)?));
-            }
-            let v = send_json(
-                ctx.http.post(format!("{API}{endpoint}")).bearer_auth(key),
-                &body,
-            )
-            .await?;
-            Ok(Submission::Done(image_outputs(
-                &v,
-                req.str(keys::OUTPUT_FORMAT),
-            )?))
-        } else {
-            let mut form = Form::new()
-                .text("model", model.remote_id().to_string())
-                .text("prompt", req.prompt.clone());
-            if let Some(seconds) = req
-                .str(keys::DURATION)
-                .map(String::from)
-                .or_else(|| req.i64(keys::DURATION).map(|n| n.to_string()))
-            {
-                form = form.text("seconds", seconds);
-            }
-            if let Some(size) = req.str(keys::RESOLUTION) {
-                form = form.text("size", size.to_string());
-            }
-            if let Some(input) = req.input(InputRole::StartFrame) {
-                let part = Part::bytes(input.bytes().await?)
-                    .file_name(input.file_name())
-                    .mime_str(&input.mime)
-                    .map_err(|e| ProviderError::InvalidInput(e.to_string()))?;
-                form = form.part("input_reference", part);
-            }
-            let v = get_json(
+        let (endpoint, body) = image_request(model, req).await?;
+        if model.is_batch(&req.params) {
+            let line = batch_line(&req.job_id, &endpoint, body);
+            let file = Part::text(format!("{line}\n"))
+                .file_name("pictesa-batch.jsonl")
+                .mime_str("application/jsonl")
+                .map_err(|e| ProviderError::InvalidInput(e.to_string()))?;
+            let uploaded = get_json(
                 ctx.http
-                    .post(format!("{API}/videos"))
+                    .post(format!("{API}/files"))
                     .bearer_auth(key)
-                    .multipart(form),
+                    .multipart(Form::new().text("purpose", "batch").part("file", file)),
             )
             .await?;
-            let id = v
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| ProviderError::Failed("OpenAI returned no video id".into()))?;
-            Ok(Submission::Pending(RemoteHandle::new(id)))
+            let file_id = uploaded["id"]
+                .as_str()
+                .ok_or_else(|| failure("OpenAI returned no batch input file id"))?;
+            let v = send_json(
+                ctx.http.post(format!("{API}/batches")).bearer_auth(key),
+                &batch_body(file_id, &endpoint),
+            )
+            .await?;
+            return Ok(Submission::Pending(batch_handle(&v, req, file_id)?));
         }
-    }
-    async fn poll(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
-        if handle.is_batch() {
-            return poll_batch(ctx, handle).await;
-        }
-        let v = get_json(
-            ctx.http
-                .get(format!("{API}/videos/{}", handle.id))
-                .bearer_auth(ctx.api_key()?),
+        let v = send_json(
+            ctx.http.post(format!("{API}{endpoint}")).bearer_auth(key),
+            &body,
         )
         .await?;
-        match v.get("status").and_then(Value::as_str).unwrap_or("") {
-            "queued" => Ok(PollStatus::Queued { position: None }),
-            "in_progress" => Ok(PollStatus::Running {
-                progress: v
-                    .get("progress")
-                    .and_then(Value::as_f64)
-                    .map(|n| (n / 100.0) as f32),
-                message: None,
-            }),
-            "completed" => Ok(PollStatus::Done(vec![Output::Url {
-                url: format!("{API}/videos/{}/content", handle.id),
-                headers: vec![("Authorization".into(), format!("Bearer {}", ctx.api_key()?))],
-            }])),
-            "failed" => Ok(PollStatus::Failed(failure(
-                v.pointer("/error/message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("OpenAI video failed"),
-            ))),
-            other => Err(ProviderError::Failed(format!(
-                "unknown OpenAI video state: {other}"
-            ))),
-        }
+        Ok(Submission::Done(image_outputs(
+            &v,
+            req.str(keys::OUTPUT_FORMAT),
+        )?))
+    }
+    // Only batches are queued: OpenAI shut down the Videos API and Sora 2 on 24.09.2026
+    // (https://developers.openai.com/api/docs/deprecations).
+    async fn poll(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<PollStatus> {
+        poll_batch(ctx, handle).await
     }
     async fn cancel(&self, ctx: &Ctx, handle: &RemoteHandle) -> ProviderResult<()> {
-        let resource = if handle.is_batch() {
-            "batches"
-        } else {
-            "videos"
-        };
         let r = ctx
             .http
-            .post(format!("{API}/{resource}/{}/cancel", handle.id))
+            .post(format!("{API}/batches/{}/cancel", handle.id))
             .bearer_auth(ctx.api_key()?)
             .send()
             .await

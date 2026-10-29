@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use pictesa_core::{
-    common, keys, CredentialField, Ctx, GenerationRequest, MediaKind, ModelSpec, Output, ParamSpec,
+    keys, CredentialField, Ctx, GenerationRequest, MediaKind, ModelSpec, Output, ParamSpec,
     PollStatus, Pricing, Provider, ProviderError, ProviderInfo, ProviderKind, ProviderResult,
     RemoteHandle, Submission, Task,
 };
@@ -27,7 +27,7 @@ fn image(id: &str, name: &str) -> ModelSpec {
         })
 }
 fn video(id: &str, name: &str) -> ModelSpec {
-    let mut m = ModelSpec::new("leonardo", id, name, MediaKind::Video, &[Task::TextToVideo])
+    ModelSpec::new("leonardo", id, name, MediaKind::Video, &[Task::TextToVideo])
         .param(
             ParamSpec::choices(
                 keys::RESOLUTION,
@@ -40,11 +40,7 @@ fn video(id: &str, name: &str) -> ModelSpec {
         .negative()
         .pricing(Pricing::Variable {
             note: "Leonardo API credits".into(),
-        });
-    if id == "VEO3" {
-        m = m.param(common::duration(&[4, 6, 8], 8));
-    }
-    m
+        })
 }
 fn body(model: &ModelSpec, req: &GenerationRequest) -> ProviderResult<Value> {
     // shortcut: media inputs need Leonardo's presigned upload flow, add it with image-to-image and image-to-video support.
@@ -54,7 +50,8 @@ fn body(model: &ModelSpec, req: &GenerationRequest) -> ProviderResult<Value> {
         ));
     }
     if model.output == MediaKind::Image {
-        let mut b = json!({"modelId":model.remote_id(),"prompt":req.prompt,"num_images":req.num_outputs,"public":false});
+        // The v1 model guides list `contrast` (3, 3.5 or 4) as required; 3.5 is the web app's Medium.
+        let mut b = json!({"modelId":model.remote_id(),"prompt":req.prompt,"num_images":req.num_outputs,"public":false,"contrast":3.5});
         req.copy_params(
             b.as_object_mut().unwrap(),
             &[
@@ -85,6 +82,19 @@ fn body(model: &ModelSpec, req: &GenerationRequest) -> ProviderResult<Value> {
         Ok(b)
     }
 }
+/// Leonardo refuses flagged prompts with 403 ("content moderation filter: ...", "inappropriate
+/// content"), which would otherwise read as a rejected key.
+fn moderation(e: ProviderError) -> ProviderError {
+    match e {
+        ProviderError::Auth(m)
+            if m.contains("content moderation") || m.contains("inappropriate content") =>
+        {
+            ProviderError::ContentPolicy(m)
+        }
+        e => e,
+    }
+}
+
 fn parse_generation(v: &Value, kind: MediaKind) -> ProviderResult<PollStatus> {
     let g = v
         .get("generations_by_pk")
@@ -150,7 +160,6 @@ impl Provider for Leonardo {
             image("de7d3faf-762f-48e0-b3b7-9d0ac3a3fcf3", "Phoenix 1.0"),
             image("b2614463-296c-462a-9586-aafdb8f00e36", "FLUX.1 Dev"),
             video("MOTION2", "Motion 2.0"),
-            video("VEO3", "Veo 3"),
         ]
     }
     async fn check(&self, ctx: &Ctx) -> ProviderResult<()> {
@@ -179,7 +188,8 @@ impl Provider for Leonardo {
                 .bearer_auth(ctx.api_key()?),
             &body(model, req)?,
         )
-        .await?;
+        .await
+        .map_err(moderation)?;
         let id = v
             .pointer("/sdGenerationJob/generationId")
             .or_else(|| v.pointer("/motionVideoGenerationJob/generationId"))

@@ -268,9 +268,17 @@ impl Provider for Xai {
                     .unwrap_or("xAI generation failed"),
             ))),
             "done" if video => {
+                // A video that breaks moderation still ends "done", with respect_moderation false and
+                // an empty url (https://docs.x.ai/developers/rest-api-reference/inference/videos).
+                if v.pointer("/video/respect_moderation").and_then(Value::as_bool) == Some(false) {
+                    return Ok(PollStatus::Failed(ProviderError::ContentPolicy(
+                        "xAI moderation withheld the video".into(),
+                    )));
+                }
                 let url = v
                     .pointer("/video/url")
                     .and_then(Value::as_str)
+                    .filter(|u| !u.is_empty())
                     .ok_or_else(|| ProviderError::Failed("xAI returned no video URL".into()))?;
                 Ok(PollStatus::Done(vec![Output::url(url)]))
             }
