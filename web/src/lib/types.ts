@@ -229,6 +229,8 @@ export interface Me {
   user: User | null;
   /** Local mode with PICTESA_TOKEN set and no cookie yet. */
   needs_token?: boolean;
+  /** Hosted mode: false when the operator closed sign-up. */
+  signup?: boolean;
 }
 
 export interface Health {

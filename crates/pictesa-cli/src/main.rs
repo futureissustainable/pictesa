@@ -187,6 +187,11 @@ enum Command {
         #[arg(short = 'a', long = "arg", value_name = "KEY=VALUE")]
         args: Vec<String>,
     },
+    /// Add hosted accounts: `pictesa users add judge@example.com` (reads the password from stdin).
+    Users {
+        #[command(subcommand)]
+        action: UserAction,
+    },
     /// Operator tools for hosted billing.
     Billing {
         #[command(subcommand)]
@@ -230,6 +235,15 @@ enum RecipeAction {
 enum BillingAction {
     /// Give an account an allowance: `pictesa billing grant user@example.com 20 welcome-credit`.
     Grant { email: String, usd: f64, operation: String },
+}
+
+#[derive(Subcommand)]
+enum UserAction {
+    Add {
+        email: String,
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -361,6 +375,7 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
                     web_dir,
                     secure_cookies: public_url.as_deref().is_some_and(|u| u.starts_with("https://")),
                     allowed_hosts: ServerOptions::local_hosts(addr, &extra),
+                    closed_signup: std::env::var("PICTESA_SIGNUP").is_ok_and(|v| v.eq_ignore_ascii_case("closed")),
                 },
             )
             .await
@@ -615,6 +630,17 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
             }
             let (_, text) = engine.pack_prompt(LOCAL_USER, &name, &values).await?;
             println!("{text}\n\nWith the CLI: list_recipes is `pictesa recipe list`, run_recipe is `pictesa recipe run <id> -v key=value -i key=path --character <id>`, generate is `pictesa generate`, list_models is `pictesa models`.");
+            Ok(())
+        }
+        Command::Users { action: UserAction::Add { email, name } } => {
+            let engine = open_engine(&cli, Mode::Hosted, None).await?;
+            if std::io::stdin().is_terminal() {
+                eprint!("password for {email}: ");
+            }
+            let mut password = String::new();
+            std::io::stdin().read_line(&mut password)?;
+            let user = engine.signup(&email, password.trim_end_matches(['\r', '\n']), name.as_deref()).await?;
+            println!("added {email} ({})", user.role);
             Ok(())
         }
         Command::Billing { action: BillingAction::Grant { email, usd, operation } } => {

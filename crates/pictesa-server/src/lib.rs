@@ -55,6 +55,8 @@ pub struct ServerOptions {
     /// Local mode: Host and Origin values accepted (blocks DNS rebinding and cross-site requests).
     /// Empty means "derive from the listen address".
     pub allowed_hosts: Vec<String>,
+    /// Hosted mode: only the operator adds accounts (`pictesa users add`); sign-up is refused.
+    pub closed_signup: bool,
 }
 
 impl ServerOptions {
@@ -351,6 +353,7 @@ async fn me(State(s): State<AppState>, req: Request) -> Json<Value> {
         "mode": mode_name(s.engine.mode()),
         "user": caller.and_then(|c| c.user),
         "needs_token": needs_token,
+        "signup": s.engine.mode() == Mode::Hosted && !s.opts.closed_signup,
     }))
 }
 
@@ -416,6 +419,9 @@ fn throttle(peer: std::net::SocketAddr, headers: &HeaderMap, email: &str) -> Api
 
 async fn signup(State(s): State<AppState>, axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>, headers: HeaderMap, Json(b): Json<Credentials>) -> ApiResult<Response> {
     hosted_only(&s)?;
+    if s.opts.closed_signup {
+        return Err(ApiError(EngineError::Forbidden("Sign-up is closed on this server. Ask its operator for an account.".into())));
+    }
     throttle(peer, &headers, &b.email)?;
     let user = s.engine.signup(&b.email, &b.password, b.name.as_deref()).await?;
     let session = s.engine.create_session(&user.id).await?;

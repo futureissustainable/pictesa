@@ -1,14 +1,16 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
 import { Link, navigate, useLocation } from "../../lib/router";
-import { loadSession, setUser } from "../../lib/session";
+import { loadSession, setUser, useSession } from "../../lib/session";
 import { PixelMark } from "../../ui/brand";
 import { Icon, Spinner } from "../../ui/icon";
 
 /** Hosted mode only: shown while GET /api/auth/me has no user. */
 export default function AuthPage() {
   const url = useLocation();
-  const signup = url.pathname === "/signup";
+  const state = useSession();
+  const open = state.status !== "ready" || state.me.signup !== false;
+  const signup = open && url.pathname === "/signup";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -25,8 +27,8 @@ export default function AuthPage() {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
-    if (signup && password.length < 8) {
-      setError("Use at least 8 characters for the password.");
+    if (signup && password.length < 10) {
+      setError("Use at least 10 characters for the password.");
       return;
     }
     setBusy(true);
@@ -68,7 +70,7 @@ export default function AuthPage() {
                 type={reveal ? "text" : "password"}
                 autoComplete={signup ? "new-password" : "current-password"}
                 required
-                minLength={signup ? 8 : undefined}
+                minLength={signup ? 10 : undefined}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
               />
@@ -76,7 +78,7 @@ export default function AuthPage() {
                 <Icon name={reveal ? "visibility_off" : "visibility"} />
               </button>
             </div>
-            {signup && <small>At least 8 characters.</small>}
+            {signup && <small>At least 10 characters.</small>}
           </div>
           {error && (
             <p className="notice error" role="alert">
@@ -89,10 +91,12 @@ export default function AuthPage() {
             {!busy && <Icon name="arrow_forward" />}
           </button>
         </form>
-        <p className="auth-switch">
-          {signup ? "Already have an account?" : "New here?"}{" "}
-          <Link to={signup ? "/login" : "/signup"}>{signup ? "Log in" : "Create an account"}</Link>
-        </p>
+        {open && (
+          <p className="auth-switch">
+            {signup ? "Already have an account?" : "New here?"}{" "}
+            <Link to={signup ? "/login" : "/signup"}>{signup ? "Log in" : "Create an account"}</Link>
+          </p>
+        )}
       </div>
     </main>
   );

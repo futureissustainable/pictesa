@@ -10,8 +10,8 @@ Default address: `http://127.0.0.1:4747`. All bodies are JSON unless noted. Time
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
-| GET | `/api/auth/me` | | `{ "mode": "local"\|"hosted", "user": User\|null }` |
-| POST | `/api/auth/signup` | `{ email, password, name? }` | `User` (hosted only) |
+| GET | `/api/auth/me` | | `{ "mode": "local"\|"hosted", "user": User\|null, "signup": bool }` (`signup` is false when hosted sign-up is closed) |
+| POST | `/api/auth/signup` | `{ email, password, name? }` | `User` (hosted only; 403 with `PICTESA_SIGNUP=closed`) |
 | POST | `/api/auth/login` | `{ email, password }` | `User` |
 | POST | `/api/auth/logout` | | 204 |
 | GET | `/api/tokens` | | `{ tokens: [{ id, name, created_at, last_used_at }] }` |
