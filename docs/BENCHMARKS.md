@@ -1,6 +1,6 @@
 # Benchmarks
 
-Measured on 24 and 25.10.2026 on an 8-vCPU Linux VM without a GPU. Each section names its method so it can be repeated.
+Measured on 24 and 25.10.2026 on an 8-vCPU Linux VM without a GPU, and on 29.10.2026 on an RTX 4070 Ti (12 GB) for the GPU section. Each section names its method so it can be repeated.
 
 ## Pictesa's own overhead
 
@@ -43,3 +43,16 @@ These ran through the full path (studio or CLI, server, provider) on the same VM
 The features added on 25.10.2026 (batch runs, variations, inpainting with a painted mask, the Zooms app, a board step, and the ffmpeg trim and frame tools on the Wan 2.1 clip above) also ran end to end on SDXS and ffmpeg through the API and MCP, 8 of 8 checks passing.
 
 Cloud providers were checked with real keys without spending: the key checks and live catalogs of fal, OpenAI, Google and OpenRouter (1,469 models, 613 of 617 fal image and 544 of 545 fal video models priced) on 25.10.2026, with paid runs switched off.
+
+Paid generation has run through OpenRouter only (one image on 25.10.2026, its charge recorded as the run's cost). Direct generation on fal, OpenAI and Google is untested: those accounts had no credit.
+
+## Real local models on a GPU
+
+ComfyUI on Windows with an RTX 4070 Ti (12 GB), reached from Pictesa over an SSH tunnel, 29.10.2026. Times are wall clock from queueing to the finished file.
+
+| Model | Result |
+|---|---|
+| FLUX 3 Klein (int8) | a 1:1 image in 11 to 12 s |
+| LTX-2.5 22B distilled (int8), image to video | a 5 s, 1280×704, 24 fps clip with audio in 68 to 93 s |
+| Cinema shot app (FLUX 3 Klein still, then LTX-2.5 with Crane up) | still and clip from one run in the studio, 93 s for the video step |
+| Claude Code over MCP | a FLUX 3 Klein photo and an LTX-2.5 clip from one sentence, both local, $0 |
