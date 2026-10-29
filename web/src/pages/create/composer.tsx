@@ -20,7 +20,8 @@ import {
   useComposer,
 } from "../../lib/composer";
 import { intentOf, variantFor } from "../../lib/families";
-import { estimateCost, kindPlural, money, plural } from "../../lib/format";
+import { missingModels, useModelDownload } from "../../lib/downloads";
+import { bytes, estimateCost, kindPlural, money, plural } from "../../lib/format";
 import { MAX_COMPARE, trackCompare } from "../../lib/compare";
 import { addJobs } from "../../lib/jobs";
 import { notify, notifyError } from "../../lib/notices";
@@ -54,6 +55,7 @@ export function Composer() {
   // Discovered gateway models are listed without params; their full spec loads on selection.
   const full = useFullModel(listed);
   const model = full.spec;
+  const download = useModelDownload(model?.id);
   const lastFull = useRef<Partial<Record<MediaKind, ModelSpec>>>({});
   const preset = presets?.find((item) => item.id === draft.presetByMode[mode]) ?? null;
   const explicit = (model && draft.paramsByModel[model.id]) || NO_PARAMS;
@@ -239,7 +241,11 @@ export function Composer() {
   }
 
   async function submit() {
-    if (!model || busy) return;
+    if (!model || busy || download.active) return;
+    if (missingFiles.length) {
+      await download.start();
+      return;
+    }
     if (!model.configured) {
       navigate(`/settings#provider-${encodeURIComponent(model.provider)}`);
       return;
@@ -279,6 +285,8 @@ export function Composer() {
     }
   }
 
+  const missingFiles = missingModels(model);
+  const missingSize = missingFiles.reduce((sum, file) => sum + (file.size ?? 0), 0);
   const main = model?.params.filter((spec) => !spec.advanced) ?? [];
   const advanced = model?.params.filter((spec) => spec.advanced) ?? [];
   const changedAdvanced = advanced.some((spec) => spec.key in explicit) || Boolean(model?.negative_prompt && draft.negativePrompt.trim());
@@ -288,9 +296,13 @@ export function Composer() {
     ? full.loading
       ? "Loading the model's settings"
       : "Choose a model first"
-    : !model.configured
-      ? `Set up ${providerLabel} to use ${model.name}`
-      : `Generate ${plural(draft.count, model.output, kindPlural[model.output])}${estimate?.kind === "total" ? `, estimated ${money(estimate.usd)}${model.billed ? " from your balance" : ""}` : ""}`;
+    : download.active
+      ? `Downloading ${model.name}'s model files, ${download.percent}%`
+      : missingFiles.length
+        ? `Download ${model.name}'s model files${missingSize ? `, ${bytes(missingSize)}` : ""}`
+        : !model.configured
+          ? `Set up ${providerLabel} to use ${model.name}`
+          : `Generate ${plural(draft.count, model.output, kindPlural[model.output])}${estimate?.kind === "total" ? `, estimated ${money(estimate.usd)}${model.billed ? " from your balance" : ""}` : ""}`;
 
   return (
     <form
@@ -505,14 +517,17 @@ export function Composer() {
             )}
           </div>
           <button type="submit" className="primary-button generate" disabled={busy || !model} aria-label={generateLabel} aria-keyshortcuts="Control+Enter Meta+Enter" title={model?.billed ? "Paid from your Pictesa balance" : undefined}>
-            <span className="generate-text">{busy ? "Starting" : model && !model.configured ? "Set up" : "Generate"}</span>
+            <span className="generate-text">
+              {busy ? "Starting" : download.active ? `Downloading ${download.percent}%` : missingFiles.length ? "Download models" : model && !model.configured ? "Set up" : "Generate"}
+            </span>
+            {missingFiles.length > 0 && !download.active && missingSize > 0 && <span className="generate-price">{bytes(missingSize)}</span>}
             {price && model?.configured && (
               <span className="generate-price">
                 {model.billed && <Icon name="account_balance_wallet" />}
                 {price}
               </span>
             )}
-            {busy ? <Spinner /> : <Icon name={model && !model.configured ? "key" : "arrow_upward"} />}
+            {busy || download.active ? <Spinner /> : <Icon name={missingFiles.length ? "download" : model && !model.configured ? "key" : "arrow_upward"} />}
           </button>
         </div>
       </div>

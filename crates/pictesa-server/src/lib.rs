@@ -219,6 +219,7 @@ pub fn router(engine: Engine, opts: ServerOptions) -> Router {
         .route("/providers/{id}/check", post(check_provider))
         .route("/models", get(models))
         .route("/models/refresh", post(refresh_models))
+        .route("/downloads", get(list_downloads).post(start_download))
         .route("/models/prefs", get(model_prefs).put(set_model_prefs))
         .route("/models/{*id}", get(model))
         .route("/presets", get(presets))
@@ -534,6 +535,24 @@ struct PrefsBody {
 
 async fn set_model_prefs(State(s): State<AppState>, c: Caller, Json(b): Json<PrefsBody>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(s.engine.set_pinned_models(&c.user_id, b.pinned).await?)))
+}
+
+#[derive(Deserialize)]
+struct DownloadBody {
+    model: String,
+}
+
+/// Downloads a ComfyUI template's missing model files into the configured models folder.
+async fn start_download(State(s): State<AppState>, c: Caller, Json(b): Json<DownloadBody>) -> ApiResult<Response> {
+    if s.engine.mode() == Mode::Hosted && c.user.as_ref().is_none_or(|u| u.role != "admin") {
+        return Err(ApiError(EngineError::Forbidden("Only the administrator can download models.".into())));
+    }
+    let downloads = s.engine.start_model_download(&c.user_id, &b.model, None).await?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "downloads": downloads }))).into_response())
+}
+
+async fn list_downloads(State(s): State<AppState>, _c: Caller) -> Json<Value> {
+    Json(json!({ "downloads": s.engine.downloads() }))
 }
 
 #[derive(Deserialize)]

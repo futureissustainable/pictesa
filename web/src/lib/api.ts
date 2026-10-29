@@ -1,4 +1,4 @@
-import type { Lora, TrainRequest, BatchEstimate, BatchRequest, PromptContent, PromptHistory, SavedPrompt } from "./types";
+import type { BatchEstimate, BatchRequest, Download, Lora, PromptContent, PromptHistory, SavedPrompt, TrainRequest } from "./types";
 import type {
   ApiToken,
   Asset,
@@ -151,7 +151,9 @@ export const api = {
     request<{ models: ModelSpec[] }>("GET", withQuery("/api/models", query)),
   /** Full spec of one model. Ids contain ":" and "/", which the server expects as they are. */
   model: (modelId: string) => request<ModelSpec>("GET", `/api/models/${encodeURI(modelId).replaceAll("?", "%3F").replaceAll("#", "%23")}`),
-  refreshModels: () => request<{ models: number }>("POST", "/api/models/refresh"),
+  refreshModels: (provider?: string) => request<{ models: number }>("POST", provider ? `/api/models/refresh?provider=${id(provider)}` : "/api/models/refresh"),
+  downloads: () => request<{ downloads: Download[] }>("GET", "/api/downloads"),
+  startDownload: (model: string) => request<{ downloads: Download[] }>("POST", "/api/downloads", { model }),
   modelPrefs: () => request<ModelPrefs>("GET", "/api/models/prefs"),
   setPinnedModels: (pinned: string[]) => request<ModelPrefs>("PUT", "/api/models/prefs", { pinned }),
   importWorkflow: (name: string, workflow: unknown) => request<WorkflowImport>("POST", "/api/workflows/import", { name, workflow }),

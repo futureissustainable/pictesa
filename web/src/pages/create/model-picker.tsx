@@ -1,5 +1,6 @@
 import { lazy, Suspense, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { updatePins, useModelPrefs, useProviders } from "../../lib/catalog";
+import { missingModels } from "../../lib/downloads";
 import { cleanName, familyScore, groupFamilies, pickVariant, unitCost, type Family } from "../../lib/families";
 import { taskName, unitMoney } from "../../lib/format";
 import { readJson, writeJson } from "../../lib/prefs";
@@ -407,6 +408,11 @@ function FamilyRow({
             {family.configured ? (
               <span className="model-price" title={priceNote(pick.pricing)}>
                 {price}
+              </span>
+            ) : missingModels(pick).length ? (
+              <span className="model-price" title="Its model files are not on the ComfyUI server yet; choose it to download them">
+                <Icon name="download" />
+                <span className="sr-only">Needs model files</span>
               </span>
             ) : (
               <span className="model-price" title="Add an API key for this provider in Settings">

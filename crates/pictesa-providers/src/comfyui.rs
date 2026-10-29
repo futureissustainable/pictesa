@@ -236,6 +236,10 @@ pub(crate) struct ModelFile {
     pub directory: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -492,6 +496,15 @@ fn spec_for(t: &Template) -> ModelSpec {
         .into(),
     );
     let mut meta = json!({ "template": t.id, "license": m.license, "sources": m.sources });
+    // Every file the template needs, so a model manager can fetch what a server lacks.
+    if !m.requires.models.is_empty() {
+        meta["models"] = json!(m
+            .requires
+            .models
+            .iter()
+            .map(|f| json!({ "name": f.name, "directory": f.directory, "url": f.url, "size": f.size, "sha256": f.sha256 }))
+            .collect::<Vec<_>>());
+    }
     if let Some(d) = &t.dir {
         meta["dir"] = json!(d.to_string_lossy());
     }
@@ -1515,6 +1528,24 @@ impl Provider for ComfyUi {
                     placeholder: Some("comfyui-...".into()),
                 },
                 CredentialField {
+                    key: "models_dir".into(),
+                    label: "ComfyUI models folder, to download missing model files (same machine)".into(),
+                    env: vec!["PICTESA_COMFYUI_MODELS_DIR".into()],
+                    secret: false,
+                    optional: true,
+                    default: None,
+                    placeholder: Some("/path/to/ComfyUI/models".into()),
+                },
+                CredentialField {
+                    key: "hf_token".into(),
+                    label: "Hugging Face token, for gated model downloads".into(),
+                    env: vec!["HF_TOKEN".into(), "HUGGING_FACE_HUB_TOKEN".into()],
+                    secret: true,
+                    optional: true,
+                    default: None,
+                    placeholder: Some("hf_...".into()),
+                },
+                CredentialField {
                     key: "workflows_dir".into(),
                     label: "Extra workflows folder".into(),
                     env: vec!["PICTESA_WORKFLOWS_DIR".into()],
@@ -1566,7 +1597,7 @@ impl Provider for ComfyUi {
                             t.manifest.requires.models.iter().filter(|m| a.missing_models.contains(&m.name)).collect();
                         s.meta["downloads"] = json!(missing
                             .iter()
-                            .map(|m| json!({ "name": m.name, "directory": m.directory, "url": m.url }))
+                            .map(|m| json!({ "name": m.name, "directory": m.directory, "url": m.url, "size": m.size }))
                             .collect::<Vec<_>>());
                         if !a.rename.is_empty() {
                             s.meta["rename"] = json!(a.rename);

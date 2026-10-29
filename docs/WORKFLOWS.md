@@ -155,6 +155,19 @@ huggingface.co/...`).
 A model file kept in a subfolder (`models/diffusion_models/wan/...`) is found and used: the
 template's file name is rewritten to the server's path when the job runs.
 
+### Downloading missing models
+
+When ComfyUI runs on the same machine as Pictesa, set its models folder (Settings > Providers >
+ComfyUI, or `PICTESA_COMFYUI_MODELS_DIR`). A template tagged `needs-models` then shows **Download
+models** with the total size; Pictesa fetches each missing file from its `requires.models` URL into
+`models/<directory>/`, resumes a broken download, checks the size and the `sha256` when the manifest
+has them, and refreshes the catalog so the model is ready. `POST /api/downloads { model }` starts it
+and `GET /api/downloads` reports progress (hosted mode: administrators only).
+
+For a ComfyUI on another machine, run the same download there:
+`pictesa download comfyui:flux3-klein-t2i --to D:\ComfyUI\models`. Gated Hugging Face models need
+their license accepted on huggingface.co and a token (`HF_TOKEN`, or the Hugging Face token field).
+
 ## Running
 
 1. Upload inputs, patch the graph from the manifest, then `POST /api/prompt` with a `client_id`.

@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod characters;
 pub mod creds;
 pub mod crypto;
+pub mod downloads;
 pub mod edits;
 pub mod enhance;
 pub mod files;
@@ -157,6 +158,8 @@ pub(crate) struct Inner {
     pub arenas: std::sync::RwLock<Arc<leaderboard::Boards>>,
     /// Who is looking at which board, and the board versions this process announced.
     pub(crate) boards: boards::Live,
+    /// ComfyUI model files being downloaded or done since start.
+    pub model_downloads: Mutex<Vec<downloads::Download>>,
 }
 
 /// Cheap to clone; all clones share the same state.
@@ -215,6 +218,7 @@ impl Engine {
             local_checks: tokio::sync::Mutex::new(HashMap::new()),
             arenas: Default::default(),
             boards: Default::default(),
+            model_downloads: Mutex::new(Vec::new()),
         };
         let engine = Self { inner: Arc::new(inner) };
         engine.inner.catalog.load_cache(&engine.inner.db).await;

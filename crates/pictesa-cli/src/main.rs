@@ -169,6 +169,14 @@ enum Command {
     },
     /// Refresh model catalogs from gateways and local servers.
     Refresh,
+    /// Download a ComfyUI template's missing model files: `pictesa download comfyui:flux3-klein-t2i --to D:\ComfyUI\models`.
+    /// Run it on the machine that runs ComfyUI.
+    Download {
+        model: String,
+        /// The ComfyUI models folder (default: the ComfyUI provider's models folder setting).
+        #[arg(long)]
+        to: Option<PathBuf>,
+    },
     /// Turn a ComfyUI workflow (API format) into a Pictesa model.
     Workflow {
         #[command(subcommand)]
@@ -631,6 +639,40 @@ async fn run(mut cli: Cli) -> anyhow::Result<()> {
             let (_, text) = engine.pack_prompt(LOCAL_USER, &name, &values).await?;
             println!("{text}\n\nWith the CLI: list_recipes is `pictesa recipe list`, run_recipe is `pictesa recipe run <id> -v key=value -i key=path --character <id>`, generate is `pictesa generate`, list_models is `pictesa models`.");
             Ok(())
+        }
+        Command::Download { model, to } => {
+            let engine = open_engine(&cli, Mode::Local, None).await?;
+            let queued = engine.start_model_download(LOCAL_USER, &model, to).await?;
+            if queued.is_empty() {
+                println!("{model}: no model files missing");
+                return Ok(());
+            }
+            let files: Vec<String> = queued.into_iter().map(|d| d.file).collect();
+            let mut shown = String::new();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                let mine: Vec<_> = engine.downloads().into_iter().filter(|d| files.contains(&d.file)).collect();
+                let line = mine
+                    .iter()
+                    .map(|d| match d.total {
+                        Some(t) if t > 0 => format!("{} {}%", d.file, d.done * 100 / t),
+                        _ => format!("{} {} MB", d.file, d.done >> 20),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("  ");
+                if line != shown {
+                    eprintln!("{line}");
+                    shown = line;
+                }
+                if mine.iter().all(|d| matches!(d.status, "done" | "failed")) {
+                    let failed: Vec<_> = mine.iter().filter_map(|d| d.error.as_ref().map(|e| format!("{}: {e}", d.file))).collect();
+                    if failed.is_empty() {
+                        println!("{model}: {} file(s) downloaded", mine.len());
+                        return Ok(());
+                    }
+                    bail!("{}", failed.join("\n"));
+                }
+            }
         }
         Command::Users { action: UserAction::Add { email, name } } => {
             let engine = open_engine(&cli, Mode::Hosted, None).await?;

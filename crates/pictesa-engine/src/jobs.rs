@@ -79,8 +79,9 @@ impl Engine {
                 }
                 let released = spec.meta.get("date").and_then(Value::as_str).and_then(|d| d.get(..10)).map(String::from);
                 // Provider bindings are internal and heavy; the full spec comes from GET /api/models/{id}.
+                // `downloads` lists a ComfyUI template's missing model files, so the studio can offer to fetch them.
                 let public_meta: Map<String, Value> =
-                    ["supports_loras", "lora_family"].into_iter().filter_map(|key| spec.meta.get(key).cloned().map(|value| (key.into(), value))).collect();
+                    ["supports_loras", "lora_family", "downloads"].into_iter().filter_map(|key| spec.meta.get(key).cloned().map(|value| (key.into(), value))).collect();
                 spec.meta = if public_meta.is_empty() { Value::Null } else { Value::Object(public_meta) };
                 if spec.output == pictesa_core::MediaKind::Lora {
                     spec.complete = false;

@@ -72,6 +72,7 @@ pictesa recipe run video/explainer -v scenes="$(cat scenes.txt)" --character "Oa
 pictesa pack ugc_ad -a product="a ceramic pour-over set" -a product_image=./set.png   # a skill pack's steps
 pictesa import result.png --prompt-file prompt.txt --origin gemini-api --model google:gemini-3-pro-image --label "Nano Banana Pro" -p resolution=2K --json
 pictesa workflow import my-flow.json --name "My flow"   # any ComfyUI workflow becomes a model
+pictesa download comfyui:flux3-klein-t2i --to ~/ComfyUI/models   # fetch a template's missing model files
 pictesa keys set fal api_key        # reads the key from stdin; stored encrypted
 ```
 

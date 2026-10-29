@@ -87,6 +87,17 @@ export interface ModelSpec {
   family?: string;
 }
 
+/** One file of a ComfyUI model download (GET /api/downloads). */
+export interface Download {
+  model: string;
+  /** `<directory>/<name>` inside the ComfyUI models folder. */
+  file: string;
+  done: number;
+  total: number | null;
+  status: "queued" | "running" | "done" | "failed";
+  error: string | null;
+}
+
 export interface ArenaScore {
   /** The task the arena rates: text_to_image, image_edit, text_to_video or image_to_video. */
   arena: string;
