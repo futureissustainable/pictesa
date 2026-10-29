@@ -23,6 +23,7 @@ export function BatchDialog({ model, request, onClose }: { model: ModelSpec; req
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const body = useMemo(() => {
+    // A parameter just added has no values yet: it joins the estimate once it has some.
     const grid = axes.map((axis) => ({
       key: axis.key,
       values: axis.text
@@ -35,7 +36,7 @@ export function BatchDialog({ model, request, onClose }: { model: ModelSpec; req
             return text.trim();
           }
         }),
-    }));
+    })).filter((axis) => axis.values.length > 0);
     return {
       ...request,
       count: 1,

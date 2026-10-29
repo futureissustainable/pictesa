@@ -15,11 +15,15 @@ import type { Asset, BoardNode, Person } from "../../lib/types";
 import { openViewer, useSequence } from "../../lib/viewer";
 import { Choice, Control } from "../../ui/control";
 import { Icon, Spinner } from "../../ui/icon";
-import { Canvas, fitView, toBoard, typing, zoomAround, type Point, type Viewport } from "./canvas";
-import type { NodeActions } from "./nodes";
+import { Canvas, fitView, nodeHeight, toBoard, typing, zoomAround, type Point, type Viewport } from "./canvas";
+import { assetHeight, type NodeActions } from "./nodes";
 import { Inspector, LibraryPanel, SelectionPanel, ShareDialog } from "./panel";
 
 const noop = () => undefined;
+interface Box {
+  w: number;
+  h: number;
+}
 
 /** The model a new step starts with: the one picked in Create when it is set up, else the default. */
 async function stepModel(): Promise<string | null> {
@@ -136,20 +140,38 @@ export default function BoardPage({ id }: { id: string }) {
     if (edge) setSelected(new Set());
   }, []);
 
-  /** The spot itself, or a step down and right of it when an item already starts there. */
-  const freeSpot = (spot: Point, taken: Point[] = []): Point => {
-    const near = (point: Point) => [...(view?.nodes ?? []), ...taken].some((node) => Math.abs(node.x - point.x) < 24 && Math.abs(node.y - point.y) < 24);
-    let point = { x: Math.round(spot.x), y: Math.round(spot.y) };
-    for (let i = 0; i < 30 && near(point); i++) point = { x: point.x + 32, y: point.y + 32 };
-    return point;
+  /** The spot itself when it is free, else the nearest free place around it, so a new item never covers another. */
+  const freeSpot = (spot: Point, size: Box, taken: (Point & Box)[] = []): Point => {
+    const boxes = [
+      // A file just added can be measured before its picture arrives, so its expected height counts too.
+      ...(view?.nodes ?? []).map((node) => {
+        const asset = node.asset_id ? board?.assets[node.asset_id] : undefined;
+        return { x: node.x, y: node.y, w: node.w, h: Math.max(nodeHeight(node, measured, asset), node.kind === "asset" ? assetHeight(node.w, asset) : 0) };
+      }),
+      ...taken,
+    ];
+    const gap = 24;
+    const free = (point: Point) => !boxes.some((box) => point.x < box.x + box.w + gap && point.x + size.w + gap > box.x && point.y < box.y + box.h + gap && point.y + size.h + gap > box.y);
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const from = rect ? toBoard(viewport, 0, 0) : null;
+    const to = rect ? toBoard(viewport, rect.width, rect.height) : null;
+    const seen = (point: Point) => !from || !to || (point.x >= from.x && point.y >= from.y && point.x + size.w <= to.x && point.y + size.h <= to.y);
+    // Places on a 48 px grid around the spot, nearest first, and to the right before the left.
+    const candidates: Point[] = [];
+    for (let dx = -24; dx <= 24; dx++) for (let dy = -24; dy <= 24; dy++) candidates.push({ x: spot.x + dx * 48, y: spot.y + dy * 48 });
+    candidates.sort((a, b) => Math.hypot(a.x - spot.x, a.y - spot.y) - Math.hypot(b.x - spot.x, b.y - spot.y) || b.x - a.x);
+    // A free place in sight first, then any free place.
+    const found = candidates.find((point) => free(point) && seen(point)) ?? candidates.find(free) ?? spot;
+    return { x: Math.round(found.x), y: Math.round(found.y) };
   };
   // Files do not take the selection, so the library stays open for the next one.
   const addAssets = (assets: Asset[], at: Point) => {
-    const taken: Point[] = [];
+    const taken: (Point & Box)[] = [];
     addNodes(
       assets.map((asset, index) => {
-        const spot = freeSpot({ x: at.x - 120 + index * 264, y: at.y - 80 }, taken);
-        taken.push(spot);
+        const size = { w: 240, h: assetHeight(240, asset) };
+        const spot = freeSpot({ x: at.x - 120 + index * 264, y: at.y - 80 }, size, taken);
+        taken.push({ ...spot, ...size });
         return { id: newId(), kind: "asset" as const, ...spot, asset_id: asset.id };
       }),
     );
@@ -168,7 +190,7 @@ export default function BoardPage({ id }: { id: string }) {
     }
   };
   const addNote = (text = "", at = center()) => {
-    const node = { id: newId(), kind: "note" as const, ...freeSpot({ x: at.x - 120, y: at.y - 60 }), text };
+    const node = { id: newId(), kind: "note" as const, ...freeSpot({ x: at.x - 120, y: at.y - 60 }, { w: 240, h: 140 }), text };
     addNodes([node]);
     setSelected(new Set([node.id]));
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(`[data-node="${node.id}"] textarea`)?.focus());
@@ -178,7 +200,7 @@ export default function BoardPage({ id }: { id: string }) {
     if (!model) return notifyError("No image model is set up yet. Add a provider in Settings.");
     const sources = view?.nodes.filter((node) => from.includes(node.id)) ?? [];
     const place = at ?? (sources.length ? { x: Math.max(...sources.map((node) => node.x + node.w)) + 80 + 150, y: Math.min(...sources.map((node) => node.y)) + 60 } : center());
-    const step = { id: newId(), kind: "step" as const, ...freeSpot({ x: place.x - 150, y: place.y - 60 }), model, prompt: "" };
+    const step = { id: newId(), kind: "step" as const, ...freeSpot({ x: place.x - 150, y: place.y - 60 }, { w: 300, h: 190 }), model, prompt: "" };
     addNodes([step], from.map((source) => ({ from: source, to: step.id })));
     setSelected(new Set([step.id]));
   };
@@ -195,9 +217,31 @@ export default function BoardPage({ id }: { id: string }) {
     else if (selectedEdge) deleteItems([], [selectedEdge]);
   };
 
+  // Results land beside their step. After a run started here, the view follows them when they land out of sight.
+  const following = useRef<{ step: string; until: number } | null>(null);
+  const seenNodes = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!view || !board) return;
+    const before = seenNodes.current;
+    seenNodes.current = new Set(view.nodes.map((node) => node.id));
+    const follow = following.current;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!before || !follow || Date.now() > follow.until || !rect) return;
+    const added = view.nodes.filter((node) => node.kind === "asset" && !before.has(node.id));
+    if (!added.length) return;
+    const from = toBoard(viewport, 0, 0);
+    const to = toBoard(viewport, rect.width, rect.height);
+    const fits = (node: BoardNode) => node.x >= from.x && node.x + node.w <= to.x && node.y >= from.y && node.y + assetHeight(node.w, node.asset_id ? board.assets[node.asset_id] : undefined) <= to.y;
+    if (added.every(fits)) return;
+    const step = view.nodes.find((node) => node.id === follow.step);
+    setViewport(fitView(board, step ? [step, ...added] : added, measured, rect.width, rect.height));
+    // Runs only when the items change; the viewport is read as it is now.
+  }, [view]);
+
   const run = async (nodeId: string, downstream: boolean) => {
     flushDrafts();
     await whenSaved();
+    following.current = { step: nodeId, until: Date.now() + 10 * 60_000 };
     try {
       await api.runStep(id, nodeId, downstream);
     } catch (error) {
@@ -241,7 +285,7 @@ export default function BoardPage({ id }: { id: string }) {
       <div className="workspace">
         <div className={gone ? "empty" : "page-loading"} role={gone ? "alert" : "status"}>
           {gone ? <Icon name="search_off" /> : <Spinner />}
-          {gone ? <h2>{state.error}</h2> : "Loading the board"}
+          {gone ? <h1>{state.status === "gone" && !hosted ? "This board was deleted." : state.error}</h1> : "Loading the board"}
           {gone && (
             <Link className="primary-button" to="/boards">
               All boards

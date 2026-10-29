@@ -49,18 +49,23 @@ export default function AuthPage() {
         <PixelMark className="auth-mark" />
         <h1>{signup ? "Make your studio." : "Welcome back."}</h1>
         <p className="auth-lead">{signup ? "An account keeps your models, keys and library together." : "Log in to your Pictesa studio."}</p>
+        {!open && url.pathname === "/signup" && (
+          <p className="notice" role="status">
+            Sign-up is closed on this server. Ask its operator for an account.
+          </p>
+        )}
         <form onSubmit={(event) => void submit(event)} noValidate>
           {signup && (
             <label className="field" htmlFor={`${id}-name`}>
               <span>
                 Name <small>Optional</small>
               </span>
-              <input id={`${id}-name`} type="text" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} />
+              <input id={`${id}-name`} type="text" autoComplete="name" autoFocus value={name} onChange={(event) => setName(event.target.value)} />
             </label>
           )}
           <label className="field" htmlFor={`${id}-email`}>
             <span>Email</span>
-            <input id={`${id}-email`} type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
+            <input id={`${id}-email`} type="email" autoComplete="email" autoFocus={!signup} required value={email} onChange={(event) => setEmail(event.target.value)} />
           </label>
           <div className="field">
             <label htmlFor={`${id}-password`}>Password</label>
@@ -144,6 +149,7 @@ export function TokenPage() {
                 autoComplete="current-password"
                 spellCheck={false}
                 autoCapitalize="off"
+                autoFocus
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
               />

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, errorMessage } from "../../lib/api";
+import { api, errorMessage, uploadFiles } from "../../lib/api";
+import { acceptFor, refuseFile } from "../../lib/attach";
 import { useAssetList } from "../../lib/assets";
 import { useModelNames } from "../../lib/catalog";
 import { emitLocal } from "../../lib/events";
@@ -19,6 +20,8 @@ export function LibraryPicker({ kind, room, title, onPick, onClose }: { kind: Me
   const [link, setLink] = useState("");
   const [importing, setImporting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
   const list = useAssetList({ kind, q: query || undefined });
   const nameOf = useModelNames([kind]);
   const multiple = room > 1;
@@ -46,6 +49,31 @@ export function LibraryPicker({ kind, room, title, onPick, onClose }: { kind: Me
       notifyError(errorMessage(error));
     } finally {
       setImporting(false);
+    }
+  };
+
+  // Uploaded files join the library and are picked at once (one slot) or selected (several).
+  const upload = async (files: File[]) => {
+    const refused = files.find((file) => refuseFile(file) || !file.type.startsWith(`${kind}/`));
+    if (refused) notifyError(`${refused.name}: ${refuseFile(refused) ?? `This picker takes ${kindPlural[kind]}.`}`);
+    const usable = files.filter((file) => file !== refused && !refuseFile(file) && file.type.startsWith(`${kind}/`)).slice(0, room);
+    if (!usable.length) return;
+    setUploading(true);
+    try {
+      const { assets, errors } = await uploadFiles(usable);
+      assets.forEach((asset) => emitLocal({ asset }));
+      if (errors.length) notifyError(`${errors[0]!.name}: ${errors[0]!.error}`);
+      const fitting = assets.filter((asset) => asset.kind === kind);
+      if (!multiple && fitting[0]) return finish([fitting[0]]);
+      setSelected((current) => {
+        const next = new Map(current);
+        for (const asset of fitting) if (next.size < room) next.set(asset.id, asset);
+        return next;
+      });
+    } catch (error) {
+      notifyError(errorMessage(error));
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -80,6 +108,24 @@ export function LibraryPicker({ kind, room, title, onPick, onClose }: { kind: Me
             Import
           </button>
         </div>
+        <button type="button" className="text-button" disabled={uploading} onClick={() => fileRef.current?.click()}>
+          {uploading ? <Spinner /> : <Icon name="upload" />}
+          {uploading ? "Uploading" : "Upload"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          accept={acceptFor(kind)}
+          multiple={multiple}
+          onChange={(event) => {
+            const files = [...(event.target.files ?? [])];
+            event.target.value = "";
+            void upload(files);
+          }}
+        />
       </div>
       <div className="picker-body" ref={scrollRef}>
         {list.items.length ? (
@@ -90,6 +136,7 @@ export function LibraryPicker({ kind, room, title, onPick, onClose }: { kind: Me
             label={`Your ${kindPlural[kind]}`}
             titleOf={(asset) => assetTitle(asset, nameOf)}
             selectable={multiple}
+            actions={false}
             selected={new Set(selected.keys())}
             hasMore={list.hasMore}
             loading={list.loading}

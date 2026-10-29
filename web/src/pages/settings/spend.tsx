@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { useModelNames } from "../../lib/catalog";
 import { onReconnect, subscribeEvents } from "../../lib/events";
 import { money } from "../../lib/format";
 import type { BudgetProgress, Spend, SpendGroup } from "../../lib/types";
@@ -16,6 +17,8 @@ export default function SpendSettings() {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const initialized = useRef(false);
+  const nameOf = useModelNames(["image", "video", "audio", "lora"]);
+  const capsProblem = daily.trim() && monthly.trim() && Number(daily) > Number(monthly) ? "The daily cap is above the monthly cap. Lower it, or raise the monthly cap." : null;
   const reload = useCallback(() => {
     api.spend().then((value) => {
       setData(value); setError(null);
@@ -47,20 +50,21 @@ export default function SpendSettings() {
     <section className="settings-block" aria-labelledby="budgets-title">
       <h2 id="budgets-title">Budgets</h2><p>A run that would exceed a cap stops before it is sent. Leave a cap empty for no limit. Zero blocks paid runs.</p>
       <form className="library-form" onSubmit={async (event) => {
-        event.preventDefault(); setBusy(true); setSaved(false); setError(null);
+        event.preventDefault(); if (capsProblem) return; setBusy(true); setSaved(false); setError(null);
         try { setData(await api.setBudgets(daily.trim() ? Number(daily) : null, monthly.trim() ? Number(monthly) : null)); setSaved(true); }
         catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
       }}>
         <div className="spend-caps">
-          <label className="field"><span>Daily cap (USD)</span><input type="number" min="0" max="1000000" step="0.000001" placeholder="No limit" value={daily} onChange={(event) => { setDaily(event.target.value); setSaved(false); }} /></label>
+          <label className="field"><span>Daily cap (USD)</span><input type="number" min="0" max="1000000" step="0.000001" placeholder="No limit" value={daily} aria-invalid={Boolean(capsProblem) || undefined} aria-describedby={capsProblem ? "caps-problem" : undefined} onChange={(event) => { setDaily(event.target.value); setSaved(false); }} /></label>
           <label className="field"><span>Monthly cap (USD)</span><input type="number" min="0" max="1000000" step="0.000001" placeholder="No limit" value={monthly} onChange={(event) => { setMonthly(event.target.value); setSaved(false); }} /></label>
         </div>
+        {capsProblem && <p id="caps-problem" role="alert" className="notice error">{capsProblem}</p>}
         <Budget label="Daily" value={data.daily} /><Budget label="Monthly" value={data.monthly} />
         {error && <p role="alert" className="notice error">{error}</p>}
-        <div className="dialog-actions">{saved && <span role="status" className="hint">Budgets saved.</span>}<button className="primary-button" disabled={busy}>Save budgets</button></div>
+        <div className="dialog-actions">{saved && <span role="status" className="hint">Budgets saved.</span>}<button className="primary-button" disabled={busy || Boolean(capsProblem)}>Save budgets</button></div>
       </form>
     </section>
-    <div className="spend-breakdowns"><Breakdown title="By model" rows={data.models} /><Breakdown title="By provider" rows={data.providers} /></div>
+    <div className="spend-breakdowns"><Breakdown title="By model" rows={data.models.map((row) => ({ ...row, name: nameOf(row.name) }))} /><Breakdown title="By provider" rows={data.providers} /></div>
   </div>;
 }
 
@@ -72,12 +76,25 @@ function Budget({ label, value }: { label: string; value: BudgetProgress }) {
 
 function SpendChart({ days }: { days: SpendGroup[] }) {
   const [active, setActive] = useState<SpendGroup | null>(null);
+  const [focus, setFocus] = useState(days.length - 1);
   const max = Math.max(...days.map((day) => day.usd), 0.01);
   const displayed = active ?? days.at(-1);
   return <div className="spend-chart">
     <p className="hint spend-readout" aria-live="polite">{displayed && `${date(displayed.name)}: ${preciseMoney(displayed.usd)}`}</p>
-    <div className="spend-bars" role="group" aria-label="Spend per day over 30 days">
-      {days.map((day) => <button type="button" key={day.name} aria-label={`${date(day.name)}: ${preciseMoney(day.usd)}`} title={`${date(day.name)}: ${preciseMoney(day.usd)}`} onFocus={() => setActive(day)} onBlur={() => setActive(null)} onMouseEnter={() => setActive(day)} onMouseLeave={() => setActive(null)} style={{ height: `${Math.max(1, day.usd / max * 100)}%` }} />)}
+    <div
+      className="spend-bars"
+      role="group"
+      aria-label="Spend per day over 30 days. Use the arrow keys to move between days."
+      onKeyDown={(event) => {
+        const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : event.key === "Home" ? -days.length : event.key === "End" ? days.length : 0;
+        if (!step) return;
+        event.preventDefault();
+        const next = Math.max(0, Math.min(days.length - 1, focus + step));
+        setFocus(next);
+        (event.currentTarget.children[next] as HTMLElement | undefined)?.focus();
+      }}
+    >
+      {days.map((day, index) => <button type="button" key={day.name} tabIndex={index === Math.min(focus, days.length - 1) ? 0 : -1} aria-label={`${date(day.name)}: ${preciseMoney(day.usd)}`} title={`${date(day.name)}: ${preciseMoney(day.usd)}`} onFocus={() => { setActive(day); setFocus(index); }} onBlur={() => setActive(null)} onMouseEnter={() => setActive(day)} onMouseLeave={() => setActive(null)} style={{ height: `${Math.max(1, day.usd / max * 100)}%` }} />)}
     </div>
     <div className="spend-axis">{[days[0], days[Math.floor(days.length / 2)], days.at(-1)].map((day) => day && <span key={day.name}>{date(day.name).slice(0, 5)}</span>)}</div>
   </div>;

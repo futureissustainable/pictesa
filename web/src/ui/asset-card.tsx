@@ -42,6 +42,8 @@ export interface CardProps {
   selectable?: boolean;
   /** What a click does, for the accessible name: "Open" by default. */
   verb?: string;
+  /** Variations and favorite on hover. Off in pickers and small tiles, where a click should only pick. */
+  actions?: boolean;
   onOpen(asset: Asset, index: number): void;
   onFavorite?(asset: Asset): void;
   /** Position and size from the masonry layout. */
@@ -54,7 +56,7 @@ function startDrag(event: DragEvent, asset: Asset) {
   event.dataTransfer.setData("text/uri-list", new URL(asset.url, location.origin).href);
 }
 
-export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, selected, selectable, verb = "Open", onOpen, onFavorite, style }: CardProps) {
+export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, selected, selectable, verb = "Open", actions = true, onOpen, onFavorite, style }: CardProps) {
   const [playing, setPlaying] = useState(false);
   const detail = asset.kind === "image" ? dimensions(asset.width, asset.height) : asset.duration_ms ? clock(asset.duration_ms) : null;
   const label = asset.prompt ? `${title}: ${asset.prompt.slice(0, 120)}` : title;
@@ -81,11 +83,7 @@ export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, s
             {asset.duration_ms ? clock(asset.duration_ms) : null}
           </span>
         )}
-        {selectable && selected && (
-          <span className="asset-check">
-            <Icon name="check" />
-          </span>
-        )}
+        {selectable && <span className={`asset-check ${selected ? "" : "off"}`}>{selected && <Icon name="check" />}</span>}
       </button>
       {!selectable && (
         <div className="asset-meta">
@@ -93,8 +91,8 @@ export const AssetCard = memo(function AssetCard({ asset, index, title, fresh, s
             <p>{title}</p>
             {detail && <small>{detail}</small>}
           </div>
-          {asset.job_id && <Variations jobId={asset.job_id} compact />}
-          {onFavorite && (
+          {actions && asset.job_id && !asset.deleted_at && <Variations jobId={asset.job_id} compact />}
+          {actions && onFavorite && (
             <button
               type="button"
               className={`icon-button ${asset.favorite ? "selected" : ""}`}

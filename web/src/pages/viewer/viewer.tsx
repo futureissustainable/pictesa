@@ -15,9 +15,12 @@ import { closeViewer, sequence, stepViewer } from "../../lib/viewer";
 import { assetTitle } from "../../lib/names";
 import { CodeBlock, CopyButton } from "../../ui/code";
 import { Choice, Control } from "../../ui/control";
-import { Dialog } from "../../ui/dialog";
+import { ConfirmDialog, Dialog } from "../../ui/dialog";
 import { Variations } from "../../ui/variations";
 import { Icon, Spinner } from "../../ui/icon";
+
+/** Prompts longer than this start clamped to a few lines. */
+const LONG_PROMPT = 600;
 
 /** Full-size viewer over any page (`?asset=<id>`). Arrow keys and swipes step through the page's list. */
 export default function Viewer({ id }: { id: string }) {
@@ -117,7 +120,7 @@ export default function Viewer({ id }: { id: string }) {
                 title
               )}
             </p>
-            <button type="button" className="icon-button" aria-label="Close" onClick={closeViewer}>
+            <button type="button" className="icon-button viewer-close" aria-label="Close" onClick={closeViewer}>
               <Icon name="close" />
             </button>
           </header>
@@ -159,6 +162,8 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
   const audio = useModels("audio");
   const presets = usePresets(job?.output ?? asset.kind).data;
   const [working, setWorking] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [fullPrompt, setFullPrompt] = useState(false);
   const models: ModelSpec[] = useMemo(() => [...(image.data ?? []), ...(video.data ?? []), ...(audio.data ?? [])], [image.data, video.data, audio.data]);
   const listedModel = models.find((model) => model.id === (job?.model ?? asset.model));
   const spec = useFullModel(listedModel).spec;
@@ -176,6 +181,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
     }
   };
 
+  const longPrompt = (job?.prompt || asset.prompt || "").length > LONG_PROMPT;
   const params = job
     ? Object.entries(job.params ?? {}).filter(([key, value]) => value !== null && value !== "" && key !== "width" && key !== "height")
     : Object.entries(asset.params ?? {}).filter(([, value]) => value !== null && value !== "");
@@ -199,7 +205,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
           <Icon name="download" />
         </a>
         {!trashed ? (
-          <button type="button" className="icon-button" aria-label="Move to trash" title="Move to trash" onClick={() => void run(async () => (await trashAsset(asset)) && closeViewer())}>
+          <button type="button" className="icon-button" aria-label="Move to trash" title="Move to trash" disabled={working} onClick={() => void run(async () => (await trashAsset(asset)) && closeViewer())}>
             <Icon name="delete" />
           </button>
         ) : null}
@@ -217,9 +223,7 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
               type="button"
               className="text-button destructive"
               disabled={working}
-              onClick={() => {
-                if (confirm("Delete this file for good? This cannot be undone.")) void run(() => deleteForever(asset));
-              }}
+              onClick={() => setConfirmDelete(true)}
             >
               <Icon name="delete_forever" />
               Delete for good
@@ -266,6 +270,17 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
         </div>
       )}
 
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this file for good?"
+          confirm="Delete for good"
+          onClose={() => setConfirmDelete(false)}
+          onConfirm={() => deleteForever(asset)}
+        >
+          <p>This cannot be undone.</p>
+        </ConfirmDialog>
+      )}
+
       {loading && !job && asset.source === "generated" ? (
         <p className="viewer-loading" role="status">
           <Spinner />
@@ -275,7 +290,12 @@ function Details({ asset, job, loading }: { asset: Asset; job: Job | null; loadi
 
       {(job?.prompt || asset.prompt) && (
         <section className="detail-prompt" aria-label="Prompt">
-          <p>{job?.prompt || asset.prompt}</p>
+          <p className={longPrompt && !fullPrompt ? "clamped" : undefined}>{job?.prompt || asset.prompt}</p>
+          {longPrompt && (
+            <button type="button" className="text-button detail-more" aria-expanded={fullPrompt} onClick={() => setFullPrompt(!fullPrompt)}>
+              {fullPrompt ? "Show less" : "Show more"}
+            </button>
+          )}
           <CopyButton text={job?.prompt || asset.prompt || ""} label="Copy prompt" />
         </section>
       )}

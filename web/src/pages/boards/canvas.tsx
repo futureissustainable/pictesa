@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useSt
 import { ASSET_DRAG_TYPE, readDraggedAsset } from "../../lib/attach";
 import { connect, moveNodes, newId, type BoardView } from "../../lib/boards";
 import { roleLabel } from "../../lib/format";
+import { useMediaQuery } from "../../lib/prefs";
 import type { Asset, Board, BoardEdge, BoardNode } from "../../lib/types";
 import { Icon } from "../../ui/icon";
 import { AssetBody, assetHeight, NoteBody, StepBody, type NodeActions } from "./nodes";
@@ -27,6 +28,8 @@ export const MAX_ZOOM = 2.5;
  * tap to the nearest control, which could start a run), so they hide or stop taking taps: a tap
  * selects, and the panel has full-size controls. */
 const FAR = 0.5;
+/** Fingers need bigger targets: on touch screens node controls show from 90% zoom. */
+const FAR_TOUCH = 0.9;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 /** The board point under a point of the canvas element. */
@@ -331,13 +334,14 @@ export function Canvas(props: CanvasProps) {
   };
   const accepts = (event: DragEvent) => editable && (event.dataTransfer.types.includes("Files") || event.dataTransfer.types.includes(ASSET_DRAG_TYPE));
 
+  const touch = useMediaQuery("(pointer: coarse)");
   const feedsSteps = (node: BoardNode) => view.edges.some((edge) => edge.from === node.id && nodesById.get(edge.to)?.kind === "step");
   const linkFrom = link && nodesById.get(link.from);
 
   return (
     <div
       ref={canvasRef}
-      className={`board-canvas ${connecting ? "connecting" : ""} ${dropping ? "drop-over" : ""} ${viewport.z < FAR ? "far" : ""}`}
+      className={`board-canvas ${connecting ? "connecting" : ""} ${dropping ? "drop-over" : ""} ${viewport.z < (touch ? FAR_TOUCH : FAR) ? "far" : ""}`}
       style={{ backgroundSize: `${24 * viewport.z}px ${24 * viewport.z}px`, backgroundPosition: `${viewport.x}px ${viewport.y}px` }}
       tabIndex={0}
       role="region"
@@ -414,7 +418,7 @@ export function Canvas(props: CanvasProps) {
       </div>
       {!view.nodes.length && (
         <div className="board-empty">
-          <Icon name="dashboard" />
+          <Icon name="schema" />
           <p>{editable ? "This board is empty. Add files from the library or drop them here, or add a note or a step." : "This board is empty."}</p>
         </div>
       )}

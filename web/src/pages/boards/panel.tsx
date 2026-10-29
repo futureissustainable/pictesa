@@ -53,6 +53,7 @@ export function LibraryPanel({ onAdd, titleOf }: { onAdd(asset: Asset): void; ti
             label={`Your ${kindPlural[kind]}`}
             titleOf={titleOf}
             verb="Add to the board:"
+            actions={false}
             hasMore={list.hasMore}
             loading={list.loading}
             onEndReached={list.loadMore}

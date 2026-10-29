@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../lib/api";
-import { composer, setPrompt } from "../../lib/composer";
-import { formatDateTime } from "../../lib/format";
+import { composer, requestParams, setPrompt } from "../../lib/composer";
+import { formatDateTime, sameValue } from "../../lib/format";
 import { notify } from "../../lib/notices";
 import type { GenerationRequest, PromptContent, PromptHistory, SavedPrompt } from "../../lib/types";
 import { Choice, Control } from "../../ui/control";
@@ -100,6 +100,11 @@ export function PromptsControl() {
 
 async function insertPrompt(content: PromptContent) {
   const model = content.model ? await api.model(content.model) : null;
+  // Values that equal the model's defaults are not choices; keeping them would mark settings as changed.
+  const chosen =
+    content.params && model
+      ? Object.fromEntries(Object.entries(requestParams(model, content.params)).filter(([key, value]) => !sameValue(value, model.params.find((spec) => spec.key === key)?.default ?? null)))
+      : content.params;
   composer.set((state) => {
     const mode = model?.output ?? state.mode;
     const modelId = model?.id ?? state.modelByMode[mode];
@@ -109,7 +114,7 @@ async function insertPrompt(content: PromptContent) {
       prompt: content.prompt,
       negativePrompt: content.negative_prompt ?? "",
       modelByMode: model ? { ...state.modelByMode, [mode]: model.id } : state.modelByMode,
-      paramsByModel: content.params && modelId ? { ...state.paramsByModel, [modelId]: content.params } : state.paramsByModel,
+      paramsByModel: chosen && modelId ? { ...state.paramsByModel, [modelId]: chosen } : state.paramsByModel,
       presetByMode: content.params ? { ...state.presetByMode, [mode]: null } : state.presetByMode,
       revision: state.revision + 1,
     };

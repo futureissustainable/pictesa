@@ -1,5 +1,6 @@
 import { lazy, Suspense, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { updatePins, useModelPrefs, useProviders } from "../../lib/catalog";
+import { slotInputs, type AttachedInput } from "../../lib/composer";
 import { missingModels } from "../../lib/downloads";
 import { cleanName, familyScore, groupFamilies, pickVariant, unitCost, type Family } from "../../lib/families";
 import { taskName, unitMoney } from "../../lib/format";
@@ -146,14 +147,24 @@ export function ModelPicker({ models, model, onSelect, loading, intent = null }:
 }
 
 /** "+ Compare": adds another model to run the same prompt side by side. */
-export function ComparePicker({ models, exclude, disabled, onAdd, intent = null }: PickerProps & { exclude: string[]; disabled: boolean; onAdd(model: ModelSpec): void }) {
+export function ComparePicker({
+  models,
+  exclude,
+  disabled,
+  onAdd,
+  intent = null,
+  inputs,
+}: PickerProps & { exclude: string[]; disabled: boolean; onAdd(model: ModelSpec): void; inputs: AttachedInput[] }) {
   const [filters, setFilters] = useState<Filters | null>(null);
   const current = filters ?? startFilters(false);
   // Comparing a model with itself on another provider says nothing: leave out whole families.
+  // Only models that do the same job with the inputs already attached can run the comparison.
   const families = useMemo(() => {
     const taken = new Set(models.filter((model) => exclude.includes(model.id)).map((model) => model.family || model.id));
-    return groupFamilies(models.filter((model) => !taken.has(model.family || model.id)));
-  }, [models, exclude]);
+    const fits = (model: ModelSpec) =>
+      (!intent || model.tasks.includes(intent)) && model.inputs.every((slot) => slotInputs(slot, inputs).filter((input) => input.asset).length >= slot.min);
+    return groupFamilies(models.filter((model) => !taken.has(model.family || model.id) && fits(model)));
+  }, [models, exclude, intent, inputs]);
   return (
     <Control label="Compare with another model" icon="add" value="Compare" caret={false} size="large" className="compare-trigger" panelClassName="model-panel" showTitle={false} disabled={disabled}>
       {(close) => (
@@ -431,7 +442,7 @@ function FamilyRow({
           type="button"
           className="model-pin"
           aria-pressed={pinned}
-          aria-label={`${pinned ? "Unpin" : "Pin"} ${family.name}`}
+          aria-label={`Pin ${family.name}`}
           title={pinned ? "Unpin" : "Pin to the top"}
           onClick={() => {
             const ids = new Set(family.variants.map((model) => model.id));

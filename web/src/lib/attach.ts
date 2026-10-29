@@ -12,6 +12,13 @@ export function fileKind(file: File): MediaKind | null {
 
 export const acceptFor = (kind: MediaKind) => `${kind}/*`;
 
+/** Why a picked file cannot be uploaded, before sending it; null when it can. */
+export function refuseFile(file: File): string | null {
+  if (file.type === "image/svg+xml" || /\.svg$/i.test(file.name)) return "SVG files are not supported. Use a PNG, JPEG or WebP image.";
+  if (!fileKind(file)) return "Pictesa can only use image, video and audio files, and this file is something else.";
+  return null;
+}
+
 /** Files the server refused, shown next to the drop zone they were meant for. */
 export interface UploadError {
   id: number;
@@ -46,7 +53,8 @@ export async function uploadInto(mode: MediaKind, role: InputRole, files: File[]
   await Promise.all(
     files.map(async (file) => {
       const kind = fileKind(file);
-      if (!kind) return;
+      const refused = refuseFile(file);
+      if (refused || !kind) return reportUploadError(scope, file.name, refused ?? "");
       const key = inputKey();
       const preview = kind === "image" ? URL.createObjectURL(file) : null;
       const pending = { name: file.name, kind, progress: null, preview };

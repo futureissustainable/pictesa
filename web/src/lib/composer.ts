@@ -35,7 +35,8 @@ export interface ComposerState {
   /** A character whose images join as references, per mode. */
   characterByMode: Partial<Record<MediaKind, string | null>>;
   loraByModel: Record<string, LoraSelection | null>;
-  count: number;
+  /** Outputs per run, per mode: 4 images do not turn into 4 videos. */
+  countByMode: Partial<Record<MediaKind, number>>;
   /** Bumped when settings arrive from elsewhere, so the prompt can take focus. */
   revision: number;
 }
@@ -52,19 +53,24 @@ const initial: ComposerState = {
   compareByMode: {},
   characterByMode: {},
   loraByModel: {},
-  count: 1,
+  countByMode: {},
   revision: 0,
 };
 
+const validCount = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 8;
+
 function restore(): ComposerState {
-  const saved = readJson<Partial<ComposerState>>(STORAGE_KEY, {});
+  const saved = readJson<Partial<ComposerState> & { count?: number }>(STORAGE_KEY, {});
   const inputs = saved.inputsByMode ?? initial.inputsByMode;
   const keep = (list: AttachedInput[] | undefined) => (Array.isArray(list) ? list.filter((item) => item?.asset?.id && item.role) : []);
+  const mode = saved.mode === "video" || saved.mode === "audio" ? saved.mode : "image";
+  const { count: legacyCount, ...rest } = saved;
+  const counts = Object.entries(saved.countByMode ?? (validCount(legacyCount) ? { [mode]: legacyCount } : {})).filter(([, value]) => validCount(value));
   return {
     ...initial,
-    ...saved,
-    mode: saved.mode === "video" || saved.mode === "audio" ? saved.mode : "image",
-    count: Number.isInteger(saved.count) && saved.count! >= 1 && saved.count! <= 8 ? saved.count! : 1,
+    ...rest,
+    mode,
+    countByMode: Object.fromEntries(counts),
     inputsByMode: { image: keep(inputs.image), video: keep(inputs.video), audio: keep(inputs.audio), lora: [] },
     revision: 0,
   };
@@ -156,7 +162,8 @@ export const setLora = (model: string, selection: LoraSelection | null) => updat
 export const setMode = (mode: MediaKind) => update(() => ({ mode }));
 export const setPrompt = (prompt: string) => update(() => ({ prompt }));
 export const setNegativePrompt = (negativePrompt: string) => update(() => ({ negativePrompt }));
-export const setCount = (count: number) => update(() => ({ count }));
+export const setCount = (mode: MediaKind, count: number) => update((state) => ({ countByMode: { ...state.countByMode, [mode]: count } }));
+export const countOf = (state: ComposerState, mode: MediaKind) => state.countByMode[mode] ?? 1;
 export const setPreset = (mode: MediaKind, preset: string | null) => update((state) => ({ presetByMode: { ...state.presetByMode, [mode]: preset } }));
 export const setCompare = (mode: MediaKind, models: string[]) => update((state) => ({ compareByMode: { ...state.compareByMode, [mode]: models } }));
 export const setCharacter = (mode: MediaKind, character: string | null) => update((state) => ({ characterByMode: { ...state.characterByMode, [mode]: character } }));
@@ -247,7 +254,7 @@ export function loadSettings(settings: LoadedSettings) {
     paramsByModel: settings.model ? { ...state.paramsByModel, [settings.model.id]: { ...settings.params } } : state.paramsByModel,
     inputsByMode: { ...state.inputsByMode, [settings.mode]: settings.inputs.map((input) => ({ key: inputKey(), ...input })) },
     presetByMode: { ...state.presetByMode, [settings.mode]: settings.preset },
-    count: Math.max(1, Math.min(8, settings.count || 1)),
+    countByMode: { ...state.countByMode, [settings.mode]: Math.max(1, Math.min(8, settings.count || 1)) },
     revision: state.revision + 1,
   }));
 }

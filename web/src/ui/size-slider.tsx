@@ -20,7 +20,7 @@ export function SizeSlider() {
   const size = useImageSize();
   return (
     <label className="image-size-control">
-      <span className="image-size-label">Image size</span>
+      <span className="image-size-label">Thumbnail size</span>
       <Icon name="photo_size_select_small" />
       <input
         type="range"
@@ -28,7 +28,7 @@ export function SizeSlider() {
         max="640"
         step="16"
         value={size}
-        aria-label="Image size"
+        aria-label="Thumbnail size"
         aria-valuetext={`${size} pixel target, fitted to the canvas`}
         onChange={(event) => {
           const next = Number(event.target.value);

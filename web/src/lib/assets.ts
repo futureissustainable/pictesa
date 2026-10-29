@@ -210,3 +210,43 @@ export async function deleteForever(asset: Asset): Promise<boolean> {
     return false;
   }
 }
+
+/** One request per asset, four at a time. Throws the first error after the rest have run. */
+async function eachAsset(ids: string[], call: (id: string) => Promise<void>): Promise<void> {
+  const queue = [...ids];
+  let failure: unknown = null;
+  const worker = async () => {
+    for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+      try {
+        await call(id);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker));
+  if (failure) throw failure;
+}
+
+export function restoreMany(ids: string[]): Promise<void> {
+  return eachAsset(ids, async (id) => emitLocal({ asset: await api.restoreAsset(id) }));
+}
+
+export function deleteManyForever(ids: string[]): Promise<void> {
+  return eachAsset(ids, async (id) => {
+    await api.deleteAsset(id, true);
+    emitLocal({ removed: id });
+  });
+}
+
+/** Deletes everything in the trash for good, a page at a time. */
+export async function emptyTrash(): Promise<void> {
+  const done = new Set<string>();
+  for (;;) {
+    const { assets } = await api.assets({ trash: true, limit: PAGE });
+    const ids = assets.map((asset) => asset.id).filter((id) => !done.has(id));
+    if (!ids.length) return;
+    await deleteManyForever(ids);
+    ids.forEach((id) => done.add(id));
+  }
+}

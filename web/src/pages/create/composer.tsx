@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEve
 import { api, ApiError, errorMessage } from "../../lib/api";
 import { ASSET_DRAG_TYPE, fileKind, readDraggedAsset, rejectionMessage, routeFiles, uploadInto } from "../../lib/attach";
 import { defaultModel, useFullModel, useModels, usePresets, useProviders } from "../../lib/catalog";
+import { useCharacters } from "../../lib/characters";
 import {
   activeInputs,
   addInput,
   composer,
+  countOf,
   effectiveParams,
   inputKey,
   requestParams,
@@ -25,7 +27,7 @@ import { bytes, estimateCost, kindPlural, money, plural } from "../../lib/format
 import { MAX_COMPARE, trackCompare } from "../../lib/compare";
 import { addJobs } from "../../lib/jobs";
 import { notify, notifyError } from "../../lib/notices";
-import { navigate } from "../../lib/router";
+import { Link, navigate } from "../../lib/router";
 import type { Asset, GenerationRequest, MediaKind, ModelSpec, ParamValues } from "../../lib/types";
 import { Choice, Control } from "../../ui/control";
 import { Icon, Spinner } from "../../ui/icon";
@@ -61,6 +63,7 @@ export function Composer() {
   const explicit = (model && draft.paramsByModel[model.id]) || NO_PARAMS;
   const values = useMemo(() => (model ? effectiveParams(model, explicit, preset) : {}), [model, explicit, preset]);
   const inputs = draft.inputsByMode[mode];
+  const count = countOf(draft, mode);
   const attached = activeInputs(model, inputs);
   const intent = intentOf(mode, inputs);
   // A model listed without an image slot can still edit through another member of its family.
@@ -70,20 +73,23 @@ export function Composer() {
   );
   const uploading = attached.some((input) => input.upload);
   const compare = (draft.compareByMode[mode] ?? []).filter((id) => id !== model?.id);
-  const characterId = draft.characterByMode[mode] ?? null;
+  // Loading the list also drops a character deleted elsewhere from the draft.
+  const characters = useCharacters().data;
+  const chosenCharacter = draft.characterByMode[mode] ?? null;
+  const characterId = chosenCharacter && (!characters || characters.some((item) => item.id === chosenCharacter)) ? chosenCharacter : null;
   const compareModels = compare.map((id) => list.find((item) => item.id === id)).filter((item): item is ModelSpec => Boolean(item));
   // With compare models the total is the sum of every model's estimate, when all can be computed.
   const estimate = useMemo(() => {
     if (!model) return null;
-    const own = estimateCost(model, values, draft.count);
+    const own = estimateCost(model, values, count);
     if (!compareModels.length) return own;
     let usd = own?.kind === "total" ? own.usd : null;
     for (const other of compareModels) {
-      const part = estimateCost(other, values, draft.count);
+      const part = estimateCost(other, values, count);
       usd = usd !== null && part?.kind === "total" ? usd + part.usd : null;
     }
     return usd === null ? null : ({ kind: "total", usd } as const);
-  }, [model, values, draft.count, compareModels]);
+  }, [model, values, count, compareModels]);
   const [batchOpen, setBatchOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -233,7 +239,7 @@ export function Composer() {
       negative_prompt: model.negative_prompt && draft.negativePrompt.trim() ? draft.negativePrompt.trim() : null,
       params: { ...requestParams(model, explicit), ...(model.meta?.supports_loras === true && draft.loraByModel?.[model.id] ? { loras: [draft.loraByModel[model.id]!] } : {}) },
       inputs: attached.flatMap((input) => (input.asset ? [{ asset_id: input.asset.id, role: input.role }] : [])),
-      count: draft.count,
+      count,
       ...(preset ? { preset: preset.id } : {}),
       ...(compare.length ? { compare } : {}),
       ...(characterId && model.inputs.some((slot) => slot.role === "reference" && slot.kind === "image") ? { character: characterId } : {}),
@@ -277,7 +283,8 @@ export function Composer() {
       if (error instanceof ApiError && error.field === "billing") {
         notify(errorMessage(error), { tone: "error", action: { label: "Add funds", run: () => navigate("/settings/billing") } });
       } else {
-        if (error instanceof ApiError && error.field) setInvalid(error.field);
+        // The server names an input by its place in the request ("inputs.0"); the slots go by role.
+        if (error instanceof ApiError && error.field) setInvalid(error.field.replace(/^inputs\.(\d+)$/, (_field, index: string) => `inputs.${body.inputs[Number(index)]?.role ?? index}`));
         notifyError(errorMessage(error));
       }
     } finally {
@@ -302,7 +309,7 @@ export function Composer() {
         ? `Download ${model.name}'s model files${missingSize ? `, ${bytes(missingSize)}` : ""}`
         : !model.configured
           ? `Set up ${providerLabel} to use ${model.name}`
-          : `Generate ${plural(draft.count, model.output, kindPlural[model.output])}${estimate?.kind === "total" ? `, estimated ${money(estimate.usd)}${model.billed ? " from your balance" : ""}` : ""}`;
+          : `Generate ${plural(count, model.output, kindPlural[model.output])}${estimate?.kind === "total" ? `, estimated ${money(estimate.usd)}${model.billed ? " from your balance" : ""}` : ""}`;
 
   return (
     <form
@@ -330,7 +337,6 @@ export function Composer() {
         }}
         onDrop={onDrop}
       >
-        {model && <LoraPicker model={model} characterId={characterId} />}
         <div className="composer-main">
         {model && (model.inputs.length > 0 || model.meta?.supports_loras || characterId) && <InputSlots model={model} mode={mode} inputs={inputs} invalidRole={invalid?.startsWith("inputs.") ? invalid.slice(7) : null} />}
         {editVersion && editVersion.id !== model?.id && (
@@ -404,7 +410,7 @@ export function Composer() {
               </div>
               {enhanceError && (
                 <p className="prompt-error" id="prompt-help-error" role="alert">
-                  {enhanceError}
+                  <LinkedSettings text={enhanceError} />
                 </p>
               )}
               </div>
@@ -448,6 +454,7 @@ export function Composer() {
               <ComparePicker
                 models={list}
                 intent={intent}
+                inputs={inputs}
                 exclude={[model.id, ...compare]}
                 disabled={compare.length >= MAX_COMPARE}
                 onAdd={(other) => setCompare(mode, [...compare, other.id])}
@@ -475,14 +482,15 @@ export function Composer() {
                   onChange={(value) => setParam(model.id, spec.key, value)}
                 />
               ))}
+            {model && <LoraPicker model={model} characterId={characterId} />}
             {model && (
-              <Control label={`Number of ${kindPlural[model.output]}`} value={plural(draft.count, model.output, kindPlural[model.output])}>
-                {COUNTS.map((count) => (
-                  <Choice key={count} selected={draft.count === count} onPick={() => setCount(count)}>
-                    {plural(count, model.output, kindPlural[model.output])}
+              <Control label={`Number of ${kindPlural[model.output]}`} value={plural(count, model.output, kindPlural[model.output])}>
+                {COUNTS.map((option) => (
+                  <Choice key={option} selected={count === option} onPick={() => setCount(mode, option)}>
+                    {plural(option, model.output, kindPlural[model.output])}
                   </Choice>
                 ))}
-                {model.max_outputs < draft.count && <p className="control-help">{model.name} makes {model.max_outputs} per run, so this starts several runs.</p>}
+                {model.max_outputs < count && <p className="control-help">{model.name} makes {model.max_outputs} per run, so this starts several runs.</p>}
               </Control>
             )}
             {model && (
@@ -532,12 +540,25 @@ export function Composer() {
         </div>
       </div>
       {batchOpen && model && <BatchDialog model={model} request={generationRequest()} onClose={() => setBatchOpen(false)} />}
-      {saveOpen && model && <SavePromptDialog request={{ ...generationRequest(), params: values }} onClose={() => setSaveOpen(false)} />}
+      {saveOpen && model && <SavePromptDialog request={generationRequest()} onClose={() => setSaveOpen(false)} />}
       {models.error && (
         <p className="notice error composer-error" role="alert">
           {models.error}
         </p>
       )}
     </form>
+  );
+}
+
+/** A server message that points to "Settings > Providers", with that part as a link. */
+function LinkedSettings({ text }: { text: string }) {
+  const at = text.indexOf("Settings > Providers");
+  if (at < 0) return text;
+  return (
+    <>
+      {text.slice(0, at)}
+      <Link to="/settings#provider-openrouter">Settings &gt; Providers</Link>
+      {text.slice(at + "Settings > Providers".length)}
+    </>
   );
 }

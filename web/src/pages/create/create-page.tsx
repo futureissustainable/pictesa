@@ -89,8 +89,8 @@ export default function CreatePage() {
           <SizeSlider />
         </div>
         {list.items.length || placeholders.length ? (
-          <div>{groups.map((group, index) => <section className="feed-batch" key={group.id} aria-label={group.batch ? `Batch ${group.id}` : "Result"}>
-            {group.batch && <h2>Batch / {group.items.length + group.pending.length} results</h2>}
+          <div>{groups.map((group, index) => <section className="feed-batch" key={group.id} aria-label={group.batch ? `Batch of ${group.items.length + group.pending.length}` : "Results"}>
+            {group.batch && <h2>Batch of {group.items.length + group.pending.length}</h2>}
             <AssetGrid
               items={group.items}
               placeholders={group.pending}

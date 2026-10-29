@@ -2,6 +2,7 @@ import { api, errorMessage } from "./api";
 import { refreshBillingSoon } from "./catalog";
 import { onReconnect, subscribeEvents, type PreviewEvent } from "./events";
 import { notifyError } from "./notices";
+import { readJson, writeJson } from "./prefs";
 import { createStore } from "./store";
 import type { Job, JobStatus } from "./types";
 
@@ -10,7 +11,11 @@ import type { Job, JobStatus } from "./types";
 export const jobs = createStore<Job[]>([]);
 
 const rank: Record<JobStatus, number> = { queued: 0, running: 1, succeeded: 2, failed: 2, canceled: 2 };
-const dismissed = new Set<string>();
+/** Dismissed failures stay dismissed after a reload. */
+const DISMISSED_KEY = "pictesa:dismissed-jobs";
+const dismissed = new Set<string>(readJson<string[]>(DISMISSED_KEY, []));
+/** Failures this recent come back to the tray after a reload, until dismissed. */
+const RECENT_FAILURE_MS = 60 * 60 * 1000;
 const doneTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** How long a finished job stays in the tray after its outputs reach the grid. */
 const READY_MS = 4000;
@@ -87,7 +92,15 @@ function removeJob(id: string) {
 
 export function dismissJob(id: string) {
   dismissed.add(id);
+  writeJson(DISMISSED_KEY, [...dismissed].slice(-200));
   removeJob(id);
+}
+
+/** Clears every failed and canceled card from the tray. */
+export function dismissFinished() {
+  for (const job of jobs.get()) if (job.status === "failed" || job.status === "canceled") dismissed.add(job.id);
+  writeJson(DISMISSED_KEY, [...dismissed].slice(-200));
+  jobs.set((list) => list.filter((job) => job.status !== "failed" && job.status !== "canceled"));
 }
 
 export function addJobs(created: Job[]) {
@@ -113,14 +126,16 @@ export async function retryJob(job: Job) {
 }
 
 let loading: Promise<void> | null = null;
-/** Restores running jobs after a reload or a dropped event stream. */
+/** Restores running jobs, and failures of the last hour, after a reload or a dropped event stream. */
 export function loadActiveJobs(): Promise<void> {
   loading ??= api
     .jobs({ limit: 50 })
     .then(({ jobs: list }) => {
       const tracked = new Set(jobs.get().map((job) => job.id));
       for (const job of [...list].reverse()) {
+        const recentFailure = job.status === "failed" && Date.now() - (job.finished_at ?? job.created_at) < RECENT_FAILURE_MS;
         if (isActive(job) || tracked.has(job.id)) upsertJob(job);
+        else if (recentFailure) upsertJob(job, true);
       }
     })
     .catch(() => undefined)

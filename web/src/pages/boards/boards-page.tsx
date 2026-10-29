@@ -65,7 +65,7 @@ export default function BoardsPage() {
             <li key={board.id}>
               <Link to={`/boards/${encodeURIComponent(board.id)}`} className="board-card">
                 <span className={`board-cover cover-${Math.min(4, Math.max(1, board.covers.length))}`} aria-hidden="true">
-                  {board.covers.length ? board.covers.map((asset) => <Thumb key={asset.id} asset={asset} />) : <Icon name="dashboard" />}
+                  {board.covers.length ? board.covers.map((asset) => <Thumb key={asset.id} asset={asset} />) : <Icon name="schema" />}
                 </span>
                 <span className="character-name">{board.name}</span>
                 <span className="character-meta">
@@ -79,7 +79,7 @@ export default function BoardsPage() {
         </ul>
       ) : (
         <div className="empty">
-          <Icon name="dashboard" />
+          <Icon name="schema" />
           <h2>No boards yet.</h2>
           <p>Start one for a project, a shoot or a moodboard. Add files, write notes and chain steps.</p>
           <button type="button" className="primary-button" onClick={() => setCreating(true)}>

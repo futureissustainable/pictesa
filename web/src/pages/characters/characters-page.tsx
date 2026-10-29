@@ -2,12 +2,12 @@ import { useState, type FormEvent } from "react";
 import { api, ApiError, errorMessage } from "../../lib/api";
 import { MAX_CHARACTER_IMAGES, removeCharacter, upsertCharacter, useCharacters } from "../../lib/characters";
 import { plural } from "../../lib/format";
-import { notify, notifyError } from "../../lib/notices";
+import { notify } from "../../lib/notices";
 import { sendCharacterToCreate } from "../../lib/reuse";
 import { Link } from "../../lib/router";
 import type { Asset, Character, CharacterKind } from "../../lib/types";
 import { Thumb } from "../../ui/asset-card";
-import { Dialog } from "../../ui/dialog";
+import { ConfirmDialog, Dialog } from "../../ui/dialog";
 import { Icon, Spinner } from "../../ui/icon";
 import { TrainingDialog } from "./training";
 import { useLoras } from "../../lib/loras";
@@ -69,19 +69,7 @@ export default function CharactersPage() {
 
 function CharacterCard({ character, trainedCount, onEdit }: { character: Character; trainedCount: number; onEdit(): void }) {
   const [training, setTraining] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const remove = async () => {
-    if (!confirm(`Delete ${character.name}? The images stay in the library.`)) return;
-    setBusy(true);
-    try {
-      await api.deleteCharacter(character.id);
-      removeCharacter(character.id);
-      notify(`${character.name} deleted.`);
-    } catch (error) {
-      notifyError(errorMessage(error));
-      setBusy(false);
-    }
-  };
+  const [deleting, setDeleting] = useState(false);
   return (
     <li className="character-card">
       <button type="button" className="character-open" onClick={onEdit} aria-label={`Edit ${character.name}`} title="Edit">
@@ -100,17 +88,34 @@ function CharacterCard({ character, trainedCount, onEdit }: { character: Charact
         {character.description && <p className="character-description">{character.description}</p>}
       </div>
       {trainedCount > 0 && <p className="character-meta"><Link to="/loras">{trainedCount} trained LoRA{trainedCount === 1 ? "" : "s"}</Link></p>}
-      <button type="button" className="text-button" onClick={() => setTraining(true)}>Train LoRA</button>
       {training && <TrainingDialog character={character} onClose={() => setTraining(false)} />}
       <div className="character-actions">
         <button type="button" className="text-button" aria-label={`Use ${character.name} in Create`} onClick={() => void sendCharacterToCreate(character)}>
           <Icon name="arrow_upward" />
           Use in Create
         </button>
-        <button type="button" className="icon-button" aria-label={`Delete ${character.name}`} title="Delete" disabled={busy} onClick={() => void remove()}>
+        <button type="button" className="icon-button" aria-label={`Delete ${character.name}`} title="Delete" onClick={() => setDeleting(true)}>
           <Icon name="delete" />
         </button>
+        <button type="button" className="text-button" aria-label={`Train a LoRA from ${character.name}`} onClick={() => setTraining(true)}>
+          <Icon name="model_training" />
+          Train LoRA
+        </button>
       </div>
+      {deleting && (
+        <ConfirmDialog
+          title={`Delete ${character.name}?`}
+          confirm="Delete character"
+          onClose={() => setDeleting(false)}
+          onConfirm={async () => {
+            await api.deleteCharacter(character.id);
+            removeCharacter(character.id);
+            notify(`${character.name} deleted.`);
+          }}
+        >
+          <p>The images stay in the library.</p>
+        </ConfirmDialog>
+      )}
     </li>
   );
 }
@@ -128,6 +133,11 @@ function Swatches({ colors }: { colors: string[] }) {
 
 const MAX_COLORS = 8;
 const isHex = (value: string) => /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value.trim());
+/** "#ABC" becomes "#aabbcc", so one color is not added twice. */
+const longHex = (value: string) => {
+  const hex = value.trim().toLowerCase();
+  return hex.length === 4 ? `#${[...hex.slice(1)].map((digit) => digit + digit).join("")}` : hex;
+};
 
 /** Create or edit a character or brand kit: name, description, 1 to 14 images, and a kit's colors and words. */
 export function CharacterEditor({ character, initial = [], onClose }: { character: Character | null; initial?: Asset[]; onClose(saved?: boolean): void }) {
@@ -240,7 +250,7 @@ export function CharacterEditor({ character, initial = [], onClose }: { characte
                       className="text-button"
                       disabled={!isHex(color)}
                       onClick={() => {
-                        const next = color.trim().toLowerCase();
+                        const next = longHex(color);
                         setColors((list) => (list.includes(next) ? list : [...list, next]));
                       }}
                     >

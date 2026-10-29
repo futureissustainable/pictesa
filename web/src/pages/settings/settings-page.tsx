@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { useBilling } from "../../lib/catalog";
 import { Link, useLocation } from "../../lib/router";
 import { useSession } from "../../lib/session";
@@ -29,6 +29,17 @@ export default function SettingsPage() {
     ...(hosted ? [{ id: "account" as const, label: "Account", icon: "person" as const, to: "/settings/account" }] : []),
   ];
 
+  // On a phone the tabs scroll sideways: keep the current one in view.
+  const tabsRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = tabsRef.current;
+    const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !active) return;
+    const box = nav.getBoundingClientRect();
+    const item = active.getBoundingClientRect();
+    if (item.left < box.left || item.right > box.right) nav.scrollLeft += item.left - box.left - 16;
+  }, [tab, tabs.length]);
+
   return (
     <div className="workspace settings">
       <div className="intro">
@@ -37,7 +48,7 @@ export default function SettingsPage() {
           <p>Providers, agents and this install.</p>
         </div>
       </div>
-      <nav className="tabs" aria-label="Settings sections">
+      <nav className="tabs" aria-label="Settings sections" ref={tabsRef}>
         {tabs.map((item) => (
           <Link key={item.id} to={item.to} className={`filter-button ${tab === item.id ? "active" : ""}`} aria-current={tab === item.id ? "page" : undefined}>
             <Icon name={item.icon} />

@@ -88,9 +88,20 @@ export function onUnauthorized(listener: () => void): () => void {
   return () => unauthorized.delete(listener);
 }
 
+/** Transport details some server answers pass on as they are, in words a person can act on. */
+const RAW_ERRORS: [RegExp, string][] = [
+  [/error sending request for url \(([^)]+)\)/i, "could not connect to $1"],
+  [/\bbuilder error\b/i, "the address is not a valid URL"],
+  [/^character not found\.?$/i, "That character was deleted. Choose another one or remove it."],
+];
+
+/** A server message with raw transport details put in plain words. */
+export const plainError = (text: string) => RAW_ERRORS.reduce((result, [pattern, plain]) => result.replace(pattern, plain), text);
+
 function errorFrom(status: number, data: unknown): ApiError {
   const body = (data && typeof data === "object" ? data : {}) as { error?: unknown; kind?: unknown; field?: unknown; errors?: unknown };
-  const message = typeof body.error === "string" && body.error ? body.error : `The request failed (${status}).`;
+  const fallback = status === 413 ? "That is too large for the server to accept." : `The request failed (${status}).`;
+  const message = typeof body.error === "string" && body.error ? plainError(body.error) : fallback;
   const errors = Array.isArray(body.errors) ? (body.errors as FileError[]) : undefined;
   return new ApiError(message, status, typeof body.kind === "string" ? body.kind : undefined, typeof body.field === "string" ? body.field : undefined, errors, data);
 }

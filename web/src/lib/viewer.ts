@@ -29,8 +29,15 @@ export function stepViewer(id: string) {
   navigate(withParams({ asset: id }), { replace: true, state: historyState() });
 }
 
+// Set while a history.back() from the viewer is on its way, so a second close does not leave the page.
+let leaving = false;
+if (typeof window !== "undefined") window.addEventListener("popstate", () => (leaving = false));
+
 export function closeViewer() {
+  if (leaving || !new URLSearchParams(location.search).has("asset")) return;
   // Opened from a page: go back so the phone's back gesture and Escape agree.
-  if (historyState().viewer) history.back();
-  else navigate(withParams({ asset: null }), { replace: true });
+  if (historyState().viewer) {
+    leaving = true;
+    history.back();
+  } else navigate(withParams({ asset: null }), { replace: true });
 }

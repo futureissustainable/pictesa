@@ -9,6 +9,9 @@ import type { InputRole, MediaKind, WorkflowImport } from "../../lib/types";
 import { Dialog } from "../../ui/dialog";
 import { Icon, Spinner } from "../../ui/icon";
 
+/** The largest workflow the server takes. */
+const MAX_BYTES = 2 * 1024 * 1024;
+
 /** "my_wan-22.json" -> "My wan 22" */
 function nameFromFile(file: string): string {
   const base = file.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
@@ -31,7 +34,9 @@ export default function WorkflowImportDialog({ onClose }: { onClose(): void }) {
 
   const readFile = async (file: File) => {
     setError(null);
-    if (file.size > 2 * 1024 * 1024) return setError("That file is larger than 2 MB. Export the workflow with Workflow > Export (API).");
+    const json = /\.json$/i.test(file.name) || file.type === "application/json";
+    if (!json) return setError(`${file.name} is not a JSON file. Export the workflow with Workflow > Export (API).`);
+    if (file.size > MAX_BYTES) return setError("That file is larger than 2 MB. Export the workflow with Workflow > Export (API).");
     setText(await file.text());
     setFileName(file.name);
     if (!name.trim()) setName(nameFromFile(file.name));
@@ -46,6 +51,7 @@ export default function WorkflowImportDialog({ onClose }: { onClose(): void }) {
 
   const submit = async () => {
     if (busy) return;
+    if (new Blob([text]).size > MAX_BYTES) return setError("That workflow is larger than 2 MB. Export the workflow with Workflow > Export (API).");
     let workflow: unknown;
     try {
       workflow = JSON.parse(text);

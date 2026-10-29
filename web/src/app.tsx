@@ -37,7 +37,7 @@ interface NavItem {
 const primary: NavItem[] = [
   { id: "create", label: "Create", icon: "add_circle", to: "/" },
   { id: "library", label: "Library", icon: "grid_view", to: "/library" },
-  { id: "boards", label: "Boards", icon: "dashboard", to: "/boards" },
+  { id: "boards", label: "Boards", icon: "schema", to: "/boards" },
 ];
 const collections: NavItem[] = [
   { id: "collections", label: "Collections", icon: "folder_open", to: "/library?collections=true" },
@@ -179,6 +179,11 @@ function Shell({ me }: { me: Me }) {
       <a className="skip-link" href="#workspace">
         Skip to workspace
       </a>
+      {section === "create" && !apps && !editing && (
+        <a className="skip-link" href="#prompt">
+          Skip to prompt
+        </a>
+      )}
       <aside className="sidebar" aria-label="Main navigation">
         <Brand />
         <nav className="nav-group" aria-label="Studio">
@@ -282,7 +287,7 @@ function NotFound() {
     <div className="workspace">
       <div className="empty">
         <Icon name="search_off" />
-        <h2>This page does not exist.</h2>
+        <h1>This page does not exist.</h1>
         <p>The link may be old. Your work is still in the library.</p>
         <Link className="primary-button" to="/">
           Go to Create

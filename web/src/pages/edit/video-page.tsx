@@ -32,6 +32,38 @@ onReconnect(() => {
 });
 const noop = () => undefined;
 const seconds = (value: number) => `${value.toFixed(2)}s`;
+/** Two decimals, without trailing zeros: 1.5, not 1.50 or 1.4999999. */
+const round = (value: number) => String(Math.round(value * 100) / 100);
+
+/** A seconds field that takes free typing and applies the value on Enter or when it loses focus. */
+function SecondsField({ label, value, onCommit }: { label: string; value: number; onCommit(value: number): void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const n = Number(draft.replace(",", "."));
+    setDraft(null);
+    if (draft.trim() && Number.isFinite(n)) onCommit(n);
+  };
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={draft ?? round(value)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape" && draft !== null) {
+            e.preventDefault();
+            setDraft(null);
+          }
+        }}
+      />
+    </label>
+  );
+}
 
 export default function VideoPage({ id }: { id: string }) {
   const [source, setSource] = useState<Asset | null>(null);
@@ -158,7 +190,7 @@ export default function VideoPage({ id }: { id: string }) {
       <div className="feed-heading edit-heading">
         <h1 className="sr-only">Edit video</h1>
         <ModeSwitch active="edit" />
-        <button type="button" className="text-button change-video" onClick={() => setPicking("source")}>
+        <button type="button" className="text-button change-video" onClick={() => setPicking("source")} aria-label="Change video" title="Change video">
           <Icon name="photo_library" />
           <span>Change video</span>
         </button>
@@ -259,36 +291,24 @@ export default function VideoPage({ id }: { id: string }) {
                     />
                   </div>
                   <div className="video-time-fields">
-                    <label className="field">
-                      <span>In (seconds)</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={end}
-                        step={0.01}
-                        value={start}
-                        onChange={(e) => {
-                          const n = Math.max(0, Math.min(Number(e.target.value), end - 0.01));
-                          setStart(n);
-                          seek(n);
-                        }}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Out (seconds)</span>
-                      <input
-                        type="number"
-                        min={start}
-                        max={duration}
-                        step={0.01}
-                        value={end}
-                        onChange={(e) => {
-                          const n = Math.min(duration, Math.max(start + 0.01, Number(e.target.value)));
-                          setEnd(n);
-                          seek(n);
-                        }}
-                      />
-                    </label>
+                    <SecondsField
+                      label="In (seconds)"
+                      value={start}
+                      onCommit={(value) => {
+                        const n = Math.max(0, Math.min(value, end - 0.01));
+                        setStart(n);
+                        seek(n);
+                      }}
+                    />
+                    <SecondsField
+                      label="Out (seconds)"
+                      value={end}
+                      onCommit={(value) => {
+                        const n = Math.min(duration, Math.max(start + 0.01, value));
+                        setEnd(n);
+                        seek(n);
+                      }}
+                    />
                     <output className="hint">Keep {seconds(Math.max(0, end - start))}</output>
                   </div>
                 </div>
@@ -300,7 +320,7 @@ export default function VideoPage({ id }: { id: string }) {
                 onClick={() => void run("frame")}
               >
                 <Icon name="camera" />
-                {tool === "frame" ? "Grab frame at playhead" : "Grab frame"}
+                Save this frame
               </button>
             </div>
           </div>
@@ -441,7 +461,7 @@ export default function VideoPage({ id }: { id: string }) {
               </div>
             ) : (
               <div className="notice edit-none" role="status">
-                <p>{models.loading ? "Loading models" : (models.error ?? `Set up ${info.needs} to use ${info.label.toLowerCase()}.`)}</p>
+                <p>{models.loading ? "Loading models" : (models.error ?? `${info.label} needs ${info.needs}.`)}</p>
                 <Link to="/settings" className="notice-action">
                   Open providers
                 </Link>

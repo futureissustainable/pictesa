@@ -175,8 +175,9 @@ function AppCard({ recipe, selected }: { recipe: Recipe; selected: boolean }) {
               {asks.map((item) => (
                 <span key={item.label} className={`app-ask ${item.optional ? "optional" : ""}`}>
                   <Icon name={item.icon} />
-                  {item.label}
-                  {item.optional && <span className="sr-only">, optional</span>}
+                  {/* One text node for screen readers: a hidden suffix in its own box reads with a stray space. */}
+                  <span aria-hidden="true">{item.label}</span>
+                  <span className="sr-only">{item.optional ? `${item.label}, optional` : item.label}</span>
                 </span>
               ))}
             </span>

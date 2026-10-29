@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { clock, kindIcon, kindLabel, money } from "../../lib/format";
 import { compareBatches, comparing, dismissCompare, type CompareBatch } from "../../lib/compare";
-import { cancelJob, dismissJob, isActive, jobs, previews, retryJob } from "../../lib/jobs";
+import { connection } from "../../lib/events";
+import { cancelJob, dismissFinished, dismissJob, isActive, jobs, previews, retryJob } from "../../lib/jobs";
 import { cancelRun, dismissRun, jobsInRuns, resultJobs, runs, useRecipes } from "../../lib/recipes";
 import { useStore } from "../../lib/store";
 import type { Job, RecipeRun } from "../../lib/types";
@@ -19,6 +20,8 @@ export function JobsTray() {
   const batches = useStore(compareBatches);
   const viewing = useStore(comparing);
   const [now, setNow] = useState(() => Date.now());
+  // While the server is away, running cards stop their clocks: nothing is known about them.
+  const offline = useStore(connection) === "reconnecting";
   const [announcement, setAnnouncement] = useState("");
   const previous = useRef(new Map<string, string>());
   const running = list.some(isActive) || runList.some((run) => run.status === "running");
@@ -26,14 +29,15 @@ export function JobsTray() {
   const inRuns = jobsInRuns(runList);
   const compared = new Set(batches.map((batch) => batch.id));
   const loose = list.filter((job) => !inRuns.has(job.id) && !compared.has(job.batch_id));
+  const ended = loose.filter((job) => job.status === "failed" || job.status === "canceled").length;
 
   // Elapsed time ticks once a second, only while something runs.
   useEffect(() => {
-    if (!running) return;
+    if (!running || offline) return;
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [running]);
+  }, [running, offline]);
 
   // Announce finished and failed jobs once, not every progress tick.
   useEffect(() => {
@@ -64,6 +68,14 @@ export function JobsTray() {
       {(loose.length > 0 || runList.length > 0 || batches.length > 0) && (
         <section className="jobs-tray" aria-label="Generations">
           <ul>
+            {ended > 1 && (
+              <li className="jobs-clear">
+                <button type="button" className="text-button" onClick={dismissFinished}>
+                  <Icon name="close" />
+                  Dismiss all
+                </button>
+              </li>
+            )}
             {batches.map((batch) => (
               <CompareCard key={batch.id} batch={batch} />
             ))}
@@ -71,7 +83,7 @@ export function JobsTray() {
               <RunCard key={run.id} run={run} now={now} jobs={list} />
             ))}
             {loose.map((job) => (
-              <JobCard key={job.id} job={job} now={now} />
+              <JobCard key={job.id} job={job} now={now} offline={offline} />
             ))}
           </ul>
         </section>
@@ -81,7 +93,8 @@ export function JobsTray() {
   );
 }
 
-function statusText(job: Job, now: number): string {
+function statusText(job: Job, now: number, offline = false): string {
+  if (offline && isActive(job)) return "Waiting for the server";
   switch (job.status) {
     // The number leads, so it stays visible when the message is cut short.
     case "queued":
@@ -98,7 +111,7 @@ function statusText(job: Job, now: number): string {
   }
 }
 
-function JobCard({ job, now }: { job: Job; now: number }) {
+function JobCard({ job, now, offline }: { job: Job; now: number; offline: boolean }) {
   const active = isActive(job);
   const output = job.outputs?.[0];
   const determinate = job.status === "running" && typeof job.progress === "number";
@@ -116,7 +129,9 @@ function JobCard({ job, now }: { job: Job; now: number }) {
       )}
       <div className="job-text">
         <p className="job-model">{job.model_name}</p>
-        <p className="job-status">{statusText(job, now)}</p>
+        <p className="job-status" title={statusText(job, now, offline)}>
+          {statusText(job, now, offline)}
+        </p>
       </div>
       <div className="job-actions">
         {active && (

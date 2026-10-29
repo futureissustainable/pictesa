@@ -1,5 +1,10 @@
-import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Icon } from "./icon";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { errorMessage } from "../lib/api";
+import { createStore } from "../lib/store";
+import { Icon, Spinner } from "./icon";
+
+/** Open modal dialogs, newest last. Notices render inside the newest so they stay visible and usable. */
+export const openDialogs = createStore<HTMLDialogElement[]>([]);
 
 /**
  * A modal dialog on the native <dialog>: focus stays inside, Escape closes it and focus
@@ -31,7 +36,9 @@ export function Dialog({
     const trigger = document.activeElement;
     const dialog = ref.current;
     if (dialog && !dialog.open) dialog.showModal();
+    if (dialog) openDialogs.set((list) => [...list, dialog]);
     return () => {
+      if (dialog) openDialogs.set((list) => list.filter((item) => item !== dialog));
       dialog?.close();
       if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus({ preventScroll: true });
     };
@@ -67,5 +74,60 @@ export function Dialog({
       )}
       {children}
     </dialog>
+  );
+}
+
+/** Asks before a destructive action. The dialog stays open with the error when the action fails. */
+export function ConfirmDialog({
+  title,
+  children,
+  confirm,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  /** The confirm button's label, naming the action ("Delete for good"). */
+  confirm: string;
+  onConfirm(): Promise<unknown>;
+  onClose(): void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Dialog title={title} onClose={() => !busy && onClose()}>
+      <div className="library-form">
+        {children}
+        {error && (
+          <p role="alert" className="notice error">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button type="button" className="text-button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                await onConfirm();
+                onClose();
+              } catch (reason) {
+                setError(errorMessage(reason));
+                setBusy(false);
+              }
+            }}
+          >
+            {busy && <Spinner />}
+            {confirm}
+          </button>
+        </div>
+      </div>
+    </Dialog>
   );
 }

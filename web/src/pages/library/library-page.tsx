@@ -1,17 +1,18 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { toggleFavorite, useAssetList } from "../../lib/assets";
+import { deleteManyForever, emptyTrash, restoreMany, toggleFavorite, useAssetList } from "../../lib/assets";
 import { useModelNames, useModels, useProviders } from "../../lib/catalog";
-import { kindIcon } from "../../lib/format";
+import { kindIcon, plural } from "../../lib/format";
 import { Link, navigate, useLocation, withParams } from "../../lib/router";
 import { MAX_CHARACTER_IMAGES } from "../../lib/characters";
 import { assetTitle } from "../../lib/names";
-import { subscribeEvents } from "../../lib/events";
-import { api, downloadZip, errorMessage } from "../../lib/api";
+import { emitLocal, onReconnect, subscribeEvents } from "../../lib/events";
+import { api, downloadZip, errorMessage, uploadFiles } from "../../lib/api";
+import { refuseFile } from "../../lib/attach";
 import { notify, notifyError } from "../../lib/notices";
 import type { Asset, AssetQuery, AssetSource, Collection, MediaKind } from "../../lib/types";
 import { openViewer, useSequence } from "../../lib/viewer";
 import { Choice, Control } from "../../ui/control";
-import { Dialog } from "../../ui/dialog";
+import { ConfirmDialog, Dialog } from "../../ui/dialog";
 import { Collections } from "./collections";
 import { AssetGrid } from "../../ui/grid";
 import { Icon, Spinner } from "../../ui/icon";
@@ -66,7 +67,12 @@ export default function LibraryPage() {
       setCollections(groups.collections); setTags(labels.tags);
     }).catch((error) => setOrganizationError(errorMessage(error)));
   };
-  useEffect(() => { loadOrganization(); return subscribeEvents({ library: loadOrganization }); }, []);
+  useEffect(() => {
+    loadOrganization();
+    const offEvents = subscribeEvents({ library: loadOrganization });
+    const offReconnect = onReconnect(loadOrganization);
+    return () => { offEvents(); offReconnect(); };
+  }, []);
   const [tagging, setTagging] = useState(false);
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
@@ -90,15 +96,45 @@ export default function LibraryPage() {
       return next;
     });
   };
-  // Trashed images cannot become a character: opening the trash ends a selection.
-  if (query.trash && selecting) stopSelecting();
-  useEffect(() => { setPicked(new Map()); setSelecting(false); }, [url.pathname, url.search]);
-  const perform = async (action: () => Promise<unknown>, message: string, end = true) => {
+  // A new section (trash, a collection, favorites) starts a fresh selection; search and filters only narrow the list.
+  const section = `${url.pathname}|${query.trash ?? ""}|${query.collection ?? ""}|${showCollections}|${query.favorite ?? ""}`;
+  useEffect(() => { setPicked(new Map()); setSelecting(false); }, [section]);
+  const perform = async (action: () => Promise<unknown>, message: string, end = true, undo?: () => Promise<unknown>) => {
     setBusy(true);
-    try { await action(); notify(message); list.reload(); loadOrganization(); if (end) stopSelecting(); }
+    try {
+      await action();
+      notify(message, undo ? { action: { label: "Undo", run: () => void undo().then(list.reload).catch((error) => notifyError(errorMessage(error))) } } : {});
+      list.reload(); loadOrganization(); if (end) stopSelecting();
+    }
     catch (error) { notifyError(errorMessage(error)); }
     finally { setBusy(false); }
   };
+  const [confirming, setConfirming] = useState<"selected" | "all" | null>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const upload = async (files: File[]) => {
+    const usable = files.filter((file) => !refuseFile(file));
+    const refused = files.find((file) => refuseFile(file));
+    if (refused) notifyError(`${refused.name}: ${refuseFile(refused)}`);
+    if (!usable.length) return;
+    setUploading(true);
+    try {
+      const { assets, errors } = await uploadFiles(usable);
+      assets.forEach((asset) => emitLocal({ asset }));
+      if (assets.length) notify(`${plural(assets.length, "file", "files")} uploaded.`);
+      if (errors.length) notifyError(`${errors[0]!.name}: ${errors[0]!.error}`);
+    } catch (error) {
+      notifyError(errorMessage(error));
+    } finally {
+      setUploading(false);
+    }
+  };
+  const uploadButton = (
+    <button type="button" className="primary-button" disabled={uploading} onClick={() => uploadRef.current?.click()}>
+      {uploading ? <Spinner /> : <Icon name="upload" />}
+      {uploading ? "Uploading" : "Upload files"}
+    </button>
+  );
   const ids = [...picked.keys()];
   const canSaveCharacter = picked.size > 0 && picked.size <= MAX_CHARACTER_IMAGES && [...picked.values()].every((asset) => asset.kind === "image");
   useSequence(list.items, list.hasMore, list.loadMore);
@@ -134,6 +170,8 @@ export default function LibraryPage() {
       : query.source === "upload"
         ? "Your references, all in one place."
         : "Everything you have made, ready for the next step.";
+  /** Provider, tag and cost: the filters behind the Filters button. */
+  const moreFilters = [query.provider, query.tag, query.cost_min ?? query.cost_max].filter((value) => value !== undefined).length;
   const filtered = Boolean(query.q || query.kind || query.model || query.provider || query.tag || query.cost_min !== undefined || query.cost_max !== undefined || (query.source && query.source !== "upload"));
 
   return (
@@ -143,11 +181,36 @@ export default function LibraryPage() {
           <h1>{title}.</h1>
           <p>{intro}</p>
         </div>
-        <button type="button" className="icon-button" aria-label="Refresh" title="Refresh" onClick={() => { list.reload(); loadOrganization(); }}>
-          <Icon name="refresh" />
-        </button>
+        <div className="intro-actions">
+          {/* The empty state has its own upload button. */}
+          {query.source === "upload" && !query.trash && list.items.length > 0 && uploadButton}
+          {query.trash && list.items.length > 0 && (
+            <button type="button" className="text-button destructive" onClick={() => setConfirming("all")}>
+              <Icon name="delete_forever" />
+              Empty trash
+            </button>
+          )}
+          <button type="button" className="icon-button" aria-label="Refresh" title="Refresh" onClick={() => { list.reload(); loadOrganization(); }}>
+            <Icon name="refresh" />
+          </button>
+        </div>
       </div>
-      {organizationError && <p className="notice error" role="alert">{organizationError} <button type="button" className="text-button" onClick={loadOrganization}>Try again</button></p>}
+      <input
+        ref={uploadRef}
+        type="file"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        multiple
+        accept="image/*,video/*,audio/*"
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])];
+          event.target.value = "";
+          void upload(files);
+        }}
+      />
+      {/* The empty state already says the server is not answering. */}
+      {organizationError && organizationError !== list.error && <p className="notice error" role="alert">{organizationError} <button type="button" className="text-button" onClick={loadOrganization}>Try again</button></p>}
       {showCollections ? <Collections items={collections} reload={loadOrganization} /> : <>
       {query.collection && <Link className="text-button" to="/library?collections=true"><Icon name="arrow_back" />All collections</Link>}
       <div className="gallery-toolbar">
@@ -176,7 +239,7 @@ export default function LibraryPage() {
           </Control>
         )}
         <ModelFilter value={query.model} nameOf={nameOf} onChange={(model) => set({ model })} />
-        <Control label="Filters" icon="filter_list" value={query.tag || query.provider || (query.cost_min !== undefined || query.cost_max !== undefined ? "Cost" : "All")} className={query.tag || query.provider || query.cost_min !== undefined || query.cost_max !== undefined ? "has-changes" : ""}>
+        <Control label="More filters" icon="tune" value={moreFilters ? `Filters: ${moreFilters}` : "Filters"} className={moreFilters ? "has-changes" : ""}>
           <div className="more-fields library-filters">
             <label className="field"><span>Provider</span><select aria-label="Provider" value={query.provider ?? ""} onChange={(event) => set({ provider: event.target.value || null })}><option value="">All providers</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
             <label className="field"><span>Tag</span><select aria-label="Tag" value={query.tag ?? ""} onChange={(event) => set({ tag: event.target.value || null })}><option value="">All tags</option>{[...new Set([...tags, ...(query.tag ? [query.tag] : [])])].map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>
@@ -185,12 +248,10 @@ export default function LibraryPage() {
             <button type="button" className="text-button" onClick={() => set({ provider: null, tag: null, cost_min: null, cost_max: null })}>Clear filters</button>
           </div>
         </Control>
-        {!query.trash && (
-          <button type="button" className={`filter-button ${selecting ? "active" : ""}`} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))} title="Select assets for bulk actions">
-            <Icon name="checklist" />
-            <span className="segmented-label">Select</span>
-          </button>
-        )}
+        <button type="button" className={`filter-button ${selecting ? "active" : ""}`} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))} title="Select assets for bulk actions">
+          <Icon name="checklist" />
+          <span className="segmented-label">Select</span>
+        </button>
         {/* Phones have no sidebar: characters and trash sit behind one button. */}
         <span className="mobile-only">
           <Control label="More" icon="more_horiz" caret={false} placement="below">
@@ -254,8 +315,8 @@ export default function LibraryPage() {
         </div>
       ) : (
         <div className="empty">
-          <Icon name={filtered ? "search_off" : query.trash ? "delete" : query.favorite ? "favorite" : "photo_library"} />
-          <h2>{filtered ? "Nothing matches." : query.trash ? "Nothing in the trash." : query.favorite ? "No favorites yet." : "A little empty, for now."}</h2>
+          <Icon name={filtered ? "search_off" : query.trash ? "delete" : query.favorite ? "favorite" : query.collection ? "folder_open" : query.source === "upload" ? "upload" : "photo_library"} />
+          <h2>{filtered ? "Nothing matches." : query.trash ? "Nothing in the trash." : query.favorite ? "No favorites yet." : query.collection ? "This collection is empty." : query.source === "upload" ? "No uploads yet." : "A little empty, for now."}</h2>
           <p>
             {filtered
               ? "Try another word or clear the filters."
@@ -263,9 +324,20 @@ export default function LibraryPage() {
                 ? "Tap the heart on anything you want to keep close."
                 : query.trash
                   ? "Deleted items wait here until you remove them for good."
-                  : "Everything you make or upload appears here."}
+                  : query.collection
+                    ? "Select assets in the library, then add them to this collection."
+                    : query.source === "upload"
+                      ? "Upload references here, or drop them on the composer in Create."
+                      : "Everything you make or upload appears here."}
           </p>
-          {filtered ? (
+          {query.collection && !filtered ? (
+            <Link className="primary-button" to="/library">
+              Open the library
+              <Icon name="arrow_forward" />
+            </Link>
+          ) : query.source === "upload" && !filtered && !query.trash ? (
+            uploadButton
+          ) : filtered ? (
             <button type="button" className="primary-button" onClick={() => set({ q: null, kind: null, model: null, provider: null, tag: null, cost_min: null, cost_max: null, source: query.source === "upload" ? "upload" : null })}>
               Clear filters
               <Icon name="close" />
@@ -284,22 +356,51 @@ export default function LibraryPage() {
         <div className="selection-bar library-selection" role="region" aria-label="Selection" aria-busy={busy}>
           <p>{picked.size} selected<span className="selection-limit">, up to 100</span></p>
           <button type="button" className="text-button" disabled={busy} onClick={() => setPicked(new Map(list.items.slice(0, 100).map((item) => [item.id, item])))}>Select loaded</button>
+          {query.trash ? (
+            <fieldset disabled={busy || !picked.size} className="bulk-actions">
+              <button type="button" className="control-trigger" onClick={() => void perform(() => restoreMany(ids), `${plural(ids.length, "file", "files")} restored.`)}>
+                <Icon name="restore_from_trash" />
+                Restore
+              </button>
+              <button type="button" className="control-trigger" onClick={() => setConfirming("selected")}>
+                <Icon name="delete_forever" />
+                Delete for good
+              </button>
+            </fieldset>
+          ) : (
           <fieldset disabled={busy || !picked.size} className="bulk-actions">
-            <Control label="Actions" icon="more_horiz" placement="above">
+            <Control label="Actions" icon="more_horiz" value="Actions" placement="above">
               <Choice icon="favorite" onPick={() => void perform(() => api.bulkAssets(ids, "favorite"), "Added to favorites.")}>Favorite</Choice>
               <Choice onPick={() => void perform(() => api.bulkAssets(ids, "unfavorite"), "Removed from favorites.")}>Remove favorite</Choice>
               <Choice onPick={() => { setTag(""); setTagging(true); setSelectionTags([]); if (ids.length === 1) void api.assetTags(ids[0]!).then((data) => setSelectionTags(data.tags)).catch((error) => notifyError(errorMessage(error))); }}>Tag</Choice>
-              <Choice icon="delete" onPick={() => void perform(() => api.bulkAssets(ids, "trash"), "Moved to trash.")}>Move to trash</Choice>
+              <Choice icon="delete" onPick={() => void perform(() => api.bulkAssets(ids, "trash"), "Moved to trash.", true, () => restoreMany(ids))}>Move to trash</Choice>
               <Choice icon="download" onPick={() => void perform(() => downloadZip(ids), "ZIP downloaded.")}>Download ZIP</Choice>
               {query.collection && <Choice onPick={() => void perform(() => api.collectionAssets(query.collection!, ids, true), "Removed from collection.")}>Remove from collection</Choice>}
               <Choice icon="face" disabled={!canSaveCharacter} onPick={() => setSaving(true)}>Save as character (up to {MAX_CHARACTER_IMAGES} images)</Choice>
             </Control>
-            <Control label="Add to collection" icon="folder_open" placement="above">
+            <Control label="Add to collection" icon="folder_open" value="Add to collection" placement="above">
               {collections.length ? collections.map((collection) => <Choice key={collection.id} onPick={() => void perform(() => api.collectionAssets(collection.id, ids), "Added to collection.")}>{collection.name}</Choice>) : <p className="hint">Create a collection from Collections first.</p>}
             </Control>
           </fieldset>
+          )}
           <button type="button" className="text-button" disabled={busy} onClick={stopSelecting}>Cancel</button>
         </div>
+      )}
+      {confirming && (
+        <ConfirmDialog
+          title={confirming === "all" ? "Empty the trash?" : `Delete ${plural(ids.length, "file", "files")} for good?`}
+          confirm={confirming === "all" ? "Empty trash" : "Delete for good"}
+          onClose={() => setConfirming(null)}
+          onConfirm={async () => {
+            if (confirming === "all") await emptyTrash();
+            else await deleteManyForever(ids);
+            notify(confirming === "all" ? "The trash is empty." : "Deleted permanently.");
+            stopSelecting();
+            list.reload();
+          }}
+        >
+          <p>This cannot be undone.</p>
+        </ConfirmDialog>
       )}
       {tagging && <Dialog title="Tag selected assets" onClose={() => setTagging(false)}>
         <div className="library-form">

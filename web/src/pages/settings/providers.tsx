@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useId, useState, type FormEvent } from "react";
-import { api, errorMessage } from "../../lib/api";
+import { api, errorMessage, plainError } from "../../lib/api";
 import { invalidateModels, loadProviders, replaceProvider, useProviders } from "../../lib/catalog";
 import { plural, providerKindIcon } from "../../lib/format";
 import { notify, notifyError } from "../../lib/notices";
@@ -100,12 +100,28 @@ export function Providers() {
 
 type Status = { kind: "idle" } | { kind: "busy"; text: string } | { kind: "ok"; text: string } | { kind: "error"; text: string };
 
+/** Address fields take a full http or https URL. */
+const isUrlField = (field: CredentialField) => /url$/i.test(field.key);
+function urlProblem(value: string): string | null {
+  if (!value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol === "http:" || url.protocol === "https:") return null;
+  } catch {
+    // Falls through to the message.
+  }
+  return "Enter an http or https address, such as http://127.0.0.1:8188.";
+}
+
 function ProviderCard({ provider }: { provider: ProviderState }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [confirmForget, setConfirmForget] = useState(false);
   const [importing, setImporting] = useState(false);
+  /** The last check's answer: a local server can be set up and still not running. */
+  const [reachable, setReachable] = useState<boolean | null>(null);
   const dirty = Object.keys(edits).length > 0;
+  const invalid = provider.fields.filter((field) => isUrlField(field) && edits[field.key] !== undefined && urlProblem(edits[field.key]!));
   const busy = status.kind === "busy";
   const stored = Object.values(provider.values ?? {}).some((value) => value.source === "stored");
 
@@ -119,7 +135,8 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
     setStatus({ kind: "busy", text: "Checking" });
     try {
       const result = await api.checkProvider(provider.id);
-      setStatus(result.ok ? { kind: "ok", text: "Connected." } : { kind: "error", text: result.error || "The check failed." });
+      setReachable(result.ok);
+      setStatus(result.ok ? { kind: "ok", text: "Connected." } : { kind: "error", text: result.error ? plainError(result.error) : "The check failed." });
       // A local server's model list is refreshed by a successful check.
       if (result.ok && provider.kind === "local") invalidateModels();
     } catch (reason) {
@@ -127,9 +144,22 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
     }
   };
 
+  // A set-up local server is checked quietly once, so the badge says whether it answers.
+  useEffect(() => {
+    if (provider.kind !== "local" || !provider.configured || !provider.fields.some(isUrlField)) return;
+    let live = true;
+    api
+      .checkProvider(provider.id)
+      .then((result) => live && setReachable(result.ok))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [provider.id, provider.kind, provider.configured]);
+
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (!dirty || busy) return;
+    if (!dirty || busy || invalid.length) return;
     setStatus({ kind: "busy", text: "Saving" });
     try {
       replaceProvider(await api.saveProvider(provider.id, edits));
@@ -162,7 +192,7 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
           <Icon name={providerKindIcon[provider.kind]} />
           <h3 id={`provider-${provider.id}-name`}>{provider.name}</h3>
         </div>
-        <span className={`status ${provider.configured ? "" : "off"}`}>{provider.configured ? "Ready" : "Not set up"}</span>
+        <span className={`status ${provider.configured && reachable !== false ? "" : "off"}`}>{!provider.configured ? "Not set up" : reachable === false ? "Not reachable" : "Ready"}</span>
       </header>
       <p className="provider-meta">{plural(provider.model_count, "model", "models")}</p>
       <form onSubmit={(event) => void save(event)} noValidate>
@@ -172,6 +202,7 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
             field={field}
             state={provider.values?.[field.key]}
             value={edits[field.key]}
+            error={isUrlField(field) && edits[field.key] !== undefined ? urlProblem(edits[field.key]!) : null}
             onChange={(value) =>
               setEdits((current) => {
                 const next = { ...current };
@@ -184,7 +215,7 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
         ))}
         <div className="provider-actions">
           {dirty && (
-            <button type="submit" className="primary-button" disabled={busy}>
+            <button type="submit" className="primary-button" disabled={busy || invalid.length > 0}>
               Save
             </button>
           )}
@@ -233,7 +264,19 @@ function ProviderCard({ provider }: { provider: ProviderState }) {
   );
 }
 
-function CredentialInput({ field, state, value, onChange }: { field: CredentialField; state?: FieldValue; value?: string; onChange(value: string | undefined): void }) {
+function CredentialInput({
+  field,
+  state,
+  value,
+  error,
+  onChange,
+}: {
+  field: CredentialField;
+  state?: FieldValue;
+  value?: string;
+  error?: string | null;
+  onChange(value: string | undefined): void;
+}) {
   const id = useId();
   const [reveal, setReveal] = useState(false);
   const env = field.env?.filter(Boolean) ?? [];
@@ -273,7 +316,8 @@ function CredentialInput({ field, state, value, onChange }: { field: CredentialF
           autoCapitalize="off"
           value={value ?? storedValue}
           placeholder={placeholder}
-          aria-describedby={hint ? `${id}-hint` : undefined}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={[error && `${id}-error`, hint && `${id}-hint`].filter(Boolean).join(" ") || undefined}
           onChange={(event) => onChange(event.target.value === storedValue ? undefined : event.target.value)}
         />
         {field.secret && (
@@ -282,6 +326,11 @@ function CredentialInput({ field, state, value, onChange }: { field: CredentialF
           </button>
         )}
       </div>
+      {error && (
+        <small id={`${id}-error`} className="field-error">
+          {error}
+        </small>
+      )}
       {hint && <small id={`${id}-hint`}>{hint}</small>}
     </div>
   );
